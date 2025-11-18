@@ -1,0 +1,399 @@
+# Name of Application: Catalyst Trading System
+# Name of file: docker-compose.yml
+# Version: 5.2.0
+# Last Updated: 2025-10-16
+# Purpose: Docker Compose with DigitalOcean Cloud Database and Redis Cache
+
+# REVISION HISTORY:
+# v5.2.0 (2025-10-16) - Added Redis Cache Service
+#   - Added Redis service per v4.1 architecture design
+#   - Configured all services to use Redis for caching
+#   - Named as 'redis' per design specifications
+#   - Maintains cloud database configuration
+# v5.1.1 (2025-10-13) - Cloud Database Configuration
+#   - REMOVED local postgres container (using DigitalOcean)
+#   - All services use DATABASE_URL from .env
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # REDIS CACHE SERVICE (Port 6379)
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: catalyst-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - catalyst-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # ORCHESTRATION SERVICE (MCP - Port 5000)
+  # ==========================================================================
+  orchestration:
+    build:
+      context: ./services/orchestration
+      dockerfile: Dockerfile
+    container_name: catalyst-orchestration
+    environment:
+      SERVICE_PORT: 5000
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SCANNER_URL: http://scanner:5001
+      PATTERN_URL: http://pattern:5002
+      TECHNICAL_URL: http://technical:5003
+      RISK_URL: http://risk-manager:5004
+      TRADING_URL: http://trading:5005
+      NEWS_URL: http://news:5008
+      REPORTING_URL: http://reporting:5009
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./services/orchestration:/app
+      - orchestration_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # SCANNER SERVICE (REST - Port 5001)
+  # ==========================================================================
+  scanner:
+    build:
+      context: ./services/scanner
+      dockerfile: Dockerfile
+    container_name: catalyst-scanner
+    environment:
+      SERVICE_PORT: 5001
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ALPHAVANTAGE_API_KEY: ${ALPHAVANTAGE_API_KEY:-}
+      POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./services/scanner:/app
+      - scanner_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # PATTERN SERVICE (REST - Port 5002)
+  # ==========================================================================
+  pattern:
+    build:
+      context: ./services/pattern
+      dockerfile: Dockerfile
+    container_name: catalyst-pattern
+    environment:
+      SERVICE_PORT: 5002
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./services/pattern:/app
+      - pattern_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5002/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # TECHNICAL SERVICE (REST - Port 5003)
+  # ==========================================================================
+  technical:
+    build:
+      context: ./services/technical
+      dockerfile: Dockerfile
+    container_name: catalyst-technical
+    environment:
+      SERVICE_PORT: 5003
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5003:5003"
+    volumes:
+      - ./services/technical:/app
+      - technical_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5003/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # RISK MANAGER SERVICE (REST - Port 5004)
+  # ==========================================================================
+  risk-manager:
+    build:
+      context: ./services/risk-manager
+      dockerfile: Dockerfile
+    container_name: catalyst-risk-manager
+    environment:
+      SERVICE_PORT: 5004
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MAX_POSITION_SIZE: ${MAX_POSITION_SIZE:-1000}
+      MAX_DAILY_LOSS: ${MAX_DAILY_LOSS:-1000}
+      MAX_SECTOR_EXPOSURE: ${MAX_SECTOR_EXPOSURE:-0.3}
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5004:5004"
+    volumes:
+      - ./services/risk-manager:/app
+      - risk_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5004/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # TRADING SERVICE (REST - Port 5005)
+  # ==========================================================================
+  trading:
+    build:
+      context: ./services/trading
+      dockerfile: Dockerfile
+    container_name: catalyst-trading
+    environment:
+      SERVICE_PORT: 5005
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./services/trading:/app
+      - trading_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5005/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # NEWS SERVICE (REST - Port 5008)
+  # ==========================================================================
+  news:
+    build:
+      context: ./services/news
+      dockerfile: Dockerfile
+    container_name: catalyst-news
+    environment:
+      SERVICE_PORT: 5008
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BENZINGA_API_KEY: ${BENZINGA_API_KEY:-}
+      ALPHA_VANTAGE_KEY: ${ALPHA_VANTAGE_KEY:-}
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5008:5008"
+    volumes:
+      - ./services/news:/app
+      - news_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5008/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # REPORTING SERVICE (REST - Port 5009)
+  # ==========================================================================
+  reporting:
+    build:
+      context: ./services/reporting
+      dockerfile: Dockerfile
+    container_name: catalyst-reporting
+    environment:
+      SERVICE_PORT: 5009
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "5009:5009"
+    volumes:
+      - ./services/reporting:/app
+      - reporting_logs:/app/logs
+    networks:
+      - catalyst-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5009/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # Workflow Service (REST - Port 5010)
+  # ==========================================================================
+
+  workflow:
+    build: ./services/workflow
+    container_name: catalyst-workflow
+    ports:
+    - "5006:5006"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SCANNER_URL: http://catalyst-scanner:5001
+      PATTERN_URL: http://catalyst-pattern:5002
+      TECHNICAL_URL: http://catalyst-technical:5003
+      RISK_URL: http://catalyst-risk-manager:5004
+      TRADING_URL: http://catalyst-trading:5005
+      NEWS_URL: http://catalyst-news:5008
+    networks:
+      - catalyst-network
+    depends_on:
+      - scanner
+      - pattern
+    restart: unless-stopped
+
+
+# ==========================================================================
+# NETWORKS
+# ==========================================================================
+networks:
+  catalyst-network:
+    driver: bridge
+    name: catalyst-network
+
+# ==========================================================================
+# VOLUMES (including Redis data)
+# ==========================================================================
+volumes:
+  redis_data:
+    name: catalyst-redis-data
+  orchestration_logs:
+    name: catalyst-orchestration-logs
+  scanner_logs:
+    name: catalyst-scanner-logs
+  pattern_logs:
+    name: catalyst-pattern-logs
+  technical_logs:
+    name: catalyst-technical-logs
+  risk_logs:
+    name: catalyst-risk-logs
+  trading_logs:
+    name: catalyst-trading-logs
+  news_logs:
+    name: catalyst-news-logs
+  reporting_logs:
+    name: catalyst-reporting-logs

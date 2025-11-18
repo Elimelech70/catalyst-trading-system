@@ -1,0 +1,14 @@
+# Catalyst Trading System - Cron Schedule
+# Market Hours: Mon-Fri 21:00-09:00 Perth Time (04:00-20:00 EST)
+
+# Health Checks (Every 15 minutes)
+*/15 * * * * /root/catalyst-trading-mcp/scripts/health-check.sh >> /var/log/catalyst/health.log 2>&1
+
+# Market Open (Mon-Fri 22:30 Perth = 09:30 EST)
+30 22 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start >> /var/log/catalyst/trading.log 2>&1
+
+# Market Close (Mon-Fri 05:00 Perth = 16:00 EST)
+0 5 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/stop >> /var/log/catalyst/trading.log 2>&1
+
+# Daily Backup (02:00 Perth)
+0 2 * * * /root/catalyst-trading-mcp/scripts/backup.sh >> /var/log/catalyst/backup.log 2>&1

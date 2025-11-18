@@ -1,0 +1,39 @@
+# Name of Application: Catalyst Trading System
+# Name of file: requirements.txt
+# Service: Workflow Coordinator
+# Version: 1.0.0
+# Purpose: Python dependencies for workflow coordination service
+
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Async HTTP Client
+aiohttp==3.9.1
+aiofiles==23.2.1
+
+# Database
+asyncpg==0.29.0
+
+# Data Validation
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Utilities
+python-dateutil==2.8.2
+python-json-logger==2.0.7
+
+# Environment management
+python-dotenv==1.0.0
+
+# CORS support (included in FastAPI but explicit for clarity)
+starlette==0.27.0
+
+# Monitoring and metrics (optional but recommended)
+prometheus-client==0.19.0
+
+# Testing (optional, for development)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2

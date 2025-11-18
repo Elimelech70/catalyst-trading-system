@@ -1,0 +1,75 @@
+# Environment files
+.env
+.env.*
+!.env.template
+config/.env*
+!config/.env.template
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker
+postgres_data/
+redis_data/
+volume_*/
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Trading data
+logs/
+data/
+trades/
+positions/
+orders/
+market_data/
+backtests/
+
+# API Keys and secrets
+secrets/
+keys/
+credentials/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Backups
+*.sql
+*.sql.gz
+backups/
+*.bak
