@@ -1,4 +1,4 @@
-# Name of Application: Catalyst Trading System
+c# Name of Application: Catalyst Trading System
 # Name of file: local-docker-dev-setup.md  
 # Version: 1.0.0
 # Last Updated: 2025-11-18
