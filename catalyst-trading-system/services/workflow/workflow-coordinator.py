@@ -471,17 +471,13 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
         ).total_seconds()
         workflow_result["status"] = "success"
         
-        # Store in database if available
+        # Update cycle in database if available
+        # Note: Scanner already created the cycle, we just update it
         if state.db_pool:
             try:
-                await state.db_pool.execute("""
-                    INSERT INTO trading_cycles (
-                        cycle_id, start_time, end_time, status, mode,
-                        initial_universe_size, final_candidates, trades_executed
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """, cycle_id, workflow_result["started_at"], workflow_result["completed_at"],
-                    "success", mode, config.MAX_INITIAL_CANDIDATES, 
-                    len(validated_candidates), len(executed_trades))
+                # Don't update - scanner already handles the cycle lifecycle
+                # The cycle was created and updated by scanner service
+                pass
             except Exception as e:
                 logger.error(f"Failed to store cycle results: {e}")
         

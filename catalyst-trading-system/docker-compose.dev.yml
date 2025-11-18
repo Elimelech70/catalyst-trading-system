@@ -248,6 +248,7 @@ services:
       - "5004:5004"
     volumes:
       - ./services/risk-manager:/app
+      - ./config:/workspaces/catalyst-trading-system/catalyst-trading-system/config:ro
       - ./data/logs:/logs
     depends_on:
       postgres:
@@ -287,6 +288,7 @@ services:
       - "5005:5005"
     volumes:
       - ./services/trading:/app
+      - ./config:/workspaces/catalyst-trading-system/catalyst-trading-system/config:ro
       - ./data/logs:/logs
     depends_on:
       postgres:
@@ -329,6 +331,7 @@ services:
       - "5006:5006"
     volumes:
       - ./services/workflow:/app
+      - ./config:/workspaces/catalyst-trading-system/catalyst-trading-system/config:ro
       - ./data/logs:/logs
     depends_on:
       postgres:

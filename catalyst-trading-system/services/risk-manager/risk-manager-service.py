@@ -307,7 +307,7 @@ async def monitor_positions_continuously():
             # Get all active cycles
             async with state.db_pool.acquire() as conn:
                 active_cycles = await conn.fetch("""
-                    SELECT cycle_id, mode, max_daily_loss
+                    SELECT cycle_id
                     FROM trading_cycles
                     WHERE status = 'active'
                 """)
