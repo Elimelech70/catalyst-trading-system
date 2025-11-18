@@ -1,0 +1,300 @@
+# =============================================================================
+# Catalyst Trading System - Autonomous Risk Management Configuration
+# =============================================================================
+# Name of Application: Catalyst Trading System
+# Name of file: risk_parameters.yaml
+# Version: 6.1.0
+# Purpose: Risk management parameters for autonomous trading
+#
+# IMPORTANT: System enforces these limits WITHOUT human approval
+# Changes to this file are hot-reloaded (no service restart required)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# RISK LIMITS - Enforced Automatically
+# -----------------------------------------------------------------------------
+risk_limits:
+  # Daily Loss Limit (Most Critical)
+  max_daily_loss_usd: 2000          # Hard stop at -$2,000 daily loss
+  warning_threshold_pct: 0.75       # Email warning at 75% (-$1,500)
+  critical_threshold_pct: 1.0       # Emergency stop at 100% (-$2,000)
+
+  # Position Limits
+  max_positions: 5                  # Maximum concurrent open positions
+  max_position_size_pct: 0.20       # 20% of account per position
+  max_position_size_usd: 10000      # Absolute maximum $10,000 per position
+  min_position_size_usd: 500        # Minimum $500 per position
+
+  # Portfolio Exposure
+  max_portfolio_exposure_pct: 0.80  # Maximum 80% of account in positions
+
+  # Correlation Limits
+  max_correlation: 0.70             # Reject trade if correlation > 0.7 with existing
+  check_correlation: true           # Enable/disable correlation checks
+
+  # Stop Loss Requirements
+  require_stop_loss: true           # All positions must have stop loss
+  min_stop_loss_atr_multiple: 2.0   # Minimum 2x ATR for stop loss
+  max_stop_loss_pct: 0.05           # Maximum 5% stop loss per position
+
+  # Risk/Reward
+  min_risk_reward_ratio: 1.5        # Minimum 1.5:1 R/R ratio required
+
+  # Consecutive Losses Protection
+  max_consecutive_losses: 3         # After 3 losses, reduce position size
+  consecutive_loss_reduction: 0.5   # Reduce size by 50% after threshold
+
+  # Account Protection
+  max_daily_trades: 20              # Maximum 20 trades per day
+  min_account_balance: 5000         # Stop trading if account < $5,000
+  max_account_drawdown_pct: 0.15    # Stop if drawdown > 15% from peak
+
+# -----------------------------------------------------------------------------
+# EMERGENCY ACTIONS - Executed Automatically When Limits Hit
+# -----------------------------------------------------------------------------
+emergency_actions:
+  close_all_positions: true         # Close all open positions immediately
+  cancel_all_orders: true           # Cancel all pending orders
+  halt_new_trades: true             # Reject all new trade requests
+  notify_via_email: true            # Send critical alert email
+  require_manual_restart: true      # Require manual restart to resume trading
+
+  # Position Closing Strategy
+  close_order_type: "market"        # Use market orders for emergency close
+  close_timeout_seconds: 30         # Timeout for position closing
+
+# -----------------------------------------------------------------------------
+# WARNING THRESHOLDS - Progressive Alerts
+# -----------------------------------------------------------------------------
+warning_thresholds:
+  # Daily Loss Warnings
+  - level: "info"
+    daily_loss_pct: 0.50            # Info alert at 50% of limit
+    action: "log_only"
+
+  - level: "warning"
+    daily_loss_pct: 0.75            # Warning email at 75% of limit
+    action: "email_alert"
+
+  - level: "critical"
+    daily_loss_pct: 1.0             # Critical email + emergency stop at 100%
+    action: "emergency_stop"
+
+  # Position Count Warnings
+  - level: "warning"
+    position_count: 4               # Warning when 4 positions (1 away from max)
+    action: "email_alert"
+
+# -----------------------------------------------------------------------------
+# POSITION SIZING - Kelly Criterion Configuration
+# -----------------------------------------------------------------------------
+position_sizing:
+  method: "kelly"                   # Options: "kelly", "fixed", "percent"
+  kelly_fraction: 0.25              # Conservative: 25% of full Kelly
+
+  # Fixed Position Sizing (if method = "fixed")
+  fixed_position_size_usd: 2000
+
+  # Percent-based Sizing (if method = "percent")
+  percent_of_account: 0.10          # 10% of account per trade
+
+  # Dynamic Adjustments
+  adjust_for_volatility: true       # Reduce size in high volatility
+  volatility_threshold_vix: 25      # Consider high volatility if VIX > 25
+  high_volatility_reduction: 0.5    # Reduce size by 50% in high volatility
+
+# -----------------------------------------------------------------------------
+# RISK VALIDATION RULES - Pre-Trade Checks
+# -----------------------------------------------------------------------------
+pre_trade_validation:
+  # Required Checks (all must pass)
+  checks:
+    - name: "daily_loss_limit"
+      enabled: true
+
+    - name: "position_count_limit"
+      enabled: true
+
+    - name: "position_size_limit"
+      enabled: true
+
+    - name: "correlation_check"
+      enabled: true
+
+    - name: "stop_loss_validation"
+      enabled: true
+
+    - name: "risk_reward_ratio"
+      enabled: true
+
+    - name: "account_balance_check"
+      enabled: true
+
+    - name: "market_hours_check"
+      enabled: true
+
+    - name: "security_tradeable_check"
+      enabled: true
+
+  # Validation Behavior
+  reject_on_failure: true           # Reject trade if ANY check fails
+  log_rejections: true              # Log all rejected trades
+  email_on_rejection: false         # Don't email for individual rejections
+
+# -----------------------------------------------------------------------------
+# REAL-TIME MONITORING - Continuous Position Monitoring
+# -----------------------------------------------------------------------------
+real_time_monitoring:
+  enabled: true
+  check_interval_seconds: 60        # Check positions every 60 seconds
+
+  # Position Monitoring
+  monitor_unrealized_pnl: true
+  monitor_stop_loss_distance: true
+  monitor_time_in_position: true
+
+  # Auto-Adjustments
+  trailing_stop_enabled: false      # Disable trailing stops initially
+  trailing_stop_activation_pct: 0.02  # Activate after 2% profit
+  trailing_stop_distance_pct: 0.01    # Trail by 1%
+
+  # Time-Based Exits
+  max_hold_time_enabled: true
+  max_hold_time_minutes: 180        # Close position after 3 hours
+
+  # End-of-Day Management
+  close_all_at_market_close: true   # Close all positions at market close
+  market_close_buffer_minutes: 15   # Close 15 minutes before market close
+
+# -----------------------------------------------------------------------------
+# PATTERN-SPECIFIC RISK ADJUSTMENTS
+# -----------------------------------------------------------------------------
+pattern_risk_adjustments:
+  # Different patterns get different risk allocations
+  bull_flag:
+    position_size_multiplier: 1.0   # Standard size
+    min_confidence: 0.75            # Require 75% pattern confidence
+
+  cup_and_handle:
+    position_size_multiplier: 1.2   # 20% larger (higher win rate)
+    min_confidence: 0.80            # Require 80% confidence
+
+  ascending_triangle:
+    position_size_multiplier: 1.0
+    min_confidence: 0.75
+
+  opening_range_breakout:
+    position_size_multiplier: 0.8   # 20% smaller (more volatile)
+    min_confidence: 0.70
+
+  abcd_pattern:
+    position_size_multiplier: 1.0
+    min_confidence: 0.75
+
+# -----------------------------------------------------------------------------
+# CATALYST-SPECIFIC RISK ADJUSTMENTS
+# -----------------------------------------------------------------------------
+catalyst_risk_adjustments:
+  # Higher catalyst strength = larger position size
+  high_catalyst:                    # catalyst_strength > 0.8
+    position_size_multiplier: 1.2
+
+  medium_catalyst:                  # catalyst_strength 0.5 - 0.8
+    position_size_multiplier: 1.0
+
+  low_catalyst:                     # catalyst_strength < 0.5
+    position_size_multiplier: 0.7
+
+# -----------------------------------------------------------------------------
+# MARKET REGIME ADJUSTMENTS
+# -----------------------------------------------------------------------------
+market_regime_adjustments:
+  # Adjust risk based on overall market conditions
+  enabled: true
+
+  # VIX-based adjustments
+  low_volatility:                   # VIX < 15
+    position_size_multiplier: 1.0
+    max_positions: 5
+
+  normal_volatility:                # VIX 15-25
+    position_size_multiplier: 1.0
+    max_positions: 5
+
+  high_volatility:                  # VIX > 25
+    position_size_multiplier: 0.5   # Half size in high volatility
+    max_positions: 3                # Reduce max positions
+
+  # Trend-based adjustments
+  bull_market:                      # SPY above 200-day MA
+    max_positions: 5
+
+  bear_market:                      # SPY below 200-day MA
+    max_positions: 3
+    position_size_multiplier: 0.7
+
+# -----------------------------------------------------------------------------
+# RECOVERY SETTINGS - After Emergency Stop
+# -----------------------------------------------------------------------------
+recovery_settings:
+  # After emergency stop, these apply for first day back
+  reduced_risk_period_days: 1
+
+  reduced_risk_parameters:
+    max_positions: 3                # Only 3 positions
+    position_size_multiplier: 0.5   # Half normal size
+    max_daily_loss_usd: 1000        # More conservative daily limit
+
+  # Gradual return to normal
+  gradual_recovery: true
+  recovery_increment_days: 3        # Return to normal over 3 days
+
+# -----------------------------------------------------------------------------
+# ALERT CONFIGURATION
+# -----------------------------------------------------------------------------
+alerts:
+  # Email Alert Settings
+  email_enabled: true
+
+  # Alert Levels
+  send_info_alerts: false           # Don't email info-level alerts
+  send_warning_alerts: true         # Email warning alerts
+  send_critical_alerts: true        # Email critical alerts
+
+  # Alert Frequency
+  min_time_between_alerts_minutes: 15  # Cooldown: 15 min between same alerts
+  max_alerts_per_hour: 20           # Rate limit: max 20 alerts/hour
+
+  # Alert Recipients (from .env)
+  use_env_recipients: true
+
+# -----------------------------------------------------------------------------
+# LOGGING & AUDIT
+# -----------------------------------------------------------------------------
+logging:
+  log_all_validations: true         # Log all pre-trade validations
+  log_all_rejections: true          # Log all rejected trades
+  log_emergency_stops: true         # Log emergency stop events
+  log_risk_events: true             # Log all risk management events
+
+  # Retention
+  retention_days: 365               # Keep logs for 1 year
+
+# -----------------------------------------------------------------------------
+# DEVELOPMENT/TESTING OVERRIDES
+# -----------------------------------------------------------------------------
+# Set environment variable: TRADING_ENV=development to use these
+development_overrides:
+  enabled: false                    # Set to true in development
+
+  # Less restrictive limits for testing
+  max_daily_loss_usd: 500
+  max_positions: 2
+  max_position_size_usd: 1000
+
+  # More alerts for testing
+  send_info_alerts: true
+
+# =============================================================================
+# END OF RISK PARAMETERS CONFIGURATION
+# =============================================================================

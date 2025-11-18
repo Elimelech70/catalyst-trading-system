@@ -1,0 +1,127 @@
+# ============================================================================
+# Catalyst Trading System - Autonomous Trading Cron Configuration
+# ============================================================================
+# Install: crontab -e (paste this content)
+# View: crontab -l
+# Logs: tail -f /var/log/catalyst/*.log
+#
+# Server Timezone: Perth (AWST = UTC+8)
+# Market Hours: US Markets 9:30 AM - 4:00 PM EST
+# Perth Equivalent: 10:30 PM - 5:00 AM AWST (next day)
+# ============================================================================
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+SHELL=/bin/bash
+HOME=/root
+CATALYST_HOME=/root/catalyst-trading-mcp
+
+# ============================================================================
+# AUTONOMOUS TRADING WORKFLOWS
+# ============================================================================
+
+# Pre-market startup (9:00 PM Perth = 4:00 AM EST)
+# Start all Docker services before market opens
+0 21 * * 1-5 cd $CATALYST_HOME && docker-compose up -d >> /var/log/catalyst/startup.log 2>&1
+
+# Market open - AUTONOMOUS WORKFLOW (10:30 PM Perth = 9:30 AM EST)
+# Execute trades immediately after risk validation
+30 22 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "autonomous", "scan_frequency": 1800, "max_positions": 5, "execute_top_n": 3}' \
+  >> /var/log/catalyst/autonomous-trading.log 2>&1
+
+# Periodic autonomous scans (every 30 minutes during market hours)
+# These will execute trades automatically if risk checks pass
+
+# 11:00 PM - 11:30 PM Perth (10:00 AM - 10:30 AM EST)
+0,30 23 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "autonomous"}' \
+  >> /var/log/catalyst/autonomous-trading.log 2>&1
+
+# 12:00 AM - 4:30 AM Perth (11:00 AM - 3:30 PM EST)
+0,30 0-4 * * 2-6 curl -X POST http://localhost:5006/api/v1/workflow/start \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "autonomous"}' \
+  >> /var/log/catalyst/autonomous-trading.log 2>&1
+
+# Market close - Conservative final scan (5:00 AM Perth = 4:00 PM EST)
+# Last opportunity for trades before market close
+0 5 * * 2-6 curl -X POST http://localhost:5006/api/v1/workflow/start \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "autonomous", "max_positions": 3}' \
+  >> /var/log/catalyst/autonomous-trading.log 2>&1
+
+# After-hours shutdown (9:00 AM Perth = 8:00 PM EST)
+# Stop services after extended hours
+0 9 * * 2-6 cd $CATALYST_HOME && docker-compose stop \
+  >> /var/log/catalyst/shutdown.log 2>&1
+
+# ============================================================================
+# SYSTEM MAINTENANCE
+# ============================================================================
+
+# Health check (every 15 minutes, 24/7)
+# Auto-restart failed services
+*/15 * * * * cd $CATALYST_HOME && /root/catalyst-trading-mcp/scripts/health-check.sh \
+  >> /var/log/catalyst/health.log 2>&1
+
+# Database backup (daily 2:00 AM Perth)
+0 2 * * * cd $CATALYST_HOME && docker-compose exec -T postgres pg_dump -U catalyst_user \
+  -d catalyst_trading | gzip > /backups/catalyst/catalyst_$(date +\%Y\%m\%d_\%H\%M\%S).sql.gz 2>&1
+
+# Log rotation (weekly Sunday 3:00 AM)
+0 3 * * 0 find /var/log/catalyst -name "*.log" -mtime +7 -delete
+0 3 * * 0 find /backups/catalyst -name "*.sql.gz" -mtime +30 -delete
+
+# Daily performance report (6:00 AM Perth)
+0 6 * * * cd $CATALYST_HOME && docker-compose exec -T workflow \
+  curl http://localhost:5006/api/v1/reports/daily | \
+  python3 -m json.tool > /var/log/catalyst/daily_report_$(date +\%Y\%m\%d).json 2>&1
+
+# ============================================================================
+# MONITORING & ALERTS
+# ============================================================================
+
+# Auto-restart failed services (every 5 minutes)
+*/5 * * * * cd $CATALYST_HOME && docker-compose ps | grep -q "Exit" && \
+  docker-compose up -d >> /var/log/catalyst/auto-restart.log 2>&1
+
+# Check disk space (hourly)
+0 * * * * df -h | grep -E '^/dev/' | awk '{if ($5+0 > 90) print "WARNING: Disk usage "$5" on "$6}' \
+  >> /var/log/catalyst/disk-check.log 2>&1
+
+# ============================================================================
+# NOTES
+# ============================================================================
+#
+# Autonomous Trading Behavior:
+# - System scans market 10+ times/day
+# - Executes trades immediately after risk validation
+# - Risk Manager enforces all safety limits
+# - Email alerts are informational ("here's what I did")
+# - Emergency stop is automatic at daily loss limit
+# - Manual restart required after emergency stop
+#
+# Safety Features:
+# - Daily loss limit: $2,000 (configurable in config/risk_parameters.yaml)
+# - Max positions: 5 (configurable)
+# - Pre-trade validation: Required for all trades
+# - Position monitoring: Every 60 seconds
+# - Emergency stop: Automatic when limits hit
+#
+# Monitoring:
+# - Email alerts sent to configured recipients
+# - Logs available in /var/log/catalyst/
+# - Daily reports generated automatically
+# - Health checks every 15 minutes
+#
+# To Disable Autonomous Trading:
+# 1. Comment out the autonomous workflow cron jobs (lines with "mode": "autonomous")
+# 2. Or set TRADING_SESSION_MODE=supervised in .env
+# 3. Or manually stop: curl -X POST http://localhost:5006/api/v1/workflow/stop
+#
+# To Restart After Emergency Stop:
+# curl -X POST http://localhost:5006/api/v1/workflow/start -d '{"mode": "autonomous"}'
+#
+# ============================================================================

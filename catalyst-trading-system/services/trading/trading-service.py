@@ -2,11 +2,18 @@
 
 # Name of Application: Catalyst Trading System
 # Name of file: trading-service.py
-# Version: 5.1.2
-# Last Updated: 2025-10-13
-# Purpose: Trading service with RIGOROUS error handling (Playbook v3.0 Compliant)
+# Version: 8.0.0
+# Last Updated: 2025-11-18
+# Purpose: Trading service with ALPACA INTEGRATION for autonomous trading
 
 # REVISION HISTORY:
+# v8.0.0 (2025-11-18) - ALPACA INTEGRATION
+# - Integrated alpaca_trader for real order execution
+# - Submit bracket orders to Alpaca (entry + stop + target)
+# - Store Alpaca order_id in database
+# - Track order fill status
+# - Paper trading and live trading support
+#
 # v5.1.2 (2025-10-13) - Production-Safe Logging
 # - Removed Unicode emojis from logs (breaks log parsers)
 # - Using [OK] prefix instead of checkmarks
@@ -38,7 +45,7 @@
 # Manages:
 # 1. Trading cycles with proper validation
 # 2. Position management with security_id FKs
-# 3. Order execution with comprehensive error tracking
+# 3. Order execution with comprehensive error tracking (NOW WITH ALPACA!)
 # 4. Risk calculations via JOINs
 # 5. NO silent failures - all errors visible and tracked
 
@@ -47,7 +54,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from datetime import datetime
-from contextlib import asynccontextmanager  # âœ… For lifespan
+from contextlib import asynccontextmanager
 import asyncpg
 import json
 import os
@@ -55,12 +62,20 @@ import logging
 import uvicorn
 from enum import Enum
 from decimal import Decimal
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import common utilities
+from common.alpaca_trader import alpaca_trader
 
 # ============================================================================
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "trading"
-SERVICE_VERSION = "6.0.0"
+SERVICE_VERSION = "8.0.0"  # ALPACA INTEGRATION
 SERVICE_TITLE = "Trading Service"
 SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5005
@@ -729,8 +744,8 @@ async def create_position(cycle_id: str, request: PositionRequest):
             
             # Update cycle metrics
             await conn.execute("""
-                UPDATE trading_cycles 
-                SET 
+                UPDATE trading_cycles
+                SET
                     current_positions = current_positions + 1,
                     used_risk_budget = used_risk_budget + $1,
                     current_exposure = current_exposure + $2
@@ -740,9 +755,74 @@ async def create_position(cycle_id: str, request: PositionRequest):
                 Decimal(str((request.entry_price or 0) * request.quantity)),
                 cycle_id
             )
-        
+
+            # ===================================================================
+            # ALPACA INTEGRATION - Submit real order to broker
+            # ===================================================================
+            alpaca_order_id = None
+            alpaca_status = "not_submitted"
+
+            if alpaca_trader.is_enabled():
+                try:
+                    logger.info(f"Submitting bracket order to Alpaca: {request.symbol}")
+
+                    # Submit bracket order (entry + stop + target)
+                    alpaca_order = await alpaca_trader.submit_bracket_order(
+                        symbol=request.symbol,
+                        quantity=request.quantity,
+                        side=request.side.lower(),
+                        entry_price=request.entry_price,  # None = market order
+                        stop_loss=request.stop_loss,
+                        take_profit=request.take_profit
+                    )
+
+                    alpaca_order_id = alpaca_order['order_id']
+                    alpaca_status = alpaca_order['status']
+
+                    # Store Alpaca order_id in database
+                    await conn.execute("""
+                        UPDATE positions
+                        SET alpaca_order_id = $1,
+                            alpaca_status = $2
+                        WHERE position_id = $3
+                    """, alpaca_order_id, alpaca_status, position_id)
+
+                    logger.info(
+                        f"Alpaca order submitted successfully: {alpaca_order_id} "
+                        f"(status: {alpaca_status})"
+                    )
+
+                except Exception as e:
+                    # Log Alpaca error but don't fail position creation
+                    logger.error(
+                        f"Alpaca order submission failed: {e}",
+                        exc_info=True,
+                        extra={
+                            'position_id': position_id,
+                            'symbol': request.symbol,
+                            'error_type': 'alpaca_integration'
+                        }
+                    )
+
+                    # Store error in database
+                    await conn.execute("""
+                        UPDATE positions
+                        SET alpaca_status = $1,
+                            alpaca_error = $2
+                        WHERE position_id = $3
+                    """, "error", str(e), position_id)
+
+                    alpaca_status = "error"
+            else:
+                logger.warning(
+                    f"Alpaca not enabled - position created in database only "
+                    f"(position_id: {position_id})"
+                )
+                alpaca_status = "alpaca_disabled"
+
         logger.info(
-            f"Position created: {position_id} for {request.symbol}",
+            f"Position created: {position_id} for {request.symbol} "
+            f"(Alpaca: {alpaca_status})",
             extra={
                 'position_id': position_id,
                 'cycle_id': cycle_id,
@@ -759,6 +839,9 @@ async def create_position(cycle_id: str, request: PositionRequest):
             "symbol": request.symbol,
             "risk_amount": float(risk_amount),
             "cycle_id": cycle_id,
+            "alpaca_order_id": alpaca_order_id,
+            "alpaca_status": alpaca_status,
+            "alpaca_enabled": alpaca_trader.is_enabled(),
             "timestamp": datetime.utcnow().isoformat()
         }
         

@@ -2,11 +2,19 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: workflow-coordinator.py
-Version: 1.0.1
-Last Updated: 2025-10-16
-Purpose: HTTP service that orchestrates the trading workflow pipeline
+Version: 2.0.0
+Last Updated: 2025-11-18
+Purpose: HTTP service that orchestrates the AUTONOMOUS trading workflow pipeline
 
 REVISION HISTORY:
+v2.0.0 (2025-11-18) - AUTONOMOUS TRADING SUPPORT
+- Integrated config_loader for YAML configuration loading
+- Integrated alert_manager for email notifications
+- Added autonomous mode enforcement (checks TRADING_SESSION_MODE)
+- Sends informational alerts after trade execution
+- Respects trading_config.yaml parameters
+- Hot-reload configuration support
+
 v1.0.1 (2025-10-16) - Bug fixes and improvements
 - Fixed version typo (1.0.o -> 1.0.0)
 - Added Pydantic model for workflow start request
@@ -23,6 +31,12 @@ Description:
 This service handles the actual trading workflow coordination,
 calling each service in sequence and filtering candidates.
 Runs on port 5006 as a standard HTTP service.
+
+AUTONOMOUS TRADING:
+- Loads config/trading_config.yaml for session mode
+- Checks if mode == "autonomous" before executing trades
+- Sends email alerts after actions taken
+- Respects risk limits from config/risk_parameters.yaml
 """
 
 from contextlib import asynccontextmanager
@@ -38,10 +52,28 @@ import asyncio
 import logging
 import os
 import json
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import common utilities
+from common.config_loader import (
+    get_trading_config,
+    get_risk_config,
+    is_autonomous_mode,
+    get_workflow_config
+)
+from common.alert_manager import (
+    alert_manager,
+    AlertType,
+    AlertSeverity
+)
 
 SERVICE_NAME = "workflow"
-SERVICE_VERSION = "1.0.1"  # Fixed version typo
+SERVICE_VERSION = "2.0.0"  # AUTONOMOUS TRADING SUPPORT
 SERVICE_PORT = 5006
 
 # Configure logging
@@ -411,7 +443,26 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
             "trades": executed_trades
         }
         logger.info(f"[{cycle_id}] Trading complete: {len(executed_trades)} trades executed")
-        
+
+        # ===================================================================
+        # SEND TRADES EXECUTED ALERT (AUTONOMOUS MODE)
+        # ===================================================================
+        if executed_trades:
+            try:
+                total_risk = sum(
+                    candidate.get("risk_amount", 0) for candidate in validated_candidates[:len(executed_trades)]
+                )
+
+                await alert_manager.alert_trades_executed(
+                    cycle_id=cycle_id,
+                    trades=executed_trades,
+                    total_risk=total_risk
+                )
+                logger.info(f"[{cycle_id}] Trades executed alert sent ({len(executed_trades)} trades)")
+            except Exception as e:
+                logger.warning(f"[{cycle_id}] Failed to send trades executed alert: {e}")
+                # Don't fail workflow if alert fails
+
         # ========== COMPLETE ==========
         state.status = WorkflowStatus.COMPLETED
         workflow_result["completed_at"] = datetime.utcnow()
@@ -466,30 +517,117 @@ async def start_workflow(
     background_tasks: BackgroundTasks,
     request: WorkflowStartRequest  # Now properly using Pydantic model
 ):
-    """Start a new trading workflow cycle with specified parameters"""
+    """
+    Start a new trading workflow cycle with specified parameters.
+
+    AUTONOMOUS MODE:
+    - Checks if trading_session.mode == "autonomous" in config
+    - If autonomous: executes trades immediately after risk validation
+    - If supervised: raises 400 error (requires human approval)
+    - Sends email alert when workflow starts
+    """
     if state.status not in [WorkflowStatus.IDLE, WorkflowStatus.COMPLETED, WorkflowStatus.FAILED]:
         raise HTTPException(
             status_code=409,
             detail=f"Workflow already running: {state.status}"
         )
-    
+
+    # ===================================================================
+    # AUTONOMOUS MODE CHECK
+    # ===================================================================
+    try:
+        # Load trading configuration
+        trading_config = get_trading_config()
+        session_mode = trading_config.get('trading_session', {}).get('mode', 'supervised')
+
+        logger.info(f"Trading session mode: {session_mode}")
+
+        # Enforce autonomous mode requirement
+        if session_mode != 'autonomous':
+            logger.warning(
+                f"Workflow start blocked: Trading mode is '{session_mode}' (requires 'autonomous')"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Supervised mode not supported via API",
+                    "message": f"Current mode: '{session_mode}'. Change to 'autonomous' in config/trading_config.yaml",
+                    "config_file": "config/trading_config.yaml",
+                    "required_mode": "autonomous",
+                    "current_mode": session_mode
+                }
+            )
+
+        logger.info("✅ Autonomous mode confirmed - trades will execute automatically")
+
+        # Load workflow config
+        workflow_config = get_workflow_config()
+        scan_frequency = workflow_config.get('scan_frequency_minutes', 30) * 60  # Convert to seconds
+
+        # Override with request if provided
+        if request.scan_frequency:
+            scan_frequency = request.scan_frequency
+
+        max_positions = workflow_config.get('execute_top_n', 3)
+        if request.max_positions:
+            max_positions = request.max_positions
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Config loading error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Configuration error: {str(e)}"
+        )
+
     cycle_id = f"cycle_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-    
+
+    # ===================================================================
+    # SEND WORKFLOW STARTED ALERT
+    # ===================================================================
+    try:
+        await alert_manager.alert_workflow_started(
+            cycle_id=cycle_id,
+            mode=request.mode,
+            scan_frequency=scan_frequency
+        )
+        logger.info(f"Workflow started alert sent for cycle: {cycle_id}")
+    except Exception as e:
+        logger.warning(f"Failed to send workflow started alert: {e}")
+        # Don't fail workflow if alert fails
+
+    # ===================================================================
+    # START AUTONOMOUS WORKFLOW
+    # ===================================================================
     # Start workflow in background with parsed parameters
     background_tasks.add_task(
         run_trading_workflow,
         cycle_id,
         request.mode,
-        request.dict()  # Pass all parameters
+        {
+            **request.dict(),
+            'session_mode': 'autonomous',
+            'scan_frequency': scan_frequency,
+            'max_positions': max_positions
+        }
     )
-    
+
+    logger.info(
+        f"Autonomous workflow started: {cycle_id} (mode: {request.mode}, "
+        f"max_positions: {max_positions}, scan_freq: {scan_frequency}s)"
+    )
+
     return {
         "success": True,
         "cycle_id": cycle_id,
         "status": "started",
         "mode": request.mode,
-        "max_positions": request.max_positions,
-        "risk_level": request.risk_level
+        "session_mode": "autonomous",
+        "max_positions": max_positions,
+        "risk_level": request.risk_level,
+        "scan_frequency": scan_frequency,
+        "message": "Autonomous workflow started - trades will execute automatically after risk validation"
     }
 
 @app.get("/api/v1/workflow/status")

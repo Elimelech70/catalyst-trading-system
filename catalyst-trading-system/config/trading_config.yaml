@@ -1,0 +1,324 @@
+# =============================================================================
+# Catalyst Trading System - Autonomous Trading Configuration
+# =============================================================================
+# Name of Application: Catalyst Trading System
+# Name of file: trading_config.yaml
+# Version: 6.1.0
+# Purpose: Trading session and workflow automation configuration
+#
+# CRITICAL: session_mode = "autonomous" enables fully automated trading
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# TRADING SESSION CONFIGURATION
+# -----------------------------------------------------------------------------
+trading_session:
+  # *** PRIMARY CONFIGURATION ***
+  mode: "autonomous"                # OPTIONS: "autonomous" | "supervised"
+                                    # autonomous = Execute trades immediately after risk validation
+                                    # supervised = Wait for human approval (5-min timeout)
+
+  # Session Behavior
+  auto_start_on_market_open: false  # Wait for cron trigger
+  auto_close_at_market_close: true  # Close all positions at market close
+  market_close_buffer_minutes: 15   # Close 15 min before market close (3:45 PM ET)
+
+  # Position Management
+  max_hold_time_minutes: 180        # Auto-close position after 3 hours
+  enable_profit_targets: true       # Use take-profit levels
+  enable_stop_losses: true          # Use stop-loss levels (REQUIRED)
+
+  # Execution Behavior
+  execution_timeout_seconds: 30     # Timeout for order execution
+  retry_failed_orders: true         # Retry if order fails
+  max_order_retries: 3              # Maximum retry attempts
+
+# -----------------------------------------------------------------------------
+# WORKFLOW AUTOMATION
+# -----------------------------------------------------------------------------
+workflow:
+  # Scanning Configuration
+  scan_frequency_minutes: 30        # Scan market every 30 minutes
+  scan_on_startup: true             # Run scan when workflow starts
+
+  # Universe Selection
+  universe_size: 100                # Start with 100 stocks
+
+  # Candidate Filtering (100 → 35 → 20 → 10 → 5)
+  stage_1_catalyst_filter: 35       # Filter to 35 with catalysts
+  stage_2_technical_filter: 20      # Filter to 20 meeting technical criteria
+  stage_3_pattern_filter: 10        # Filter to 10 with patterns
+  stage_4_final_ranking: 5          # Rank top 5 candidates
+
+  # Trade Execution
+  max_candidates_per_scan: 5        # Analyze top 5 candidates
+  execute_top_n: 3                  # Execute trades on top 3 (if risk passes)
+
+  # Execution Strategy
+  execute_simultaneously: false     # Execute one at a time
+  delay_between_trades_seconds: 10  # 10 second delay between trades
+
+  # Workflow State
+  persist_state: true               # Save workflow state to database
+  resume_on_restart: true           # Resume from last state on restart
+
+# -----------------------------------------------------------------------------
+# MARKET HOURS CONFIGURATION
+# -----------------------------------------------------------------------------
+market_hours:
+  # US Market Hours (Eastern Time)
+  timezone: "America/New_York"
+
+  # Regular Trading Hours
+  market_open: "09:30"              # 9:30 AM ET
+  market_close: "16:00"             # 4:00 PM ET
+
+  # Extended Hours Trading
+  enable_premarket: false           # Disable pre-market trading
+  enable_afterhours: false          # Disable after-hours trading
+
+  premarket_start: "04:00"          # 4:00 AM ET (if enabled)
+  afterhours_end: "20:00"           # 8:00 PM ET (if enabled)
+
+  # Trading Days
+  trading_days: [1, 2, 3, 4, 5]     # Monday-Friday (0=Sunday, 6=Saturday)
+
+  # Market Holidays (US Stock Market - 2025)
+  holidays:
+    - "2025-01-01"  # New Year's Day
+    - "2025-01-20"  # Martin Luther King Jr. Day
+    - "2025-02-17"  # Presidents' Day
+    - "2025-04-18"  # Good Friday
+    - "2025-05-26"  # Memorial Day
+    - "2025-06-19"  # Juneteenth
+    - "2025-07-04"  # Independence Day
+    - "2025-09-01"  # Labor Day
+    - "2025-11-27"  # Thanksgiving
+    - "2025-12-25"  # Christmas
+
+# -----------------------------------------------------------------------------
+# SCANNER CONFIGURATION
+# -----------------------------------------------------------------------------
+scanner:
+  # Data Sources
+  use_live_data: true               # Use real-time market data
+  cache_scan_results: true          # Cache results for 5 minutes
+
+  # Filtering Criteria
+  min_price: 5.00                   # Minimum stock price $5
+  max_price: 500.00                 # Maximum stock price $500
+  min_volume: 1000000               # Minimum 1M shares/day volume
+  min_dollar_volume: 10000000       # Minimum $10M daily dollar volume
+
+  # News Requirements
+  require_news_catalyst: true       # Require news in last 24 hours
+  min_catalyst_strength: 0.70       # Minimum catalyst strength 0.7/1.0
+
+  # Sector Filters
+  excluded_sectors: []              # No excluded sectors
+  preferred_sectors: []             # No sector preference (all equal)
+
+  # Security Filters
+  excluded_symbols: []              # No excluded symbols
+  max_spread_pct: 0.01              # Maximum 1% bid-ask spread
+
+# -----------------------------------------------------------------------------
+# PATTERN RECOGNITION CONFIGURATION
+# -----------------------------------------------------------------------------
+pattern_recognition:
+  # Enabled Patterns
+  enabled_patterns:
+    - "bull_flag"
+    - "cup_and_handle"
+    - "ascending_triangle"
+    - "opening_range_breakout"
+    - "abcd_pattern"
+
+  # Pattern Confidence
+  min_pattern_confidence: 0.70      # Minimum 70% confidence required
+
+  # Pattern Preferences (optional scoring boost)
+  pattern_preferences:
+    bull_flag: 1.0                  # Standard weight
+    cup_and_handle: 1.2             # 20% preference (higher win rate)
+    ascending_triangle: 1.0
+    opening_range_breakout: 0.9     # 10% penalty (more volatile)
+    abcd_pattern: 1.0
+
+# -----------------------------------------------------------------------------
+# TECHNICAL ANALYSIS CONFIGURATION
+# -----------------------------------------------------------------------------
+technical_analysis:
+  # Indicator Requirements
+  require_trend_confirmation: true  # Price above SMA 20
+  require_momentum_confirmation: true  # RSI in valid range
+  require_volume_confirmation: true   # Volume above average
+
+  # Specific Criteria
+  min_rsi: 40                       # Minimum RSI value
+  max_rsi: 70                       # Maximum RSI value
+  min_volume_ratio: 1.5             # Volume must be 1.5x average
+
+  # Trend Filters
+  price_above_sma_20: true          # Must be above 20-day SMA
+  price_above_sma_50: false         # Optional 50-day SMA filter
+
+  # Support/Resistance
+  use_support_resistance: true      # Use support/resistance levels
+  min_bounces_for_support: 2        # Minimum 2 prior bounces
+
+# -----------------------------------------------------------------------------
+# NEWS CATALYST CONFIGURATION
+# -----------------------------------------------------------------------------
+news_catalyst:
+  # News Sources
+  sources:
+    - "benzinga"
+    - "newsapi"
+    - "alpaca"
+
+  # Sentiment Analysis
+  min_sentiment_score: 0.50         # Minimum positive sentiment
+  sentiment_weight: 0.30            # 30% weight in final score
+
+  # Catalyst Types (preferred)
+  preferred_catalysts:
+    - "earnings_beat"
+    - "fda_approval"
+    - "upgrade"
+    - "new_contract"
+    - "merger_acquisition"
+
+  # Timing
+  max_news_age_hours: 24            # News within last 24 hours
+  prefer_recent_news: true          # Boost score for recent news
+
+# -----------------------------------------------------------------------------
+# ORDER EXECUTION CONFIGURATION
+# -----------------------------------------------------------------------------
+order_execution:
+  # Default Order Type
+  default_order_type: "limit"       # OPTIONS: "market" | "limit" | "bracket"
+
+  # Limit Order Configuration
+  limit_offset_pct: 0.001           # 0.1% better than current price
+  limit_timeout_seconds: 60         # Cancel if not filled in 60 seconds
+  convert_to_market_on_timeout: true  # Convert to market if limit times out
+
+  # Bracket Order Configuration (entry + stop + target)
+  use_bracket_orders: true          # Recommended for automated trading
+  bracket_stop_loss_atr: 2.0        # Stop loss at 2x ATR
+  bracket_take_profit_atr: 3.0      # Take profit at 3x ATR (1.5:1 R/R)
+
+  # Execution Timing
+  delay_between_orders_ms: 100      # 100ms delay between orders
+  max_slippage_pct: 0.005           # Cancel if slippage > 0.5%
+
+# -----------------------------------------------------------------------------
+# POSITION MANAGEMENT
+# -----------------------------------------------------------------------------
+position_management:
+  # Monitoring
+  update_frequency_seconds: 60      # Update positions every 60 seconds
+
+  # Trailing Stops
+  enable_trailing_stops: false      # Disable initially (can enable later)
+  trailing_stop_activation_pct: 0.02  # Activate after 2% profit
+  trailing_stop_distance_pct: 0.01    # Trail by 1%
+
+  # Partial Exits
+  enable_partial_exits: false       # Disable partial exits initially
+  partial_exit_at_target_1: 0.50    # Exit 50% at first target
+  partial_exit_at_target_2: 0.30    # Exit 30% at second target
+
+  # Time-Based Management
+  scale_out_over_time: false        # Disable time-based scaling
+  max_position_age_minutes: 180     # Close after 3 hours
+
+# -----------------------------------------------------------------------------
+# COMPOSITE SCORING - Candidate Ranking
+# -----------------------------------------------------------------------------
+composite_scoring:
+  # Score Weights (must sum to 1.0)
+  weights:
+    catalyst_score: 0.30            # 30% - News catalyst strength
+    technical_score: 0.25           # 25% - Technical indicators
+    pattern_score: 0.25             # 25% - Pattern confidence
+    volume_score: 0.10              # 10% - Volume analysis
+    risk_reward_score: 0.10         # 10% - Risk/reward ratio
+
+  # Minimum Composite Score
+  min_composite_score: 0.70         # Require 70/100 minimum score
+
+# -----------------------------------------------------------------------------
+# DATA COLLECTION - ML Training
+# -----------------------------------------------------------------------------
+data_collection:
+  # Logging for ML Training
+  log_all_decisions: true           # Log every trading decision
+  log_rejected_trades: true         # Log trades rejected by risk manager
+  log_scan_results: true            # Log all scan results
+  log_human_overrides: false        # No human overrides in autonomous mode
+
+  # Data Storage
+  store_market_snapshots: true      # Store market state at decision time
+  store_technical_context: true     # Store indicator values
+  store_news_context: true          # Store news sentiment
+
+  # ML Preparation
+  label_outcomes: true              # Automatically label win/loss
+  calculate_r_multiples: true       # Calculate R-multiple for each trade
+
+# -----------------------------------------------------------------------------
+# PERFORMANCE TRACKING
+# -----------------------------------------------------------------------------
+performance_tracking:
+  # Real-Time Metrics
+  track_real_time_pnl: true         # Track P&L in real-time
+  track_win_rate: true              # Track win rate
+  track_sharpe_ratio: true          # Calculate Sharpe ratio
+
+  # Reporting
+  generate_daily_report: true       # Generate report at end of day
+  send_daily_summary_email: true    # Email daily summary
+
+  # Benchmarking
+  benchmark_symbol: "SPY"           # Compare performance to SPY
+  calculate_alpha: true             # Calculate alpha vs SPY
+
+# -----------------------------------------------------------------------------
+# ERROR HANDLING & RECOVERY
+# -----------------------------------------------------------------------------
+error_handling:
+  # Retry Configuration
+  max_retries: 3                    # Maximum retry attempts
+  retry_delay_seconds: 5            # Delay between retries
+  exponential_backoff: true         # Use exponential backoff
+
+  # Failure Behavior
+  halt_on_repeated_failures: true   # Stop after 5 consecutive failures
+  failure_threshold: 5              # Threshold for halt
+
+  # Recovery
+  auto_restart_after_halt: false    # Require manual restart
+  notify_on_errors: true            # Send email on errors
+
+# -----------------------------------------------------------------------------
+# DEBUGGING & DEVELOPMENT
+# -----------------------------------------------------------------------------
+debugging:
+  # Verbose Logging
+  verbose_logging: false            # Disable verbose logs in production
+  log_level: "INFO"                 # OPTIONS: DEBUG, INFO, WARNING, ERROR
+
+  # Simulation Mode
+  simulation_mode: false            # Set to true for paper trading
+  dry_run: false                    # Set to true to test without execution
+
+  # Testing
+  test_mode: false                  # Enable test mode features
+  test_max_trades_per_day: 5        # Limit trades in test mode
+
+# =============================================================================
+# END OF TRADING CONFIGURATION
+# =============================================================================

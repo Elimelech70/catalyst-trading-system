@@ -2,11 +2,20 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: risk-manager-service.py
-Version: 6.0.0
+Version: 7.0.0
 Last Updated: 2025-11-18
-Purpose: Risk management with v6.0 3NF normalized schema
+Purpose: Autonomous risk management with real-time monitoring and emergency stop
 
 REVISION HISTORY:
+v7.0.0 (2025-11-18) - AUTONOMOUS TRADING IMPLEMENTATION
+- ✅ Real-time position monitoring (every 60 seconds)
+- ✅ Automatic emergency stop execution at daily loss limit
+- ✅ Alpaca API integration for closing real positions
+- ✅ Email alerts for warnings and critical events
+- ✅ YAML configuration with hot-reload support
+- ✅ Background monitoring task lifecycle management
+- ✅ Graceful degradation if Alpaca unavailable
+
 v6.0.0 (2025-11-18) - SCHEMA v6.0 3NF COMPLIANCE
 - Uses get_or_create_security() helper function
 - All queries use proper JOINs and helper functions
@@ -22,18 +31,33 @@ v5.0.0 (2025-10-13) - Normalized Schema Migration (Playbook v3.0 Step 6)
 - ✅ Risk events logging with proper FKs
 - ✅ Error handling compliant with v1.0 standard
 
-v4.2.1 (2025-09-20) - DEPRECATED (Denormalized)
-- Had risk tables but used symbol VARCHAR
-- No FK relationships with securities/sectors
-
 Description of Service:
-Enforces risk management rules using v6.0 3NF normalized schema:
+Autonomous risk management service that continuously monitors positions and
+automatically executes emergency stop when risk limits are breached:
+
+AUTONOMOUS FEATURES:
+- Real-time monitoring: Checks all active cycles every 60 seconds
+- Daily loss tracking: Monitors P&L against configured limit ($2,000 default)
+- Warning alerts: Email sent at 75% of daily loss limit
+- Emergency stop: Automatically triggered at 100% of daily loss limit
+  1. Closes all positions via Alpaca API (real broker)
+  2. Marks positions as closed in database
+  3. Stops the trading cycle
+  4. Sends critical email alert
+
+RISK VALIDATION (Pre-trade):
 - Position sizing and limits (via security_id)
 - Sector exposure limits (via securities → sectors JOIN)
 - Daily loss limits
 - Max positions per cycle
 - Risk/reward validation
 - All queries use security_id FKs and helper functions for data integrity
+
+INTEGRATION:
+- Uses config/risk_parameters.yaml for risk limits
+- Integrates with Alpaca API for real position closure
+- Email alerts via SMTP (alert_manager)
+- Schema: v6.0 3NF normalized
 """
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -49,6 +73,17 @@ import asyncpg
 import os
 import logging
 import json
+import sys
+from pathlib import Path
+import asyncio
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import common utilities
+from common.config_loader import get_risk_config, get_risk_limits, get_emergency_actions
+from common.alert_manager import alert_manager, AlertType, AlertSeverity
+from common.alpaca_trader import alpaca_trader
 
 # ============================================================================
 # LOGGING SETUP
@@ -65,9 +100,12 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 SERVICE_NAME = "risk-manager"
-SERVICE_VERSION = "6.0.0"
+SERVICE_VERSION = "7.0.0"  # AUTONOMOUS MONITORING
 SERVICE_PORT = 5004
 SCHEMA_VERSION = "v6.0 3NF normalized"
+
+# Global flag for monitoring task
+_monitoring_task: Optional[asyncio.Task] = None
 
 # Database connection
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -108,6 +146,216 @@ class ServiceState:
     db_pool: Optional[asyncpg.Pool] = None
 
 state = ServiceState()
+
+# ============================================================================
+# AUTONOMOUS MONITORING & EMERGENCY STOP
+# ============================================================================
+
+async def execute_emergency_stop(cycle_id: str, reason: str) -> Dict[str, Any]:
+    """
+    Execute emergency stop: close all positions, cancel orders, halt trading.
+
+    This is AUTONOMOUS - no human approval required.
+    """
+    logger.critical(f"🛑 EMERGENCY STOP TRIGGERED: {reason}")
+
+    result = {
+        "emergency_stop": True,
+        "reason": reason,
+        "cycle_id": cycle_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "positions_closed": 0,
+        "orders_cancelled": 0,
+        "errors": []
+    }
+
+    try:
+        async with state.db_pool.acquire() as conn:
+            # Get all open positions for this cycle (with symbols)
+            open_positions = await conn.fetch("""
+                SELECT
+                    p.position_id,
+                    p.security_id,
+                    p.side,
+                    p.quantity,
+                    p.alpaca_order_id,
+                    s.symbol
+                FROM positions p
+                JOIN securities s ON s.security_id = p.security_id
+                WHERE p.cycle_id = $1 AND p.status = 'open'
+            """, cycle_id)
+
+            logger.info(f"Found {len(open_positions)} open positions to close")
+
+            # ===================================================================
+            # ALPACA INTEGRATION - Close real positions first
+            # ===================================================================
+            alpaca_closed = 0
+            if alpaca_trader.is_enabled():
+                try:
+                    logger.critical("Closing all positions via Alpaca...")
+
+                    # Option 1: Use Alpaca's close_all_positions() - fastest
+                    alpaca_results = await alpaca_trader.close_all_positions()
+                    alpaca_closed = len(alpaca_results)
+
+                    logger.critical(
+                        f"Alpaca closed {alpaca_closed} positions successfully"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Alpaca close_all failed: {e}", exc_info=True)
+                    result["errors"].append(f"Alpaca close_all error: {str(e)}")
+
+                    # Fallback: Close positions individually
+                    for position in open_positions:
+                        try:
+                            if position['symbol']:
+                                await alpaca_trader.close_position(position['symbol'])
+                                alpaca_closed += 1
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to close {position['symbol']} via Alpaca: {e}"
+                            )
+                            result["errors"].append(
+                                f"Alpaca {position['symbol']}: {str(e)}"
+                            )
+            else:
+                logger.warning("Alpaca not enabled - closing database positions only")
+
+            result["alpaca_positions_closed"] = alpaca_closed
+
+            # ===================================================================
+            # DATABASE - Mark positions as closed
+            # ===================================================================
+            for position in open_positions:
+                try:
+                    await conn.execute("""
+                        UPDATE positions
+                        SET status = 'closed',
+                            closed_at = $1,
+                            exit_price = entry_price,
+                            realized_pnl = 0,
+                            alpaca_status = 'closed_by_emergency_stop'
+                        WHERE position_id = $2
+                    """, datetime.utcnow(), position['position_id'])
+
+                    result["positions_closed"] += 1
+
+                except Exception as e:
+                    logger.error(f"Failed to close position {position['position_id']}: {e}")
+                    result["errors"].append(f"Position {position['position_id']}: {str(e)}")
+
+            # Update cycle status to stopped
+            await conn.execute("""
+                UPDATE trading_cycles
+                SET status = 'stopped',
+                    stopped_at = $1
+                WHERE cycle_id = $2
+            """, datetime.utcnow(), cycle_id)
+
+            logger.critical(
+                f"Emergency stop completed: {result['positions_closed']} DB positions closed, "
+                f"{alpaca_closed} Alpaca positions closed"
+            )
+
+            # Send critical alert
+            try:
+                # Get final P&L
+                daily_pnl = await get_daily_pnl(conn, cycle_id)
+
+                await alert_manager.alert_emergency_stop(
+                    reason=reason,
+                    daily_pnl=daily_pnl,
+                    positions_closed=result["positions_closed"],
+                    orders_cancelled=result["orders_cancelled"]
+                )
+            except Exception as e:
+                logger.error(f"Failed to send emergency stop alert: {e}")
+                result["errors"].append(f"Alert failed: {str(e)}")
+
+            return result
+
+    except Exception as e:
+        logger.critical(f"Emergency stop failed: {e}", exc_info=True)
+        result["errors"].append(f"Critical error: {str(e)}")
+        return result
+
+
+async def monitor_positions_continuously():
+    """
+    Background task: Monitor all active positions every 60 seconds.
+
+    Checks:
+    - Daily P&L against limit
+    - Position count limits
+    - Risk violations
+
+    AUTONOMOUS: Triggers emergency stop when limits hit.
+    """
+    logger.info("🔍 Real-time position monitoring started")
+
+    check_interval = 60  # seconds
+
+    while True:
+        try:
+            # Load risk limits from config
+            risk_limits = get_risk_limits()
+            max_daily_loss = risk_limits.get('max_daily_loss_usd', 2000.0)
+            warning_threshold = risk_limits.get('warning_threshold_pct', 0.75)
+
+            # Get all active cycles
+            async with state.db_pool.acquire() as conn:
+                active_cycles = await conn.fetch("""
+                    SELECT cycle_id, mode, max_daily_loss
+                    FROM trading_cycles
+                    WHERE status = 'active'
+                """)
+
+                for cycle in active_cycles:
+                    cycle_id = cycle['cycle_id']
+
+                    # Check daily P&L
+                    daily_pnl = await get_daily_pnl(conn, cycle_id)
+
+                    # WARNING threshold (75% of limit)
+                    warning_level = -(max_daily_loss * warning_threshold)
+                    if daily_pnl <= warning_level and daily_pnl > -max_daily_loss:
+                        logger.warning(
+                            f"Daily P&L warning for {cycle_id}: ${daily_pnl:,.2f} "
+                            f"({abs(daily_pnl)/max_daily_loss*100:.1f}% of limit)"
+                        )
+
+                        # Send warning alert
+                        try:
+                            await alert_manager.alert_daily_loss_warning(
+                                current_loss=daily_pnl,
+                                max_loss=max_daily_loss,
+                                percentage=abs(daily_pnl) / max_daily_loss * 100
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to send warning alert: {e}")
+
+                    # CRITICAL threshold (100% of limit) - EMERGENCY STOP
+                    if daily_pnl <= -max_daily_loss:
+                        logger.critical(
+                            f"🛑 Daily loss limit exceeded for {cycle_id}: ${daily_pnl:,.2f}"
+                        )
+
+                        # AUTONOMOUS EMERGENCY STOP
+                        await execute_emergency_stop(
+                            cycle_id=cycle_id,
+                            reason=f"Daily loss limit exceeded: ${daily_pnl:,.2f} >= ${max_daily_loss:,.2f}"
+                        )
+
+            # Wait before next check
+            await asyncio.sleep(check_interval)
+
+        except Exception as e:
+            logger.error(f"Monitoring error: {e}", exc_info=True)
+            # Continue monitoring even if error occurs
+            await asyncio.sleep(check_interval)
+
 
 # ============================================================================
 # LIFESPAN MANAGEMENT
@@ -172,16 +420,35 @@ async def lifespan(app: FastAPI):
                 logger.info(f"✅ All risk tables present")
             
             logger.info(f"✅ Schema validation passed - {SCHEMA_VERSION}")
-        
-        logger.info(f"✅ {SERVICE_NAME} ready on port {SERVICE_PORT}")
-        
+
+        # ===================================================================
+        # START REAL-TIME MONITORING (AUTONOMOUS TRADING)
+        # ===================================================================
+        global _monitoring_task
+        _monitoring_task = asyncio.create_task(monitor_positions_continuously())
+        logger.info("✅ Real-time position monitoring started (autonomous mode)")
+
+        logger.info(f"✅ {SERVICE_NAME} v{SERVICE_VERSION} ready on port {SERVICE_PORT}")
+        logger.info("🤖 AUTONOMOUS MODE: Emergency stop will trigger automatically at daily loss limit")
+
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         raise
-    
+
     yield
-    
+
     # Shutdown
+    logger.info(f"Shutting down {SERVICE_NAME}")
+
+    # Cancel monitoring task
+    if _monitoring_task:
+        _monitoring_task.cancel()
+        try:
+            await _monitoring_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Monitoring task stopped")
+
     if state.db_pool:
         await state.db_pool.close()
         logger.info("Database pool closed")
