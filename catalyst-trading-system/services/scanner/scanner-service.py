@@ -2,11 +2,17 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: scanner-service.py
-Version: 5.5.0
-Last Updated: 2025-10-16
-Purpose: Scanner service FIXED to match v5.0 normalized database schema
+Version: 6.0.0
+Last Updated: 2025-11-18
+Purpose: Scanner service using v6.0 3NF normalized database schema
 
 REVISION HISTORY:
+v6.0.0 (2025-11-18) - SCHEMA v6.0 3NF COMPLIANCE
+- Uses get_or_create_security() helper function
+- No manual security inserts
+- All queries use proper JOINs with securities table
+- Fully normalized 3NF schema compliance
+
 v5.5.0 (2025-10-16) - SCHEMA v5.0 COMPLIANCE FIX
 - Fixed ALL column name mismatches
 - Removed non-existent columns
@@ -16,8 +22,8 @@ v5.5.0 (2025-10-16) - SCHEMA v5.0 COMPLIANCE FIX
 - No more schema violations
 
 Description of Service:
-Market scanner that CORRECTLY uses the v5.0 normalized database schema.
-All database operations now match the design documentation exactly.
+Market scanner that uses the v6.0 3NF normalized database schema.
+All database operations use helper functions and proper JOINs.
 """
 
 from contextlib import asynccontextmanager
@@ -40,9 +46,9 @@ import uvicorn
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "scanner"
-SERVICE_VERSION = "5.5.0"
+SERVICE_VERSION = "6.0.0"
 SERVICE_TITLE = "Scanner Service"
-SCHEMA_VERSION = "v5.0 normalized"
+SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5001
 
 # Configure logging
@@ -192,29 +198,22 @@ async def verify_schema_compatibility():
 # HELPER FUNCTIONS
 # ============================================================================
 async def get_security_id(symbol: str) -> int:
-    """Get or create security_id for symbol"""
+    """
+    Get or create security_id for symbol using v6.0 helper function.
+
+    v6.0 Pattern: Always use get_or_create_security() helper function.
+    """
     try:
         security_id = await state.db_pool.fetchval(
-            "SELECT security_id FROM securities WHERE symbol = $1",
+            "SELECT get_or_create_security($1)",
             symbol
         )
-        
-        if security_id:
-            return security_id
-        
-        # Create new security
-        security_id = await state.db_pool.fetchval(
-            """
-            INSERT INTO securities (symbol, company_name, sector_id, active)
-            VALUES ($1, $2, $3, TRUE)
-            ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
-            RETURNING security_id
-            """,
-            symbol, f"{symbol} Corp", 1
-        )
-        
+
+        if not security_id:
+            raise ValueError(f"Failed to get security_id for {symbol}")
+
         return security_id
-        
+
     except Exception as e:
         logger.error(f"Failed to get/create security_id for {symbol}: {e}")
         raise

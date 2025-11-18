@@ -1,0 +1,58 @@
+# Catalyst Trading System - Cron Schedule
+#
+# This crontab runs market scans and health checks automatically
+# All times are in UTC (market hours need adjustment based on timezone)
+#
+# US Market Hours: 14:30 - 21:00 UTC (9:30 AM - 4:00 PM EST)
+#
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# ============================================================================
+# HEALTH CHECKS - Every 15 minutes
+# ============================================================================
+*/15 * * * * /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-health-check.sh
+
+# ============================================================================
+# MARKET SCANS - During market hours (Mon-Fri)
+# ============================================================================
+
+# Pre-market scan at 14:15 UTC (9:15 AM EST)
+15 14 * * 1-5 /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-scan.sh
+
+# Market open scan at 14:30 UTC (9:30 AM EST)
+30 14 * * 1-5 /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-scan.sh
+
+# Mid-morning scan at 15:30 UTC (10:30 AM EST)
+30 15 * * 1-5 /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-scan.sh
+
+# Late morning scan at 17:00 UTC (12:00 PM EST)
+0 17 * * 1-5 /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-scan.sh
+
+# Early afternoon scan at 18:30 UTC (1:30 PM EST)
+30 18 * * 1-5 /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-scan.sh
+
+# Late afternoon scan at 20:00 UTC (3:00 PM EST)
+0 20 * * 1-5 /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-scan.sh
+
+# Market close scan at 21:00 UTC (4:00 PM EST)
+0 21 * * 1-5 /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/cron-scan.sh
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# - Scans run 7 times per day during market hours
+# - Health checks run every 15 minutes (96 times per day)
+# - All logs go to /tmp/catalyst-cron/
+# - Logs auto-clean after 7 days
+# - Services must be running for cron jobs to work
+#
+# To install this crontab:
+#   crontab /workspaces/catalyst-trading-system/catalyst-trading-system/scripts/catalyst.crontab
+#
+# To view current crontab:
+#   crontab -l
+#
+# To remove crontab:
+#   crontab -r

@@ -2,11 +2,18 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: technical-service.py
-Version: 5.3.2
-Last Updated: 2025-10-16
-Purpose: Technical analysis service using 'ta' library for indicators
+Version: 6.0.0
+Last Updated: 2025-11-18
+Purpose: Technical analysis service using v6.0 3NF normalized schema
 
 REVISION HISTORY:
+v6.0.0 (2025-11-18) - SCHEMA v6.0 3NF COMPLIANCE
+- Uses get_or_create_security() helper function
+- Uses get_or_create_time() helper function
+- Replaced security_dimension with securities table
+- All queries use proper JOINs and helper functions
+- Fully normalized 3NF schema compliance
+
 v5.3.2 (2025-10-16) - Production-ready with 'ta' library
 - Using 'ta' library (pure Python, no C dependencies)
 - Matches industry-standard calculations
@@ -19,9 +26,8 @@ v5.2.0 (2025-10-16) - Critical production fixes
 v5.0.0 (2025-10-11) - Normalized schema implementation
 
 Description of Service:
-Technical analysis service using the 'ta' library (NOT ta-lib!) for
-accurate indicator calculations. Provides comprehensive technical analysis
-matching professional trading platforms.
+Technical analysis service using the 'ta' library with v6.0 3NF normalized schema.
+Provides comprehensive technical analysis with proper database helper functions.
 """
 
 import os
@@ -49,7 +55,8 @@ import yfinance as yf
 # ============================================================================
 
 SERVICE_NAME = "Technical Analysis Service"
-SERVICE_VERSION = "5.3.2"
+SERVICE_VERSION = "6.0.0"
+SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = int(os.getenv("SERVICE_PORT", "5003"))
 
 # Logging configuration
@@ -314,7 +321,8 @@ def calculate_vwap(data: pd.DataFrame) -> float:
         typical_price = (data['high'] + data['low'] + data['close']) / 3
         vwap = (typical_price * data['volume']).sum() / data['volume'].sum()
         return float(vwap)
-    except:
+    except (KeyError, ZeroDivisionError, TypeError, ValueError) as e:
+        logger.warning(f"VWAP calculation failed: {e}, using close price")
         return float(data['close'].iloc[-1])
 
 def get_default_indicators(data: pd.DataFrame) -> Dict:
@@ -424,39 +432,34 @@ def generate_signal(indicators: Dict) -> Tuple[str, float]:
 # ============================================================================
 
 async def get_security_id(symbol: str) -> int:
-    """Get security_id from symbol"""
+    """
+    Get security_id from symbol using v6.0 helper function.
+
+    v6.0 Pattern: Always use get_or_create_security() helper function.
+    """
     async with db_pool.acquire() as conn:
         result = await conn.fetchval(
-            "SELECT security_id FROM security_dimension WHERE symbol = $1",
+            "SELECT get_or_create_security($1)",
             symbol
         )
         if not result:
-            # Create new security if not exists
-            result = await conn.fetchval(
-                """
-                INSERT INTO security_dimension (symbol, company_name, sector, exchange, is_active)
-                VALUES ($1, $2, 'UNKNOWN', 'UNKNOWN', true)
-                ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
-                RETURNING security_id
-                """,
-                symbol, symbol
-            )
+            raise ValueError(f"Failed to get security_id for {symbol}")
         return result
 
 async def get_time_id() -> int:
-    """Get or create time_id for current timestamp"""
+    """
+    Get or create time_id for current timestamp using v6.0 helper function.
+
+    v6.0 Pattern: Always use get_or_create_time() helper function.
+    """
     now = datetime.now()
     async with db_pool.acquire() as conn:
         result = await conn.fetchval(
-            """
-            INSERT INTO time_dimension (timestamp, year, quarter, month, week, day_of_week, hour, minute)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (timestamp) DO UPDATE SET timestamp = EXCLUDED.timestamp
-            RETURNING time_id
-            """,
-            now, now.year, (now.month-1)//3 + 1, now.month,
-            now.isocalendar()[1], now.weekday(), now.hour, now.minute
+            "SELECT get_or_create_time($1)",
+            now
         )
+        if not result:
+            raise ValueError(f"Failed to get time_id for {now}")
         return result
 
 async def fetch_price_data(symbol: str, timeframe: str, periods: int = 100) -> pd.DataFrame:

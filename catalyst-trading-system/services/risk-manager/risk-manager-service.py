@@ -2,11 +2,16 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: risk-manager-service.py
-Version: 5.0.0
-Last Updated: 2025-10-13
-Purpose: Risk management with normalized schema v5.0 (security_id FKs + sector JOINs)
+Version: 6.0.0
+Last Updated: 2025-11-18
+Purpose: Risk management with v6.0 3NF normalized schema
 
 REVISION HISTORY:
+v6.0.0 (2025-11-18) - SCHEMA v6.0 3NF COMPLIANCE
+- Uses get_or_create_security() helper function
+- All queries use proper JOINs and helper functions
+- Fully normalized 3NF schema compliance
+
 v5.0.0 (2025-10-13) - Normalized Schema Migration (Playbook v3.0 Step 6)
 - ✅ Uses security_id FK lookups (NOT symbol VARCHAR)
 - ✅ Sector exposure tracking via JOINs (securities → sectors)
@@ -22,13 +27,13 @@ v4.2.1 (2025-09-20) - DEPRECATED (Denormalized)
 - No FK relationships with securities/sectors
 
 Description of Service:
-Enforces risk management rules using normalized v5.0 schema:
+Enforces risk management rules using v6.0 3NF normalized schema:
 - Position sizing and limits (via security_id)
 - Sector exposure limits (via securities → sectors JOIN)
 - Daily loss limits
 - Max positions per cycle
 - Risk/reward validation
-- All queries use security_id FKs for data integrity
+- All queries use security_id FKs and helper functions for data integrity
 """
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -60,9 +65,9 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 SERVICE_NAME = "risk-manager"
-SERVICE_VERSION = "5.0.0"
+SERVICE_VERSION = "6.0.0"
 SERVICE_PORT = 5004
-SCHEMA_VERSION = "v5.0 Normalized Schema"
+SCHEMA_VERSION = "v6.0 3NF normalized"
 
 # Database connection
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -253,16 +258,17 @@ class SectorExposure(BaseModel):
 
 async def get_security_id(conn: asyncpg.Connection, symbol: str) -> int:
     """
-    Get security_id for a symbol using helper function.
-    v5.0 Pattern: Always use security_id FK, never symbol VARCHAR.
+    Get security_id for a symbol using v6.0 helper function.
+
+    v6.0 Pattern: Always use get_or_create_security() helper function.
     """
     security_id = await conn.fetchval(
         "SELECT get_or_create_security($1)", symbol.upper()
     )
-    
+
     if not security_id:
         raise ValueError(f"Failed to get security_id for {symbol}")
-    
+
     return security_id
 
 async def get_risk_parameters(conn: asyncpg.Connection, cycle_id: str) -> Dict[str, Any]:

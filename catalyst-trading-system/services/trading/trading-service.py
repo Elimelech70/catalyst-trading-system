@@ -60,9 +60,9 @@ from decimal import Decimal
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "trading"
-SERVICE_VERSION = "5.1.2"  # Production-safe: No Unicode emojis in logs
+SERVICE_VERSION = "6.0.0"
 SERVICE_TITLE = "Trading Service"
-SCHEMA_VERSION = "v5.0 normalized"
+SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5005
 
 from contextlib import asynccontextmanager
@@ -227,8 +227,10 @@ state = TradingState()
 # ============================================================================
 async def get_security_id(symbol: str) -> int:
     """
-    Get or create security_id for symbol with rigorous error handling.
-    
+    Get or create security_id for symbol using v6.0 helper function.
+
+    v6.0 Pattern: Always use get_or_create_security() helper function.
+
     Raises:
         ValueError: If symbol is invalid or security_id cannot be obtained
         asyncpg.PostgresError: If database error occurs
@@ -237,25 +239,25 @@ async def get_security_id(symbol: str) -> int:
         # Validate input
         if not symbol or not isinstance(symbol, str):
             raise ValueError(f"Invalid symbol: {symbol}")
-        
+
         symbol = symbol.upper().strip()
         if not symbol:
             raise ValueError("Symbol cannot be empty after normalization")
-        
+
         security_id = await state.db_pool.fetchval(
-            "SELECT get_or_create_security($1)", 
+            "SELECT get_or_create_security($1)",
             symbol
         )
-        
+
         if not security_id:
             raise ValueError(f"Failed to get security_id for {symbol}")
-        
+
         return security_id
-        
+
     except ValueError:
         # Re-raise validation errors
         raise
-        
+
     except asyncpg.PostgresError as e:
         # Database errors
         logger.error(
@@ -264,7 +266,7 @@ async def get_security_id(symbol: str) -> int:
             extra={'symbol': symbol, 'error_type': 'database'}
         )
         raise
-        
+
     except Exception as e:
         # Truly unexpected errors
         logger.critical(
