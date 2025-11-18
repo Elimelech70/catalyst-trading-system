@@ -96,11 +96,11 @@ Hides schema mismatches until runtime failures occur.
 
 ## Recommendations
 
-### Immediate Actions (This Week)
-1. ✅ Fix all bare `except:` statements in Technical Service
-2. ✅ Add validation to News Service save_news_sentiment()
-3. ✅ Make Scanner Service schema verification fail on error
-4. ✅ Add error handling to Technical Service store_indicators()
+### Immediate Actions (This Week) - ✅ COMPLETED 2025-11-18
+1. ✅ **FIXED** - All bare `except:` statements in Technical Service (lines 324-325, 583-584, 591-592)
+2. ✅ **FIXED** - News Service helper function verification now fails startup (lines 149-159)
+3. ✅ **FIXED** - Scanner Service schema verification now fails on error (lines 172-202)
+4. ✅ **FIXED** - Technical Service store_indicators() has proper error handling (lines 529-572)
 
 ### Short Term (This Sprint)
 5. Replace all generic `Exception` catches with specific types

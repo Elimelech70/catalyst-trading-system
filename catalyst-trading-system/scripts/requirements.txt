@@ -1,0 +1,31 @@
+# Catalyst Trading System - Python Dependencies
+# Version: 6.1.0
+# Last Updated: 2025-11-18
+
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6
+
+# Database
+asyncpg==0.29.0
+
+# Cache
+redis==5.0.1
+
+# HTTP & Web
+aiohttp==3.9.1
+requests==2.31.0
+
+# Market Data & Trading
+yfinance==0.2.32
+alpaca-py==0.14.0
+
+# Technical Analysis
+ta==0.11.0
+pandas==2.1.3
+numpy==1.26.2
+
+# Utilities
+python-dotenv==1.0.0

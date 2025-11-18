@@ -41,6 +41,12 @@ from dataclasses import dataclass, asdict
 import yfinance as yf
 import redis.asyncio as redis
 import uvicorn
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockSnapshotRequest, StockBarsRequest, StockLatestBarRequest
+from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import GetAssetsRequest
+from alpaca.trading.enums import AssetClass, AssetStatus
 
 # ============================================================================
 # SERVICE METADATA
@@ -78,6 +84,8 @@ class ScannerState:
         self.db_pool: Optional[asyncpg.Pool] = None
         self.redis_client: Optional[redis.Redis] = None
         self.http_session: Optional[aiohttp.ClientSession] = None
+        self.alpaca_client: Optional[StockHistoricalDataClient] = None
+        self.alpaca_trading_client: Optional[TradingClient] = None
         self.config: ScannerConfig = ScannerConfig()
 
 state = ScannerState()
@@ -120,6 +128,30 @@ async def lifespan(app: FastAPI):
     
     # HTTP session
     state.http_session = aiohttp.ClientSession()
+
+    # Alpaca clients (optional - for market data and asset info)
+    try:
+        alpaca_api_key = os.getenv("ALPACA_API_KEY")
+        alpaca_secret_key = os.getenv("ALPACA_SECRET_KEY")
+
+        if alpaca_api_key and alpaca_secret_key:
+            # Data client for historical/realtime market data
+            state.alpaca_client = StockHistoricalDataClient(
+                api_key=alpaca_api_key,
+                secret_key=alpaca_secret_key
+            )
+            # Trading client for asset queries and trading (future)
+            state.alpaca_trading_client = TradingClient(
+                api_key=alpaca_api_key,
+                secret_key=alpaca_secret_key,
+                paper=True  # Use paper trading endpoint
+            )
+            logger.info("Alpaca clients initialized (market data + assets API enabled)")
+        else:
+            logger.warning("Alpaca credentials not found - limited universe mode")
+    except Exception as e:
+        logger.warning(f"Alpaca initialization failed: {e}")
+
     logger.info(f"{SERVICE_TITLE} ready on port {SERVICE_PORT}")
     
     yield
@@ -359,14 +391,92 @@ async def scan_market() -> Dict:
         }
 
 async def get_active_universe() -> List[str]:
-    """Get most active stocks"""
+    """
+    Get most active stocks dynamically from Alpaca Assets API.
+
+    Returns up to initial_universe_size stocks sorted by recent trading volume.
+    Uses Alpaca's Assets API to get all tradable US equities, then fetches
+    recent bar data to sort by volume.
+
+    Fallback: Returns empty list if Alpaca not configured (will cause scan to fail safely).
+    """
     try:
-        # This would normally query market data API
-        # For testing, return common active stocks
-        return ["AAPL", "MSFT", "GOOGL", "AMZN", "META", 
-                "TSLA", "NVDA", "JPM", "V", "JNJ"]
+        if not state.alpaca_trading_client or not state.alpaca_client:
+            logger.error("Alpaca not configured - cannot fetch universe")
+            logger.error("Scanner requires Alpaca credentials. Set ALPACA_API_KEY and ALPACA_SECRET_KEY")
+            return []
+
+        logger.info("Fetching tradable assets from Alpaca Assets API...")
+
+        # Get all active, tradable US stocks from Alpaca
+        assets_request = GetAssetsRequest(
+            asset_class=AssetClass.US_EQUITY,
+            status=AssetStatus.ACTIVE
+        )
+
+        assets = state.alpaca_trading_client.get_all_assets(assets_request)
+
+        # Filter for tradable stocks only (exclude crypto, etc)
+        tradable_symbols = [
+            asset.symbol for asset in assets
+            if asset.tradable and asset.fractionable and asset.shortable
+        ]
+
+        logger.info(f"Found {len(tradable_symbols)} tradable US equities from Alpaca")
+
+        # Sample a subset for volume checking (to avoid rate limits)
+        # Take up to 500 symbols to check volume
+        import random
+        sample_size = min(500, len(tradable_symbols))
+        sampled_symbols = random.sample(tradable_symbols, sample_size)
+
+        logger.info(f"Sampling {sample_size} symbols to check volume...")
+
+        # Get latest bar data for volume sorting
+        # Split into batches to respect API limits
+        symbols_with_volume = []
+        batch_size = 100  # Alpaca allows ~200 symbols per request, use 100 to be safe
+
+        for i in range(0, len(sampled_symbols), batch_size):
+            batch = sampled_symbols[i:i + batch_size]
+
+            try:
+                # Get latest bars for volume data
+                bars_request = StockLatestBarRequest(symbol_or_symbols=batch)
+                latest_bars = state.alpaca_client.get_stock_latest_bar(bars_request)
+
+                for symbol, bar in latest_bars.items():
+                    if bar and bar.volume:
+                        symbols_with_volume.append({
+                            'symbol': symbol,
+                            'volume': bar.volume,
+                            'price': bar.close
+                        })
+
+            except Exception as e:
+                logger.warning(f"Failed to get bars for batch {i//batch_size + 1}: {e}")
+                continue
+
+        # Sort by volume (descending) and filter by price range
+        symbols_with_volume.sort(key=lambda x: x['volume'], reverse=True)
+
+        # Filter by configured price range
+        filtered_symbols = [
+            s['symbol'] for s in symbols_with_volume
+            if state.config.min_price <= s['price'] <= state.config.max_price
+        ]
+
+        # Return top N symbols
+        universe = filtered_symbols[:state.config.initial_universe_size]
+
+        logger.info(f"Selected top {len(universe)} most active stocks from Alpaca")
+        logger.info(f"Top 10: {universe[:10]}")
+
+        return universe
+
     except Exception as e:
-        logger.error(f"Failed to get active universe: {e}")
+        logger.error(f"Failed to get universe from Alpaca: {e}", exc_info=True)
+        logger.error("Scanner cannot proceed without valid universe")
         return []
 
 async def filter_by_catalyst(symbols: List[str]) -> List[Dict]:
