@@ -146,14 +146,17 @@ async def verify_helper_functions():
             )
         """)
 
-        if not has_security_helper:
-            logger.warning("get_or_create_security() helper not found")
+        if not has_security_helper or not has_time_helper:
+            missing = []
+            if not has_security_helper:
+                missing.append("get_or_create_security()")
+            if not has_time_helper:
+                missing.append("get_or_create_time()")
+            error_msg = f"Required helper functions not found in database: {', '.join(missing)}"
+            logger.critical(error_msg)
+            raise RuntimeError(error_msg)
 
-        if not has_time_helper:
-            logger.warning("get_or_create_time() helper not found")
-
-        if has_security_helper and has_time_helper:
-            logger.info("✅ Helper functions verified")
+        logger.info("✅ Helper functions verified")
 
     except Exception as e:
         logger.error(f"Helper function verification failed: {e}")

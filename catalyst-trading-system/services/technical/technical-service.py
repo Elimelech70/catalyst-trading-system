@@ -525,44 +525,51 @@ async def fetch_price_data(symbol: str, timeframe: str, periods: int = 100) -> p
 
 async def store_indicators(security_id: int, timeframe: str, indicators: Dict):
     """Store indicators in database"""
-    
-    time_id = await get_time_id()
-    
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO technical_indicators (
+
+    try:
+        time_id = await get_time_id()
+
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO technical_indicators (
+                    security_id, time_id, timeframe,
+                    rsi_14, macd, macd_signal, macd_histogram,
+                    bollinger_upper, bollinger_middle, bollinger_lower,
+                    sma_20, sma_50, ema_12, ema_26,
+                    atr_14, obv, stochastic_k, stochastic_d,
+                    calculated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                         $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+                ON CONFLICT (security_id, time_id, timeframe)
+                DO UPDATE SET
+                    rsi_14 = EXCLUDED.rsi_14,
+                    macd = EXCLUDED.macd,
+                    calculated_at = NOW()
+                """,
                 security_id, time_id, timeframe,
-                rsi_14, macd, macd_signal, macd_histogram,
-                bollinger_upper, bollinger_middle, bollinger_lower,
-                sma_20, sma_50, ema_12, ema_26,
-                atr_14, obv, stochastic_k, stochastic_d,
-                calculated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-                     $11, $12, $13, $14, $15, $16, $17, $18, NOW())
-            ON CONFLICT (security_id, time_id, timeframe) 
-            DO UPDATE SET
-                rsi_14 = EXCLUDED.rsi_14,
-                macd = EXCLUDED.macd,
-                calculated_at = NOW()
-            """,
-            security_id, time_id, timeframe,
-            indicators.get('rsi'),
-            indicators.get('macd'),
-            indicators.get('macd_signal'),
-            indicators.get('macd_histogram'),
-            indicators.get('bb_upper'),
-            indicators.get('bb_middle'),
-            indicators.get('bb_lower'),
-            indicators.get('sma_20'),
-            indicators.get('sma_50'),
-            indicators.get('ema_12'),
-            indicators.get('ema_26'),
-            indicators.get('atr'),
-            indicators.get('obv'),
-            indicators.get('stoch_k'),
-            indicators.get('stoch_d')
-        )
+                indicators.get('rsi'),
+                indicators.get('macd'),
+                indicators.get('macd_signal'),
+                indicators.get('macd_histogram'),
+                indicators.get('bb_upper'),
+                indicators.get('bb_middle'),
+                indicators.get('bb_lower'),
+                indicators.get('sma_20'),
+                indicators.get('sma_50'),
+                indicators.get('ema_12'),
+                indicators.get('ema_26'),
+                indicators.get('atr'),
+                indicators.get('obv'),
+                indicators.get('stoch_k'),
+                indicators.get('stoch_d')
+            )
+    except asyncpg.PostgresError as e:
+        logger.error(f"Database error storing indicators for security_id={security_id}, timeframe={timeframe}: {e}", exc_info=True)
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error storing indicators for security_id={security_id}, timeframe={timeframe}: {e}", exc_info=True)
+        raise
 
 # ============================================================================
 # API ENDPOINTS
@@ -580,14 +587,16 @@ async def health_check():
             async with db_pool.acquire() as conn:
                 await conn.fetchval("SELECT 1")
                 db_status = "healthy"
-    except:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError, ConnectionError) as e:
+        logger.warning(f"Database health check failed: {e}")
         pass
     
     try:
         if redis_client:
             await redis_client.ping()
             redis_status = "healthy"
-    except:
+    except (redis.RedisError, ConnectionError, TimeoutError) as e:
+        logger.warning(f"Redis health check failed: {e}")
         pass
     
     return HealthResponse(

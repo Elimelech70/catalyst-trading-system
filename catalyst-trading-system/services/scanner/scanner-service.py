@@ -171,28 +171,35 @@ async def verify_schema_compatibility():
         
         missing = required_cols - cols
         if missing:
-            logger.warning(f"Missing columns in trading_cycles: {missing}")
-        
+            error_msg = f"Schema mismatch: Missing columns in trading_cycles: {missing}"
+            logger.critical(error_msg)
+            raise RuntimeError(error_msg)
+
         # Check scan_results has correct columns
         scan_results_cols = await state.db_pool.fetch("""
-            SELECT column_name 
-            FROM information_schema.columns 
+            SELECT column_name
+            FROM information_schema.columns
             WHERE table_name = 'scan_results'
         """)
-        
+
         scan_cols = {row['column_name'] for row in scan_results_cols}
-        required_scan_cols = {'id', 'cycle_id', 'security_id', 'composite_score', 
+        required_scan_cols = {'id', 'cycle_id', 'security_id', 'composite_score',
                              'price', 'volume', 'rank'}
-        
+
         missing_scan = required_scan_cols - scan_cols
         if missing_scan:
-            logger.warning(f"Missing columns in scan_results: {missing_scan}")
-        
+            error_msg = f"Schema mismatch: Missing columns in scan_results: {missing_scan}"
+            logger.critical(error_msg)
+            raise RuntimeError(error_msg)
+
         logger.info("✅ Schema compatibility check completed")
-        
+
+    except RuntimeError:
+        # Re-raise schema mismatch errors - these are critical
+        raise
     except Exception as e:
-        logger.error(f"Schema verification failed: {e}")
-        # Continue anyway, errors will surface during operations
+        logger.critical(f"Schema verification failed unexpectedly: {e}", exc_info=True)
+        raise RuntimeError(f"Schema verification failed: {e}") from e
 
 # ============================================================================
 # HELPER FUNCTIONS
