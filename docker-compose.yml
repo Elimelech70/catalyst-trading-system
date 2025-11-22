@@ -23,9 +23,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: catalyst-redis
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-RedisCatalyst2025!SecureCache} --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-RedisCatalyst2025!SecureCache}
     volumes:
       - redis_data:/data
     networks:
@@ -203,14 +205,28 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-RedisCatalyst2025!SecureCache}
       MAX_POSITION_SIZE: ${MAX_POSITION_SIZE:-1000}
-      MAX_DAILY_LOSS: ${MAX_DAILY_LOSS:-1000}
+      MAX_DAILY_LOSS: ${MAX_DAILY_LOSS:-2000}
       MAX_SECTOR_EXPOSURE: ${MAX_SECTOR_EXPOSURE:-0.3}
+      # Alpaca Integration for Emergency Stop
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      # Email Alerts
+      SMTP_SERVER: ${SMTP_SERVER:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+      ENABLE_EMAIL_ALERTS: ${ENABLE_EMAIL_ALERTS:-true}
       PYTHONUNBUFFERED: 1
     ports:
       - "5004:5004"
     volumes:
       - ./services/risk-manager:/app
+      - ./config:/app/config:ro
       - risk_logs:/app/logs
     networks:
       - catalyst-network
@@ -352,18 +368,39 @@ services:
     ports:
     - "5006:5006"
     environment:
+      SERVICE_PORT: 5006
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-RedisCatalyst2025!SecureCache}
       SCANNER_URL: http://catalyst-scanner:5001
       PATTERN_URL: http://catalyst-pattern:5002
       TECHNICAL_URL: http://catalyst-technical:5003
       RISK_URL: http://catalyst-risk-manager:5004
       TRADING_URL: http://catalyst-trading:5005
       NEWS_URL: http://catalyst-news:5008
+      # Email Alerts
+      SMTP_SERVER: ${SMTP_SERVER:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+      ENABLE_EMAIL_ALERTS: ${ENABLE_EMAIL_ALERTS:-true}
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./services/workflow:/app
+      - ./config:/app/config:ro
+      - workflow_logs:/app/logs
     networks:
       - catalyst-network
     depends_on:
+      - redis
       - scanner
       - pattern
+      - technical
+      - risk-manager
+      - trading
     restart: unless-stopped
 
 
@@ -397,3 +434,5 @@ volumes:
     name: catalyst-news-logs
   reporting_logs:
     name: catalyst-reporting-logs
+  workflow_logs:
+    name: catalyst-workflow-logs

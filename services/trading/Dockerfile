@@ -23,6 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy service code
 COPY *.py ./
 
+# Copy common utilities
+COPY common/ ./common/
+
 # Copy directories (now they exist)
 COPY strategies/ ./strategies/
 COPY models/ ./models/

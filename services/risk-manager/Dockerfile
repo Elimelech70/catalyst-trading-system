@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy service code
 COPY risk-manager-service.py .
 
+# Copy common utilities
+COPY common/ ./common/
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 

@@ -36,7 +36,7 @@ class ConfigLoader:
     """
 
     def __init__(self, base_path: Optional[str] = None):
-        self.base_path = base_path or os.getenv('CONFIG_BASE_PATH', '/workspaces/catalyst-trading-system/catalyst-trading-system')
+        self.base_path = base_path or os.getenv('CONFIG_BASE_PATH', '/app')
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._cache_time: Dict[str, datetime] = {}
         self._cache_ttl = timedelta(seconds=int(os.getenv('CONFIG_CACHE_TTL', '60')))

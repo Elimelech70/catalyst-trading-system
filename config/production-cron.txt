@@ -1,0 +1,79 @@
+# ============================================================================
+# Catalyst Trading System - FULL AUTONOMOUS PAPER TRADING
+# ============================================================================
+# Installation: crontab -e (copy/paste this content)
+# View active: crontab -l
+# Logs: tail -f /var/log/catalyst/*.log
+#
+# Timezone: Server local time (adjust for your timezone vs EST)
+# Market Hours: US Markets 9:30 AM - 4:00 PM EST (Mon-Fri)
+# ============================================================================
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+SHELL=/bin/bash
+HOME=/root
+CATALYST_HOME=/root/catalyst-trading-system
+
+# ============================================================================
+# DOCKER SERVICES - AUTO START/STOP
+# ============================================================================
+
+# Start all services before market opens (9:00 AM EST)
+# Ensures all containers are running and ready
+0 9 * * 1-5 cd /root/catalyst-trading-system && docker-compose up -d >> /var/log/catalyst/startup.log 2>&1
+
+# Stop services after market close (5:00 PM EST)
+# Optional - comment out if you want 24/7 operation
+0 17 * * 1-5 cd /root/catalyst-trading-system && docker-compose stop >> /var/log/catalyst/shutdown.log 2>&1
+
+# ============================================================================
+# AUTONOMOUS TRADING WORKFLOWS
+# ============================================================================
+
+# Market Open - First scan and trade (9:30 AM EST)
+# Executes immediately after market opens
+30 9 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start -H "Content-Type: application/json" -d '{"mode":"autonomous","max_positions":5,"execute_top_n":3}' >> /var/log/catalyst/trading.log 2>&1
+
+# Mid-Morning Scan (11:00 AM EST)
+# Fresh opportunities after initial volatility
+0 11 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start -H "Content-Type: application/json" -d '{"mode":"autonomous","max_positions":5,"execute_top_n":2}' >> /var/log/catalyst/trading.log 2>&1
+
+# Lunch Scan (1:00 PM EST)
+# Catch lunch-hour momentum plays
+0 13 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start -H "Content-Type: application/json" -d '{"mode":"autonomous","max_positions":5,"execute_top_n":2}' >> /var/log/catalyst/trading.log 2>&1
+
+# Late Day Scan (3:00 PM EST)
+# Final opportunities before close
+0 15 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start -H "Content-Type: application/json" -d '{"mode":"autonomous","max_positions":3,"execute_top_n":1}' >> /var/log/catalyst/trading.log 2>&1
+
+# ============================================================================
+# SYSTEM MONITORING & MAINTENANCE
+# ============================================================================
+
+# Health Check - Every 15 minutes during market hours (9:00 AM - 4:30 PM EST)
+*/15 9-16 * * 1-5 curl -s http://localhost:5004/health >> /var/log/catalyst/health.log 2>&1
+
+# Database Backup - Daily at 6:00 PM EST (after market close)
+0 18 * * 1-5 docker exec catalyst-postgres pg_dump -U catalyst catalyst_trading > /root/catalyst-trading-system/backups/db_$(date +\%Y\%m\%d).sql 2>> /var/log/catalyst/backup.log
+
+# Log Rotation - Daily at 2:00 AM EST
+0 2 * * * find /var/log/catalyst -name "*.log" -mtime +7 -delete >> /var/log/catalyst/cleanup.log 2>&1
+
+# ============================================================================
+# AGGRESSIVE MODE (Optional - Uncomment for more frequent trading)
+# ============================================================================
+# Scans every 30 minutes during market hours
+# WARNING: This will execute A LOT of trades!
+
+# Every 30 minutes from 10:00 AM - 3:30 PM EST
+# 0,30 10-15 * * 1-5 curl -X POST http://localhost:5006/api/v1/workflow/start -H "Content-Type: application/json" -d '{"mode":"autonomous","max_positions":5,"execute_top_n":1}' >> /var/log/catalyst/trading.log 2>&1
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# - All trades are PAPER TRADING (via Alpaca paper account)
+# - Risk manager will auto-stop if daily loss exceeds $2,000 (paper)
+# - Email alerts configured in .env (SMTP_* variables)
+# - Logs in /var/log/catalyst/*.log
+# - Monitor with: docker logs -f catalyst-workflow catalyst-risk-manager
+# ============================================================================
