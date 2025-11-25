@@ -38,7 +38,7 @@ SERVICE_NAME = "news"
 SERVICE_VERSION = "6.0.0"
 SERVICE_TITLE = "News Service"
 SCHEMA_VERSION = "v6.0 3NF normalized"
-SERVICE_PORT = 5002
+SERVICE_PORT = int(os.getenv("SERVICE_PORT", "5008"))
 
 # Configure logging
 logging.basicConfig(

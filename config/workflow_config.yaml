@@ -1,0 +1,33 @@
+workflow:
+  # Scan frequency in minutes (default: 30)
+  scan_frequency_minutes: 30
+
+  # Number of top candidates to execute (default: 3)
+  execute_top_n: 3
+
+  # Filter configuration
+  filters:
+    news:
+      # Enable news filtering stage
+      enabled: true
+
+      # Require news to proceed (if false, proceeds without news)
+      required: false
+
+      # Minimum sentiment score for positive catalysts
+      min_sentiment: 0.3
+
+      # Fallback score when no news available (0.0-1.0)
+      fallback_score: 0.5
+
+      # Maximum age of news articles in hours
+      max_age_hours: 24
+
+    pattern:
+      enabled: true
+      required: false
+      min_confidence: 0.6
+
+    technical:
+      enabled: true
+      required: false

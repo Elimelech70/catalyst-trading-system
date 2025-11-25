@@ -254,10 +254,26 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
         
         # ========== STAGE 2: News Filter (100 → 35) ==========
         state.status = WorkflowStatus.FILTERING_NEWS
-        logger.info(f"[{cycle_id}] Stage 2: Filtering by news catalysts (threshold: {sentiment_threshold})...")
-        
+
+        # Load workflow config for filter settings
+        workflow_config = get_workflow_config()
+        news_filter_config = workflow_config.get('filters', {}).get('news', {})
+        news_enabled = news_filter_config.get('enabled', True)
+        news_required = news_filter_config.get('required', False)  # Default to optional
+        fallback_score = news_filter_config.get('fallback_score', 0.5)
+
+        logger.info(
+            f"[{cycle_id}] Stage 2: Filtering by news catalysts "
+            f"(threshold: {sentiment_threshold}, required: {news_required})..."
+        )
+
         news_candidates = []
+        candidates_without_news = 0  # Track missing news
+
         for candidate in candidates:
+            has_news = False
+            sentiment = None
+
             try:
                 async with state.http_session.get(
                     f"{config.NEWS_URL}/api/v1/news/{candidate['symbol']}?limit=5"
@@ -266,20 +282,60 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
                         news_data = await resp.json()
                         # Check for positive catalysts
                         if news_data.get("news"):
-                            sentiment = sum(n.get("sentiment_score", 0) for n in news_data["news"]) / len(news_data["news"])
+                            has_news = True
+                            sentiment = sum(
+                                n.get("sentiment_score", 0) for n in news_data["news"]
+                            ) / len(news_data["news"])
+
                             if sentiment > sentiment_threshold:
                                 candidate["news_sentiment"] = sentiment
                                 news_candidates.append(candidate)
-            except:
-                continue
-            
+                            else:
+                                logger.debug(
+                                    f"[{cycle_id}] {candidate['symbol']}: "
+                                    f"sentiment {sentiment:.2f} below threshold {sentiment_threshold}"
+                                )
+            except Exception as e:
+                logger.warning(
+                    f"[{cycle_id}] News fetch failed for {candidate['symbol']}: {e}"
+                )
+
+            # ========== NEW: Graceful degradation logic ==========
+            if not has_news:
+                candidates_without_news += 1
+
+                if not news_required:
+                    # Proceed without news using fallback score
+                    candidate["news_sentiment"] = fallback_score
+                    candidate["news_available"] = False
+                    news_candidates.append(candidate)
+
+                    logger.info(
+                        f"[{cycle_id}] {candidate['symbol']}: "
+                        f"No news available, using fallback score {fallback_score}"
+                    )
+                else:
+                    logger.debug(
+                        f"[{cycle_id}] {candidate['symbol']}: "
+                        f"Rejected (news required but unavailable)"
+                    )
+
             if len(news_candidates) >= config.AFTER_NEWS_FILTER:
                 break
-        
+
+        # ========== NEW: Log degraded mode warning ==========
+        if candidates_without_news > 0:
+            logger.warning(
+                f"[{cycle_id}] News filter: {candidates_without_news}/{len(candidates)} "
+                f"candidates had no news data (proceeding with fallback scores)"
+            )
+
         workflow_result["stages"]["news"] = {
             "candidates": len(news_candidates),
             "filtered_out": len(candidates) - len(news_candidates),
-            "threshold_used": sentiment_threshold
+            "threshold_used": sentiment_threshold,
+            "candidates_without_news": candidates_without_news,  # NEW
+            "degraded_mode": candidates_without_news > 0         # NEW
         }
         logger.info(f"[{cycle_id}] News filter: {len(news_candidates)} candidates remain")
         

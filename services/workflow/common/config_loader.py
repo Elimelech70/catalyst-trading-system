@@ -202,10 +202,94 @@ def is_autonomous_mode() -> bool:
     return mode.lower() == 'autonomous'
 
 
-def get_workflow_config() -> Dict[str, Any]:
-    """Get workflow automation config"""
-    config = get_trading_config()
-    return config.get('workflow', {})
+def get_workflow_config(force_reload: bool = False) -> Dict[str, Any]:
+    """
+    Get workflow configuration from workflow_config.yaml.
+
+    Returns workflow configuration with defaults for filter settings.
+
+    Default workflow config:
+    {
+        "scan_frequency_minutes": 30,
+        "execute_top_n": 3,
+        "filters": {
+            "news": {
+                "enabled": true,
+                "required": false,
+                "min_sentiment": 0.3,
+                "fallback_score": 0.5,
+                "max_age_hours": 24
+            },
+            "pattern": {
+                "enabled": true,
+                "required": false,
+                "min_confidence": 0.6
+            },
+            "technical": {
+                "enabled": true,
+                "required": false
+            }
+        }
+    }
+    """
+    # Default configuration
+    default_config = {
+        "scan_frequency_minutes": 30,
+        "execute_top_n": 3,
+        "filters": {
+            "news": {
+                "enabled": True,
+                "required": False,  # Don't block workflow if news unavailable
+                "min_sentiment": 0.3,
+                "fallback_score": 0.5,
+                "max_age_hours": 24
+            },
+            "pattern": {
+                "enabled": True,
+                "required": False,
+                "min_confidence": 0.6
+            },
+            "technical": {
+                "enabled": True,
+                "required": False
+            }
+        }
+    }
+
+    try:
+        loaded_config = _config_loader.load('config/workflow_config.yaml', force_reload=force_reload)
+
+        # Merge with defaults (loaded values override defaults)
+        if 'workflow' in loaded_config:
+            config = {**default_config, **loaded_config['workflow']}
+
+            # Deep merge filters
+            if 'filters' in loaded_config['workflow']:
+                for filter_type, filter_config in loaded_config['workflow']['filters'].items():
+                    if filter_type in config['filters']:
+                        config['filters'][filter_type].update(filter_config)
+                    else:
+                        config['filters'][filter_type] = filter_config
+        else:
+            # If 'workflow' key doesn't exist, use loaded_config directly
+            config = {**default_config, **loaded_config}
+
+            # Deep merge filters
+            if 'filters' in loaded_config:
+                for filter_type, filter_config in loaded_config['filters'].items():
+                    if filter_type in config['filters']:
+                        config['filters'][filter_type].update(filter_config)
+                    else:
+                        config['filters'][filter_type] = filter_config
+
+        return config
+
+    except FileNotFoundError:
+        logger.warning("workflow_config.yaml not found, using defaults")
+        return default_config
+    except Exception as e:
+        logger.error(f"Failed to load workflow config: {e}, using defaults")
+        return default_config
 
 
 def get_risk_limits() -> Dict[str, Any]:
