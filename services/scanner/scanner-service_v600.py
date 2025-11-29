@@ -2,36 +2,28 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: scanner-service.py
-Version: 6.0.1
-Last Updated: 2025-11-22
-Purpose: Scanner service using actual deployed database schema
+Version: 6.0.0
+Last Updated: 2025-11-18
+Purpose: Scanner service using v6.0 3NF normalized database schema
 
 REVISION HISTORY:
-v6.0.1 (2025-11-22) - SCHEMA FIX - ALIGNED WITH ACTUAL DATABASE
-- FIXED: scan_results INSERT - removed scan_type, renamed columns to actual schema
-  * price_at_scan → price
-  * volume_at_scan → volume
-  * rank_in_scan → rank
-  * final_candidate → selected_for_trading
-- FIXED: trading_cycles INSERT - uses actual columns (mode, configuration)
-  * Removed: cycle_date, cycle_number, session_mode, triggered_by
-  * Added: mode, configuration (JSONB)
-- FIXED: trading_cycles UPDATE - uses stopped_at and configuration
-  * Removed: scan_completed_at, candidates_identified
-  * Added: stopped_at, configuration merge
-- FIXED: Schema verification checks actual column names
-- All database operations now match deployed schema
-
-v6.0.0 (2025-11-18) - SCHEMA v6.0 3NF COMPLIANCE (HAD BUGS)
-- Attempted v6.0 3NF compliance but had column name mismatches
-- Used non-existent columns that caused runtime failures
+v6.0.0 (2025-11-18) - SCHEMA v6.0 3NF COMPLIANCE
+- Uses get_or_create_security() helper function
+- No manual security inserts
+- All queries use proper JOINs with securities table
+- Fully normalized 3NF schema compliance
 
 v5.5.0 (2025-10-16) - SCHEMA v5.0 COMPLIANCE FIX
-- Earlier schema compliance attempt
+- Fixed ALL column name mismatches
+- Removed non-existent columns
+- Uses correct schema from design documents
+- Stores scanner config in JSONB configuration field
+- Proper column names: started_at, composite_score, price
+- No more schema violations
 
 Description of Service:
-Market scanner that scans for trading candidates and persists results.
-Fixed to match actual deployed database schema (not design doc).
+Market scanner that uses the v6.0 3NF normalized database schema.
+All database operations use helper functions and proper JOINs.
 """
 
 from contextlib import asynccontextmanager
@@ -60,9 +52,9 @@ from alpaca.trading.enums import AssetClass, AssetStatus
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "scanner"
-SERVICE_VERSION = "6.0.1"
+SERVICE_VERSION = "6.0.0"
 SERVICE_TITLE = "Scanner Service"
-SCHEMA_VERSION = "actual deployed schema"
+SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5001
 
 # Configure logging
@@ -196,18 +188,18 @@ app.add_middleware(
 # SCHEMA VERIFICATION
 # ============================================================================
 async def verify_schema_compatibility():
-    """Verify the database has the expected actual schema"""
+    """Verify the database has the expected v5.0 schema"""
     try:
         # Check trading_cycles has correct columns
         trading_cycles_cols = await state.db_pool.fetch("""
-            SELECT column_name
-            FROM information_schema.columns
+            SELECT column_name 
+            FROM information_schema.columns 
             WHERE table_name = 'trading_cycles'
         """)
-
+        
         cols = {row['column_name'] for row in trading_cycles_cols}
-        # Actual schema columns
-        required_cols = {'cycle_id', 'mode', 'status', 'started_at', 'configuration'}
+        # v6.0 schema - mode, max_positions, scan_frequency now in YAML config files
+        required_cols = {'cycle_id', 'status', 'started_at'}
 
         missing = required_cols - cols
         if missing:
@@ -223,9 +215,9 @@ async def verify_schema_compatibility():
         """)
 
         scan_cols = {row['column_name'] for row in scan_results_cols}
-        # Actual schema - uses id, price, volume, rank
-        required_scan_cols = {'id', 'cycle_id', 'security_id', 'composite_score',
-                             'price', 'volume', 'rank', 'selected_for_trading'}
+        # v6.0 schema - uses scan_id, price_at_scan, volume_at_scan, rank_in_scan
+        required_scan_cols = {'scan_id', 'cycle_id', 'security_id', 'composite_score',
+                             'price_at_scan', 'volume_at_scan', 'rank_in_scan'}
 
         missing_scan = required_scan_cols - scan_cols
         if missing_scan:
@@ -290,30 +282,26 @@ async def scan_market() -> Dict:
     errors = []
     
     try:
-        # Create trading cycle with actual schema
+        # Create trading cycle with v6.0 schema
         async with state.db_pool.acquire() as conn:
-            # Generate cycle_id first
-            generated_cycle_id = await generate_cycle_id()
-
-            # Insert trading cycle
+            # Insert trading cycle and get auto-generated cycle_id
             cycle_id = await conn.fetchval("""
                 INSERT INTO trading_cycles (
-                    cycle_id,
-                    mode,
-                    status,
+                    cycle_date,
+                    cycle_number,
                     started_at,
-                    configuration
-                ) VALUES ($1, $2, $3, $4, $5)
+                    status,
+                    session_mode,
+                    triggered_by
+                ) VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING cycle_id
             """,
-                generated_cycle_id,
-                'normal',
-                'scanning',
-                datetime.utcnow(),
-                json.dumps({
-                    'triggered_by': 'scanner_service',
-                    'cycle_date': datetime.utcnow().date().isoformat()
-                })
+                datetime.utcnow().date(),    # cycle_date
+                1,                            # cycle_number (simplified, could query max+1)
+                datetime.utcnow(),           # started_at
+                'scanning',                   # status
+                'autonomous',                 # session_mode
+                'scanner_service'             # triggered_by
             )
         
         logger.info(f"Started scan cycle {cycle_id}")
@@ -343,21 +331,17 @@ async def scan_market() -> Dict:
         if not success:
             errors.append("Failed to persist some scan results")
         
-        # Update cycle status with actual schema columns
+        # Update cycle status with v6.0 schema columns
         await state.db_pool.execute(
             """
             UPDATE trading_cycles
             SET status = 'completed',
-                stopped_at = $1,
-                configuration = configuration || $2,
-                updated_at = NOW()
+                scan_completed_at = $1,
+                candidates_identified = $2
             WHERE cycle_id = $3
             """,
-            datetime.utcnow(),
-            json.dumps({
-                'scan_completed_at': datetime.utcnow().isoformat(),
-                'candidates_identified': candidates_found
-            }),
+            datetime.utcnow(),     # scan_completed_at
+            candidates_found,      # candidates_identified
             cycle_id
         )
         
@@ -586,7 +570,7 @@ async def filter_by_technical(stocks: List[Dict]) -> List[Dict]:
 
 async def persist_scan_results(cycle_id: str, picks: List[Dict]) -> bool:
     """
-    Persist scan results using actual database schema columns
+    Persist results using CORRECT v5.0 schema columns
     """
     success_count = 0
     failure_count = 0
@@ -601,29 +585,31 @@ async def persist_scan_results(cycle_id: str, picks: List[Dict]) -> bool:
                         cycle_id,
                         security_id,
                         scan_timestamp,
+                        scan_type,
                         momentum_score,
                         volume_score,
                         catalyst_score,
                         technical_score,
                         composite_score,
-                        price,
-                        volume,
-                        rank,
-                        selected_for_trading
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        price_at_scan,
+                        volume_at_scan,
+                        rank_in_scan,
+                        final_candidate
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 """,
                     cycle_id,
                     pick['security_id'],
                     scan_timestamp,
+                    'autonomous',                     # scan_type
                     pick.get('momentum_score', 0),
                     pick.get('volume_score', 0),
                     pick.get('catalyst_score', 0),
                     pick.get('technical_score', 0),
                     pick.get('composite_score', 0),
-                    pick.get('price', 0),
-                    pick.get('volume', 0),
-                    i,
-                    True
+                    pick.get('price', 0),             # price_at_scan
+                    pick.get('volume', 0),            # volume_at_scan
+                    i,                                 # rank_in_scan
+                    True                               # final_candidate (all results are final candidates)
                 )
                 success_count += 1
                 
