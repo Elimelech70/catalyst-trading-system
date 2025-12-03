@@ -2,9 +2,20 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca_trader.py
-Version: 1.0.0
-Last Updated: 2025-11-18
+Version: 1.1.0
+Last Updated: 2025-12-03
 Purpose: Alpaca trading integration for autonomous order execution
+
+REVISION HISTORY:
+v1.1.0 (2025-12-03) - Fix sub-penny pricing error
+- Added _round_price() helper to round all prices to 2 decimal places
+- Alpaca rejects prices with floating-point precision (e.g., 9.050000190734863)
+- All limit_price, stop_price, take_profit prices now properly rounded
+- Fixes 95% order rejection rate due to sub-penny increment errors
+
+v1.0.0 (2025-11-18) - Initial Alpaca integration
+- Market orders, limit orders, bracket orders
+- Position tracking and order status updates
 
 Description:
 Handles all Alpaca API interactions for trading execution.
@@ -32,6 +43,24 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
 
 logger = logging.getLogger(__name__)
+
+
+def _round_price(price: Optional[float]) -> Optional[float]:
+    """
+    Round price to 2 decimal places for Alpaca API compliance.
+
+    Alpaca rejects orders with sub-penny prices (e.g., 9.050000190734863).
+    This helper ensures all prices are properly rounded to cents.
+
+    Args:
+        price: The price to round (can be None)
+
+    Returns:
+        Price rounded to 2 decimal places, or None if input was None
+    """
+    if price is None:
+        return None
+    return round(float(price), 2)
 
 
 class AlpacaTrader:
@@ -182,17 +211,20 @@ class AlpacaTrader:
         try:
             order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
 
+            # Round price to 2 decimal places to avoid sub-penny rejection
+            rounded_price = _round_price(limit_price)
+
             request = LimitOrderRequest(
                 symbol=symbol,
                 qty=quantity,
                 side=order_side,
                 time_in_force=TimeInForce.DAY,
-                limit_price=limit_price
+                limit_price=rounded_price
             )
 
             order = self.trading_client.submit_order(request)
 
-            logger.info(f"Limit order submitted: {symbol} {side} {quantity} @ ${limit_price}")
+            logger.info(f"Limit order submitted: {symbol} {side} {quantity} @ ${rounded_price}")
 
             return {
                 "order_id": str(order.id),
@@ -200,7 +232,7 @@ class AlpacaTrader:
                 "side": side,
                 "quantity": quantity,
                 "order_type": "limit",
-                "limit_price": limit_price,
+                "limit_price": rounded_price,
                 "status": order.status.value,
                 "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None
             }
@@ -240,25 +272,30 @@ class AlpacaTrader:
         try:
             order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
 
+            # Round all prices to 2 decimal places to avoid sub-penny rejection
+            rounded_entry = _round_price(entry_price)
+            rounded_stop = _round_price(stop_loss)
+            rounded_target = _round_price(take_profit)
+
             # Build stop loss and take profit requests
             stop_loss_req = None
             take_profit_req = None
 
-            if stop_loss:
-                stop_loss_req = StopLossRequest(stop_price=stop_loss)
+            if rounded_stop:
+                stop_loss_req = StopLossRequest(stop_price=rounded_stop)
 
-            if take_profit:
-                take_profit_req = TakeProfitRequest(limit_price=take_profit)
+            if rounded_target:
+                take_profit_req = TakeProfitRequest(limit_price=rounded_target)
 
             # Create order request (market or limit)
-            if entry_price:
+            if rounded_entry:
                 # Limit order entry
                 request = LimitOrderRequest(
                     symbol=symbol,
                     qty=quantity,
                     side=order_side,
                     time_in_force=TimeInForce.DAY,
-                    limit_price=entry_price,
+                    limit_price=rounded_entry,
                     stop_loss=stop_loss_req,
                     take_profit=take_profit_req
                 )
@@ -279,7 +316,7 @@ class AlpacaTrader:
 
             logger.info(
                 f"Bracket order submitted: {symbol} {side} {quantity} shares "
-                f"(entry: ${entry_price or 'market'}, stop: ${stop_loss}, target: ${take_profit})"
+                f"(entry: ${rounded_entry or 'market'}, stop: ${rounded_stop}, target: ${rounded_target})"
             )
 
             return {
@@ -288,9 +325,9 @@ class AlpacaTrader:
                 "side": side,
                 "quantity": quantity,
                 "order_type": order_type,
-                "entry_price": entry_price,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
+                "entry_price": rounded_entry,
+                "stop_loss": rounded_stop,
+                "take_profit": rounded_target,
                 "status": order.status.value,
                 "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None
             }

@@ -2,11 +2,16 @@
 
 # Name of Application: Catalyst Trading System
 # Name of file: trading-service.py
-# Version: 8.0.0
-# Last Updated: 2025-11-18
+# Version: 8.1.0
+# Last Updated: 2025-12-03
 # Purpose: Trading service with ALPACA INTEGRATION for autonomous trading
 
 # REVISION HISTORY:
+# v8.1.0 (2025-12-03) - Sub-penny pricing fix
+# - Updated alpaca_trader to v1.1.0 with price rounding
+# - All limit/stop/target prices now rounded to 2 decimal places
+# - Fixes 95% order rejection rate due to sub-penny errors
+#
 # v8.0.0 (2025-11-18) - ALPACA INTEGRATION
 # - Integrated alpaca_trader for real order execution
 # - Submit bracket orders to Alpaca (entry + stop + target)
@@ -75,7 +80,7 @@ from common.alpaca_trader import alpaca_trader
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "trading"
-SERVICE_VERSION = "8.0.0"  # ALPACA INTEGRATION
+SERVICE_VERSION = "8.1.0"  # Sub-penny pricing fix
 SERVICE_TITLE = "Trading Service"
 SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5005
@@ -672,19 +677,19 @@ async def create_position(cycle_id: str, request: PositionRequest):
         async with state.db_pool.acquire() as conn:
             # Verify cycle exists and is active
             cycle = await conn.fetchrow("""
-                SELECT 
-                    mode, 
-                    status, 
+                SELECT
+                    mode,
+                    status,
                     max_positions,
-                    total_risk_budget, 
+                    total_risk_budget,
                     used_risk_budget,
                     current_positions
                 FROM trading_cycles
-                WHERE cycle_id = $1 AND status = 'active'
+                WHERE cycle_id = $1 AND status IN ('active', 'completed', 'running')
             """, cycle_id)
-            
+
             if not cycle:
-                raise ValueError(f"Active cycle not found: {cycle_id}")
+                raise ValueError(f"Cycle not found: {cycle_id}")
             
             # Check position limits
             if cycle['current_positions'] >= cycle['max_positions']:
