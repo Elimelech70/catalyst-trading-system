@@ -11,43 +11,43 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# RISK LIMITS - Enforced Automatically
+# RISK LIMITS - AGGRESSIVE MODE FOR DATA COLLECTION (Paper Trading)
 # -----------------------------------------------------------------------------
 risk_limits:
-  # Daily Loss Limit (Most Critical)
-  max_daily_loss_usd: 2000          # Hard stop at -$2,000 daily loss
-  warning_threshold_pct: 0.75       # Email warning at 75% (-$1,500)
-  critical_threshold_pct: 1.0       # Emergency stop at 100% (-$2,000)
+  # Daily Loss Limit - INCREASED FOR PAPER TRADING
+  max_daily_loss_usd: 10000         # Increased from $2,000 to $10,000
+  warning_threshold_pct: 0.80       # Email warning at 80%
+  critical_threshold_pct: 1.0       # Emergency stop at 100%
 
-  # Position Limits
-  max_positions: 5                  # Maximum concurrent open positions
-  max_position_size_pct: 0.20       # 20% of account per position
-  max_position_size_usd: 10000      # Absolute maximum $10,000 per position
-  min_position_size_usd: 500        # Minimum $500 per position
+  # Position Limits - INCREASED
+  max_positions: 10                 # Increased from 5 to 10
+  max_position_size_pct: 0.30       # Increased from 20% to 30%
+  max_position_size_usd: 20000      # Increased from $10,000 to $20,000
+  min_position_size_usd: 200        # Lowered from $500 to $200
 
-  # Portfolio Exposure
-  max_portfolio_exposure_pct: 0.80  # Maximum 80% of account in positions
+  # Portfolio Exposure - INCREASED
+  max_portfolio_exposure_pct: 0.95  # Increased from 80% to 95%
 
-  # Correlation Limits
-  max_correlation: 0.70             # Reject trade if correlation > 0.7 with existing
-  check_correlation: true           # Enable/disable correlation checks
+  # Correlation Limits - DISABLED
+  max_correlation: 0.95             # Increased from 0.70 to 0.95
+  check_correlation: false          # DISABLED for more trades
 
-  # Stop Loss Requirements
-  require_stop_loss: true           # All positions must have stop loss
-  min_stop_loss_atr_multiple: 2.0   # Minimum 2x ATR for stop loss
-  max_stop_loss_pct: 0.05           # Maximum 5% stop loss per position
+  # Stop Loss Requirements - RELAXED
+  require_stop_loss: true           # Keep stop loss for safety
+  min_stop_loss_atr_multiple: 1.0   # Reduced from 2x to 1x ATR
+  max_stop_loss_pct: 0.10           # Increased from 5% to 10%
 
-  # Risk/Reward
-  min_risk_reward_ratio: 1.5        # Minimum 1.5:1 R/R ratio required
+  # Risk/Reward - LOWERED
+  min_risk_reward_ratio: 0.5        # Lowered from 1.5:1 to 0.5:1
 
-  # Consecutive Losses Protection
-  max_consecutive_losses: 3         # After 3 losses, reduce position size
-  consecutive_loss_reduction: 0.5   # Reduce size by 50% after threshold
+  # Consecutive Losses Protection - DISABLED
+  max_consecutive_losses: 10        # Increased from 3 to 10
+  consecutive_loss_reduction: 0.8   # Reduced from 0.5 to 0.8 (less reduction)
 
-  # Account Protection
-  max_daily_trades: 20              # Maximum 20 trades per day
-  min_account_balance: 5000         # Stop trading if account < $5,000
-  max_account_drawdown_pct: 0.15    # Stop if drawdown > 15% from peak
+  # Account Protection - RELAXED
+  max_daily_trades: 50              # Increased from 20 to 50
+  min_account_balance: 1000         # Lowered from $5,000 to $1,000
+  max_account_drawdown_pct: 0.50    # Increased from 15% to 50%
 
 # -----------------------------------------------------------------------------
 # EMERGENCY ACTIONS - Executed Automatically When Limits Hit
@@ -167,29 +167,29 @@ real_time_monitoring:
   market_close_buffer_minutes: 15   # Close 15 minutes before market close
 
 # -----------------------------------------------------------------------------
-# PATTERN-SPECIFIC RISK ADJUSTMENTS
+# PATTERN-SPECIFIC RISK ADJUSTMENTS - AGGRESSIVE MODE
 # -----------------------------------------------------------------------------
 pattern_risk_adjustments:
-  # Different patterns get different risk allocations
+  # All patterns accepted with minimal confidence
   bull_flag:
-    position_size_multiplier: 1.0   # Standard size
-    min_confidence: 0.75            # Require 75% pattern confidence
+    position_size_multiplier: 1.2   # Increased
+    min_confidence: 0.20            # Lowered from 0.75 to 0.20
 
   cup_and_handle:
-    position_size_multiplier: 1.2   # 20% larger (higher win rate)
-    min_confidence: 0.80            # Require 80% confidence
+    position_size_multiplier: 1.3   # Increased
+    min_confidence: 0.20            # Lowered from 0.80 to 0.20
 
   ascending_triangle:
-    position_size_multiplier: 1.0
-    min_confidence: 0.75
+    position_size_multiplier: 1.2
+    min_confidence: 0.20            # Lowered from 0.75 to 0.20
 
   opening_range_breakout:
-    position_size_multiplier: 0.8   # 20% smaller (more volatile)
-    min_confidence: 0.70
+    position_size_multiplier: 1.0   # Standard (was 0.8)
+    min_confidence: 0.20            # Lowered from 0.70 to 0.20
 
   abcd_pattern:
-    position_size_multiplier: 1.0
-    min_confidence: 0.75
+    position_size_multiplier: 1.2
+    min_confidence: 0.20            # Lowered from 0.75 to 0.20
 
 # -----------------------------------------------------------------------------
 # CATALYST-SPECIFIC RISK ADJUSTMENTS

@@ -74,7 +74,12 @@ if not DATABASE_URL:
 # Redis configuration
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")  # Gets "redis" from docker-compose
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+# Build Redis URL with optional password
+if REDIS_PASSWORD:
+    REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0"
+else:
+    REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 
 # Global connections
 db_pool: Optional[asyncpg.Pool] = None

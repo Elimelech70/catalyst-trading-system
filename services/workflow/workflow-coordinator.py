@@ -211,11 +211,12 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
     - aggressive: Lower thresholds, higher risk tolerance
     """
     params = params or {}
-    
-    # Adjust thresholds based on mode
-    sentiment_threshold = 0.3 if mode == "normal" else (0.5 if mode == "conservative" else 0.2)
-    pattern_confidence_min = 0.6 if mode == "normal" else (0.7 if mode == "conservative" else 0.5)
-    risk_multiplier = 1.0 if mode == "normal" else (0.5 if mode == "conservative" else 1.5)
+
+    # Adjust thresholds based on mode - AGGRESSIVE for data collection
+    # autonomous/aggressive mode uses very low thresholds to generate more trades
+    sentiment_threshold = 0.3 if mode == "normal" else (0.5 if mode == "conservative" else 0.1)
+    pattern_confidence_min = 0.6 if mode == "normal" else (0.7 if mode == "conservative" else 0.1)
+    risk_multiplier = 1.0 if mode == "normal" else (0.5 if mode == "conservative" else 2.0)
     
     try:
         state.status = WorkflowStatus.SCANNING
@@ -239,7 +240,15 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
             if resp.status != 200:
                 raise Exception(f"Scanner failed: HTTP {resp.status}")
             scan_data = await resp.json()
-        
+
+        # Use the database cycle_id from scanner for trading (required for position creation)
+        db_cycle_id = scan_data.get("cycle_id")
+        if db_cycle_id:
+            logger.info(f"[{cycle_id}] Using database cycle_id: {db_cycle_id}")
+            cycle_id = db_cycle_id  # Override with database cycle_id
+            workflow_result["db_cycle_id"] = db_cycle_id
+            state.current_cycle = cycle_id
+
         candidates = scan_data.get("picks", [])[:config.MAX_INITIAL_CANDIDATES]
         workflow_result["stages"]["scan"] = {
             "candidates": len(candidates),
@@ -342,28 +351,38 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
         # ========== STAGE 3: Pattern Analysis (35 → 20) ==========
         state.status = WorkflowStatus.ANALYZING_PATTERNS
         logger.info(f"[{cycle_id}] Stage 3: Analyzing patterns (min confidence: {pattern_confidence_min})...")
-        
+
         pattern_candidates = []
-        for candidate in news_candidates:
-            try:
-                async with state.http_session.post(
-                    f"{config.PATTERN_URL}/api/v1/detect",
-                    json={"symbol": candidate["symbol"], "timeframe": "5m", "min_confidence": pattern_confidence_min}
-                ) as resp:
-                    if resp.status == 200:
-                        pattern_data = await resp.json()
-                        if pattern_data.get("patterns_found", 0) > 0:
-                            candidate["patterns"] = pattern_data["patterns"]
-                            candidate["pattern_confidence"] = max(
-                                p.get("confidence", 0) for p in pattern_data["patterns"]
-                            )
-                            pattern_candidates.append(candidate)
-            except:
-                continue
-            
-            if len(pattern_candidates) >= config.AFTER_PATTERN_FILTER:
-                break
-        
+
+        # AGGRESSIVE MODE: Skip pattern analysis if threshold is very low (< 0.2)
+        # This allows trades to execute even when market data is stale (weekends/after hours)
+        if pattern_confidence_min < 0.2:
+            logger.info(f"[{cycle_id}] AGGRESSIVE MODE: Bypassing pattern filter (threshold={pattern_confidence_min})")
+            pattern_candidates = news_candidates.copy()
+            for candidate in pattern_candidates:
+                candidate["patterns"] = [{"name": "momentum", "confidence": 0.5}]
+                candidate["pattern_confidence"] = 0.5
+        else:
+            for candidate in news_candidates:
+                try:
+                    async with state.http_session.post(
+                        f"{config.PATTERN_URL}/api/v1/detect",
+                        json={"symbol": candidate["symbol"], "timeframe": "5m", "min_confidence": pattern_confidence_min}
+                    ) as resp:
+                        if resp.status == 200:
+                            pattern_data = await resp.json()
+                            if pattern_data.get("patterns_found", 0) > 0:
+                                candidate["patterns"] = pattern_data["patterns"]
+                                candidate["pattern_confidence"] = max(
+                                    p.get("confidence", 0) for p in pattern_data["patterns"]
+                                )
+                                pattern_candidates.append(candidate)
+                except:
+                    continue
+
+                if len(pattern_candidates) >= config.AFTER_PATTERN_FILTER:
+                    break
+
         # Sort by pattern confidence
         pattern_candidates.sort(key=lambda x: x.get("pattern_confidence", 0), reverse=True)
         pattern_candidates = pattern_candidates[:config.AFTER_PATTERN_FILTER]
@@ -378,37 +397,45 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
         # ========== STAGE 4: Technical Analysis (20 → 10) ==========
         state.status = WorkflowStatus.TECHNICAL_ANALYSIS
         logger.info(f"[{cycle_id}] Stage 4: Technical analysis...")
-        
+
         technical_candidates = []
-        for candidate in pattern_candidates:
-            try:
-                # Get technical indicators
-                async with state.http_session.get(
-                    f"{config.TECHNICAL_URL}/api/v1/indicators/{candidate['symbol']}"
-                ) as resp:
-                    if resp.status == 200:
-                        tech_data = await resp.json()
-                        # Calculate composite technical score
-                        rsi = tech_data.get("rsi", 50)
-                        macd_signal = tech_data.get("macd_signal", 0)
-                        
-                        # Adjust RSI thresholds based on mode
-                        rsi_lower = 30 if mode == "normal" else (35 if mode == "conservative" else 25)
-                        rsi_upper = 70 if mode == "normal" else (65 if mode == "conservative" else 75)
-                        
-                        # Bullish conditions
-                        if rsi_lower < rsi < rsi_upper and macd_signal > 0:
-                            candidate["technical_score"] = (
-                                (70 - abs(rsi - 50)) / 20 * 0.5 +  # RSI score
-                                min(macd_signal / 10, 1) * 0.5      # MACD score
-                            )
-                            technical_candidates.append(candidate)
-            except:
-                continue
-            
-            if len(technical_candidates) >= config.AFTER_TECHNICAL_FILTER:
-                break
-        
+
+        # AGGRESSIVE MODE: Skip technical analysis if pattern threshold was very low
+        if pattern_confidence_min < 0.2:
+            logger.info(f"[{cycle_id}] AGGRESSIVE MODE: Bypassing technical filter")
+            technical_candidates = pattern_candidates.copy()
+            for candidate in technical_candidates:
+                candidate["technical_score"] = 0.6  # Default score
+        else:
+            for candidate in pattern_candidates:
+                try:
+                    # Get technical indicators
+                    async with state.http_session.get(
+                        f"{config.TECHNICAL_URL}/api/v1/indicators/{candidate['symbol']}"
+                    ) as resp:
+                        if resp.status == 200:
+                            tech_data = await resp.json()
+                            # Calculate composite technical score
+                            rsi = tech_data.get("rsi", 50)
+                            macd_signal = tech_data.get("macd_signal", 0)
+
+                            # Adjust RSI thresholds based on mode
+                            rsi_lower = 30 if mode == "normal" else (35 if mode == "conservative" else 25)
+                            rsi_upper = 70 if mode == "normal" else (65 if mode == "conservative" else 75)
+
+                            # Bullish conditions
+                            if rsi_lower < rsi < rsi_upper and macd_signal > 0:
+                                candidate["technical_score"] = (
+                                    (70 - abs(rsi - 50)) / 20 * 0.5 +  # RSI score
+                                    min(macd_signal / 10, 1) * 0.5      # MACD score
+                                )
+                                technical_candidates.append(candidate)
+                except:
+                    continue
+
+                if len(technical_candidates) >= config.AFTER_TECHNICAL_FILTER:
+                    break
+
         # Sort by technical score
         technical_candidates.sort(key=lambda x: x.get("technical_score", 0), reverse=True)
         technical_candidates = technical_candidates[:config.AFTER_TECHNICAL_FILTER]
@@ -433,9 +460,9 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
                     "symbol": candidate["symbol"],
                     "side": "long",
                     "quantity": int(base_quantity),
-                    "entry_price": candidate.get("current_price", 100),
-                    "stop_price": candidate.get("current_price", 100) * (0.98 if mode != "aggressive" else 0.97),
-                    "target_price": candidate.get("current_price", 100) * (1.05 if mode != "aggressive" else 1.08),
+                    "entry_price": candidate.get("price", candidate.get("current_price", 100)),
+                    "stop_price": candidate.get("price", candidate.get("current_price", 100)) * (0.98 if mode != "aggressive" else 0.95),
+                    "target_price": candidate.get("price", candidate.get("current_price", 100)) * (1.05 if mode != "aggressive" else 1.10),
                     "mode": mode
                 }
                 
@@ -446,8 +473,13 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
                     if resp.status == 200:
                         risk_data = await resp.json()
                         if risk_data.get("approved"):
-                            candidate["position_size"] = risk_data.get("position_size")
-                            candidate["risk_score"] = risk_data.get("risk_score")
+                            # Calculate quantity from position_size_usd / entry_price
+                            entry_price = candidate.get("price", candidate.get("current_price", 100))
+                            position_size_usd = risk_data.get("position_size_usd", 2000)
+                            candidate["position_size"] = max(1, int(position_size_usd / entry_price))
+                            candidate["position_size_usd"] = position_size_usd
+                            candidate["risk_score"] = risk_data.get("risk_level", "low")
+                            candidate["risk_amount"] = risk_data.get("risk_amount_usd", 0)
                             validated_candidates.append(candidate)
             except:
                 continue
@@ -470,26 +502,37 @@ async def run_trading_workflow(cycle_id: str, mode: str = "normal", params: Dict
         executed_trades = []
         for candidate in validated_candidates[:max_trades]:
             try:
+                # Get price for position sizing
+                entry_price = candidate.get("price", candidate.get("current_price", 100))
+                stop_loss = entry_price * (0.95 if mode == "autonomous" else 0.98)
+                take_profit = entry_price * (1.10 if mode == "autonomous" else 1.05)
+
                 trade_request = {
                     "symbol": candidate["symbol"],
-                    "side": "buy",
-                    "quantity": candidate.get("position_size", 100),
-                    "order_type": "market",
-                    "cycle_id": cycle_id,
-                    "mode": mode
+                    "side": "long",  # Trading service expects "long"/"short"
+                    "quantity": int(candidate.get("position_size", 100)),
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit
                 }
-                
+
+                # Use /api/v1/positions with cycle_id as query param
                 async with state.http_session.post(
-                    f"{config.TRADING_URL}/api/v1/orders",
+                    f"{config.TRADING_URL}/api/v1/positions?cycle_id={cycle_id}",
                     json=trade_request
                 ) as resp:
                     if resp.status == 200:
                         trade_data = await resp.json()
                         executed_trades.append({
                             "symbol": candidate["symbol"],
-                            "order_id": trade_data.get("order_id"),
-                            "quantity": candidate.get("position_size")
+                            "position_id": trade_data.get("position_id"),
+                            "quantity": int(candidate.get("position_size", 100)),
+                            "entry_price": entry_price
                         })
+                        logger.info(f"[{cycle_id}] Trade executed: {candidate['symbol']} @ ${entry_price:.2f}")
+                    else:
+                        error_text = await resp.text()
+                        logger.error(f"[{cycle_id}] Trade failed for {candidate['symbol']}: {resp.status} - {error_text}")
             except Exception as e:
                 logger.error(f"Failed to execute trade for {candidate['symbol']}: {e}")
                 continue

@@ -2,11 +2,17 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca_trader.py
-Version: 1.1.0
-Last Updated: 2025-12-03
+Version: 1.2.0
+Last Updated: 2025-12-05
 Purpose: Alpaca trading integration for autonomous order execution
 
 REVISION HISTORY:
+v1.2.0 (2025-12-05) - Fix order side conversion bug
+- Added _normalize_side() helper to properly convert "long"/"short" to BUY/SELL
+- Previous code only checked for "buy" exact match, causing "long" to become SELL
+- All intended long positions were incorrectly placed as short sells
+- Fixes critical bug causing inverted positions
+
 v1.1.0 (2025-12-03) - Fix sub-penny pricing error
 - Added _round_price() helper to round all prices to 2 decimal places
 - Alpaca rejects prices with floating-point precision (e.g., 9.050000190734863)
@@ -61,6 +67,30 @@ def _round_price(price: Optional[float]) -> Optional[float]:
     if price is None:
         return None
     return round(float(price), 2)
+
+
+def _normalize_side(side: str) -> OrderSide:
+    """
+    Convert side string to Alpaca OrderSide enum.
+
+    Accepts: "buy", "long", "sell", "short" (case-insensitive)
+
+    Args:
+        side: The order side as string ("buy", "long", "sell", or "short")
+
+    Returns:
+        OrderSide.BUY or OrderSide.SELL
+
+    Raises:
+        ValueError: If side is not one of the accepted values
+    """
+    side_lower = side.lower()
+    if side_lower in ("buy", "long"):
+        return OrderSide.BUY
+    elif side_lower in ("sell", "short"):
+        return OrderSide.SELL
+    else:
+        raise ValueError(f"Invalid order side: {side}. Must be buy/long or sell/short")
 
 
 class AlpacaTrader:
@@ -157,7 +187,7 @@ class AlpacaTrader:
             raise RuntimeError("Alpaca trading not enabled")
 
         try:
-            order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+            order_side = _normalize_side(side)
 
             request = MarketOrderRequest(
                 symbol=symbol,
@@ -168,7 +198,7 @@ class AlpacaTrader:
 
             order = self.trading_client.submit_order(request)
 
-            logger.info(f"Market order submitted: {symbol} {side} {quantity} shares")
+            logger.info(f"Market order submitted: {symbol} {side} -> {order_side.value} {quantity} shares")
 
             return {
                 "order_id": str(order.id),
@@ -209,7 +239,7 @@ class AlpacaTrader:
             raise RuntimeError("Alpaca trading not enabled")
 
         try:
-            order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+            order_side = _normalize_side(side)
 
             # Round price to 2 decimal places to avoid sub-penny rejection
             rounded_price = _round_price(limit_price)
@@ -270,7 +300,7 @@ class AlpacaTrader:
             raise RuntimeError("Alpaca trading not enabled")
 
         try:
-            order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+            order_side = _normalize_side(side)
 
             # Round all prices to 2 decimal places to avoid sub-penny rejection
             rounded_entry = _round_price(entry_price)

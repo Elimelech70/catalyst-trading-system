@@ -97,6 +97,10 @@ services:
       REDIS_PORT: 6379
       ALPHAVANTAGE_API_KEY: ${ALPHAVANTAGE_API_KEY:-}
       POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+      # Alpaca API for fetching tradeable universe
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
       PYTHONUNBUFFERED: 1
     ports:
       - "5001:5001"
@@ -169,6 +173,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-RedisCatalyst2025!SecureCache}
       PYTHONUNBUFFERED: 1
     ports:
       - "5003:5003"

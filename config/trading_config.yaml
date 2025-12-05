@@ -34,25 +34,25 @@ trading_session:
   max_order_retries: 3              # Maximum retry attempts
 
 # -----------------------------------------------------------------------------
-# WORKFLOW AUTOMATION
+# WORKFLOW AUTOMATION - AGGRESSIVE MODE FOR DATA COLLECTION
 # -----------------------------------------------------------------------------
 workflow:
   # Scanning Configuration
-  scan_frequency_minutes: 30        # Scan market every 30 minutes
+  scan_frequency_minutes: 15        # Scan more frequently (was 30)
   scan_on_startup: true             # Run scan when workflow starts
 
-  # Universe Selection
-  universe_size: 100                # Start with 100 stocks
+  # Universe Selection - LARGER UNIVERSE
+  universe_size: 200                # Increased from 100 to 200
 
-  # Candidate Filtering (100 → 35 → 20 → 10 → 5)
-  stage_1_catalyst_filter: 35       # Filter to 35 with catalysts
-  stage_2_technical_filter: 20      # Filter to 20 meeting technical criteria
-  stage_3_pattern_filter: 10        # Filter to 10 with patterns
-  stage_4_final_ranking: 5          # Rank top 5 candidates
+  # Candidate Filtering - RELAXED (200 → 100 → 50 → 20 → 10)
+  stage_1_catalyst_filter: 100      # Increased from 35 to 100
+  stage_2_technical_filter: 50      # Increased from 20 to 50
+  stage_3_pattern_filter: 20        # Increased from 10 to 20
+  stage_4_final_ranking: 10         # Increased from 5 to 10
 
-  # Trade Execution
-  max_candidates_per_scan: 5        # Analyze top 5 candidates
-  execute_top_n: 3                  # Execute trades on top 3 (if risk passes)
+  # Trade Execution - MORE TRADES
+  max_candidates_per_scan: 10       # Increased from 5 to 10
+  execute_top_n: 5                  # Increased from 3 to 5
 
   # Execution Strategy
   execute_simultaneously: false     # Execute one at a time
@@ -97,22 +97,22 @@ market_hours:
     - "2025-12-25"  # Christmas
 
 # -----------------------------------------------------------------------------
-# SCANNER CONFIGURATION
+# SCANNER CONFIGURATION - AGGRESSIVE MODE FOR DATA COLLECTION
 # -----------------------------------------------------------------------------
 scanner:
   # Data Sources
   use_live_data: true               # Use real-time market data
   cache_scan_results: true          # Cache results for 5 minutes
 
-  # Filtering Criteria
-  min_price: 5.00                   # Minimum stock price $5
-  max_price: 500.00                 # Maximum stock price $500
-  min_volume: 1000000               # Minimum 1M shares/day volume
-  min_dollar_volume: 10000000       # Minimum $10M daily dollar volume
+  # Filtering Criteria - RELAXED FOR MORE TRADES
+  min_price: 2.00                   # Lowered from $5 to $2
+  max_price: 1000.00                # Raised from $500 to $1000
+  min_volume: 500000                # Lowered from 1M to 500K
+  min_dollar_volume: 5000000        # Lowered from $10M to $5M
 
-  # News Requirements
-  require_news_catalyst: true       # Require news in last 24 hours
-  min_catalyst_strength: 0.70       # Minimum catalyst strength 0.7/1.0
+  # News Requirements - DISABLED FOR MORE TRADES
+  require_news_catalyst: false      # DISABLED - don't require news
+  min_catalyst_strength: 0.20       # Lowered from 0.70 to 0.20
 
   # Sector Filters
   excluded_sectors: []              # No excluded sectors
@@ -123,7 +123,7 @@ scanner:
   max_spread_pct: 0.01              # Maximum 1% bid-ask spread
 
 # -----------------------------------------------------------------------------
-# PATTERN RECOGNITION CONFIGURATION
+# PATTERN RECOGNITION CONFIGURATION - AGGRESSIVE MODE
 # -----------------------------------------------------------------------------
 pattern_recognition:
   # Enabled Patterns
@@ -133,9 +133,10 @@ pattern_recognition:
     - "ascending_triangle"
     - "opening_range_breakout"
     - "abcd_pattern"
+    - "any"                          # Accept any pattern
 
-  # Pattern Confidence
-  min_pattern_confidence: 0.70      # Minimum 70% confidence required
+  # Pattern Confidence - LOWERED FOR MORE TRADES
+  min_pattern_confidence: 0.20      # Lowered from 0.70 to 0.20
 
   # Pattern Preferences (optional scoring boost)
   pattern_preferences:
@@ -146,29 +147,29 @@ pattern_recognition:
     abcd_pattern: 1.0
 
 # -----------------------------------------------------------------------------
-# TECHNICAL ANALYSIS CONFIGURATION
+# TECHNICAL ANALYSIS CONFIGURATION - AGGRESSIVE MODE
 # -----------------------------------------------------------------------------
 technical_analysis:
-  # Indicator Requirements
-  require_trend_confirmation: true  # Price above SMA 20
-  require_momentum_confirmation: true  # RSI in valid range
-  require_volume_confirmation: true   # Volume above average
+  # Indicator Requirements - ALL DISABLED FOR MORE TRADES
+  require_trend_confirmation: false  # DISABLED
+  require_momentum_confirmation: false  # DISABLED
+  require_volume_confirmation: false   # DISABLED
 
-  # Specific Criteria
-  min_rsi: 40                       # Minimum RSI value
-  max_rsi: 70                       # Maximum RSI value
-  min_volume_ratio: 1.5             # Volume must be 1.5x average
+  # Specific Criteria - WIDENED RANGES
+  min_rsi: 20                       # Lowered from 40 to 20
+  max_rsi: 85                       # Raised from 70 to 85
+  min_volume_ratio: 0.5             # Lowered from 1.5 to 0.5
 
-  # Trend Filters
-  price_above_sma_20: true          # Must be above 20-day SMA
-  price_above_sma_50: false         # Optional 50-day SMA filter
+  # Trend Filters - DISABLED
+  price_above_sma_20: false         # DISABLED
+  price_above_sma_50: false         # DISABLED
 
-  # Support/Resistance
-  use_support_resistance: true      # Use support/resistance levels
-  min_bounces_for_support: 2        # Minimum 2 prior bounces
+  # Support/Resistance - DISABLED
+  use_support_resistance: false     # DISABLED
+  min_bounces_for_support: 1        # Lowered from 2 to 1
 
 # -----------------------------------------------------------------------------
-# NEWS CATALYST CONFIGURATION
+# NEWS CATALYST CONFIGURATION - AGGRESSIVE MODE
 # -----------------------------------------------------------------------------
 news_catalyst:
   # News Sources
@@ -177,9 +178,9 @@ news_catalyst:
     - "newsapi"
     - "alpaca"
 
-  # Sentiment Analysis
-  min_sentiment_score: 0.50         # Minimum positive sentiment
-  sentiment_weight: 0.30            # 30% weight in final score
+  # Sentiment Analysis - LOWERED FOR MORE TRADES
+  min_sentiment_score: 0.10         # Lowered from 0.50 to 0.10
+  sentiment_weight: 0.10            # Lowered from 0.30 to 0.10
 
   # Catalyst Types (preferred)
   preferred_catalysts:
@@ -236,19 +237,19 @@ position_management:
   max_position_age_minutes: 180     # Close after 3 hours
 
 # -----------------------------------------------------------------------------
-# COMPOSITE SCORING - Candidate Ranking
+# COMPOSITE SCORING - AGGRESSIVE MODE
 # -----------------------------------------------------------------------------
 composite_scoring:
-  # Score Weights (must sum to 1.0)
+  # Score Weights (must sum to 1.0) - MOMENTUM FOCUSED
   weights:
-    catalyst_score: 0.30            # 30% - News catalyst strength
-    technical_score: 0.25           # 25% - Technical indicators
-    pattern_score: 0.25             # 25% - Pattern confidence
-    volume_score: 0.10              # 10% - Volume analysis
-    risk_reward_score: 0.10         # 10% - Risk/reward ratio
+    catalyst_score: 0.10            # Reduced from 0.30 to 0.10
+    technical_score: 0.20           # Reduced from 0.25 to 0.20
+    pattern_score: 0.20             # Reduced from 0.25 to 0.20
+    volume_score: 0.25              # Increased from 0.10 to 0.25 (momentum)
+    risk_reward_score: 0.25         # Increased from 0.10 to 0.25
 
-  # Minimum Composite Score
-  min_composite_score: 0.70         # Require 70/100 minimum score
+  # Minimum Composite Score - LOWERED FOR MORE TRADES
+  min_composite_score: 0.30         # Lowered from 0.70 to 0.30
 
 # -----------------------------------------------------------------------------
 # DATA COLLECTION - ML Training
