@@ -2,11 +2,15 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: technical-service.py
-Version: 6.0.0
-Last Updated: 2025-11-18
+Version: 6.0.1
+Last Updated: 2025-12-05
 Purpose: Technical analysis service using v6.0 3NF normalized schema
 
 REVISION HISTORY:
+v6.0.1 (2025-12-05) - FIX SCHEMA COLUMN NAMES
+- Fixed trading_history query to use actual column names (open, high, low, close)
+- Was incorrectly using open_price, high_price, low_price, close_price
+
 v6.0.0 (2025-11-18) - SCHEMA v6.0 3NF COMPLIANCE
 - Uses get_or_create_security() helper function
 - Uses get_or_create_time() helper function
@@ -474,31 +478,32 @@ async def fetch_price_data(symbol: str, timeframe: str, periods: int = 100) -> p
     security_id = await get_security_id(symbol)
     
     async with db_pool.acquire() as conn:
-        # Map timeframe to interval
-        interval_map = {
-            "1m": "1 minute",
-            "5m": "5 minutes", 
-            "15m": "15 minutes",
-            "1h": "1 hour",
-            "1d": "1 day"
+        # Map timeframe to minutes for interval calculation
+        minutes_map = {
+            "1m": 1,
+            "5m": 5,
+            "15m": 15,
+            "1h": 60,
+            "1d": 1440
         }
-        interval = interval_map.get(timeframe, "5 minutes")
-        
+        minutes_per_bar = minutes_map.get(timeframe, 5)
+        total_minutes = periods * minutes_per_bar
+
         query = f"""
-            SELECT 
+            SELECT
                 td.timestamp,
-                th.open_price as open,
-                th.high_price as high,
-                th.low_price as low,
-                th.close_price as close,
+                th.open,
+                th.high,
+                th.low,
+                th.close,
                 th.volume
             FROM trading_history th
             JOIN time_dimension td ON td.time_id = th.time_id
             WHERE th.security_id = $1
-                AND td.timestamp >= NOW() - INTERVAL '{periods} {interval}'
+                AND td.timestamp >= NOW() - INTERVAL '{total_minutes} minutes'
             ORDER BY td.timestamp ASC
         """
-        
+
         rows = await conn.fetch(query, security_id)
     
     if len(rows) < 50:

@@ -2,11 +2,15 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: news-service.py
-Version: 6.0.0
-Last Updated: 2025-11-18
+Version: 6.0.1
+Last Updated: 2025-12-05
 Purpose: News sentiment analysis service using v6.0 3NF normalized schema
 
 REVISION HISTORY:
+v6.0.1 (2025-12-05) - FIX SCHEMA COLUMN NAMES
+- Fixed time_dimension queries to use 'timestamp' instead of 'full_timestamp'
+- The full_timestamp column does not exist in deployed schema
+
 v6.0.0 (2025-11-18) - Initial v6.0 implementation
 - Uses get_or_create_security() helper function
 - Uses get_or_create_time() helper function
@@ -301,19 +305,20 @@ async def get_sentiment(symbol: str, hours: int = 24, limit: int = 10):
             SELECT
                 ns.news_id,
                 s.symbol,
-                td.full_timestamp as published_at,
+                td.timestamp as published_at,
                 ns.headline,
                 ns.source,
                 ns.url,
                 ns.sentiment_score,
-                ns.is_catalyst,
+                ns.catalyst_type,
+                ns.catalyst_strength,
                 ns.created_at
             FROM news_sentiment ns
             JOIN securities s ON s.security_id = ns.security_id
             JOIN time_dimension td ON td.time_id = ns.time_id
             WHERE ns.security_id = $1
-              AND td.full_timestamp >= NOW() - INTERVAL '1 hour' * $2
-            ORDER BY td.full_timestamp DESC
+              AND td.timestamp >= NOW() - INTERVAL '1 hour' * $2
+            ORDER BY td.timestamp DESC
             LIMIT $3
         """, security_id, hours, limit)
 
@@ -343,17 +348,18 @@ async def get_catalysts(hours: int = 24, limit: int = 20):
                 ns.news_id,
                 s.symbol,
                 s.company_name,
-                td.full_timestamp as published_at,
+                td.timestamp as published_at,
                 ns.headline,
                 ns.source,
                 ns.sentiment_score,
-                ns.is_catalyst
+                ns.catalyst_type,
+                ns.catalyst_strength
             FROM news_sentiment ns
             JOIN securities s ON s.security_id = ns.security_id
             JOIN time_dimension td ON td.time_id = ns.time_id
-            WHERE ns.is_catalyst = true
-              AND td.full_timestamp >= NOW() - INTERVAL '1 hour' * $1
-            ORDER BY ns.sentiment_score DESC, td.full_timestamp DESC
+            WHERE ns.catalyst_type IS NOT NULL
+              AND td.timestamp >= NOW() - INTERVAL '1 hour' * $1
+            ORDER BY ns.sentiment_score DESC, td.timestamp DESC
             LIMIT $2
         """, hours, limit)
 
@@ -386,12 +392,12 @@ async def get_aggregate_sentiment(symbol: str, hours: int = 24):
                 AVG(ns.sentiment_score) as avg_sentiment,
                 MAX(ns.sentiment_score) as max_sentiment,
                 MIN(ns.sentiment_score) as min_sentiment,
-                COUNT(*) FILTER (WHERE ns.is_catalyst) as catalyst_count
+                COUNT(*) FILTER (WHERE ns.catalyst_type IS NOT NULL) as catalyst_count
             FROM news_sentiment ns
             JOIN securities s ON s.security_id = ns.security_id
             JOIN time_dimension td ON td.time_id = ns.time_id
             WHERE ns.security_id = $1
-              AND td.full_timestamp >= NOW() - INTERVAL '1 hour' * $2
+              AND td.timestamp >= NOW() - INTERVAL '1 hour' * $2
             GROUP BY s.symbol
         """, security_id, hours)
 
