@@ -2,7 +2,7 @@
 
 **Name of Application**: Catalyst Trading System
 **Name of file**: CLAUDE.md
-**Version**: 1.1.0
+**Version**: 1.1.1
 **Last Updated**: 2025-12-06
 **Purpose**: Guidelines for Claude Code operating on production droplet
 
@@ -353,42 +353,12 @@ docker exec catalyst-scanner-1 head -20 /app/scanner-service.py
 **Solution**: Always store UTC, convert for display only
 
 ### Lesson 6: Order Side Bug (v1.2.0) - CRITICAL
-**Problem**: All "long" positions were placed as SHORT sells, causing inverted positions
-**Root Cause**: Simple ternary logic in `alpaca_trader.py`:
-```python
-# BUGGY CODE - DO NOT USE
-order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-```
-The workflow sends `side="long"`, but `"long" != "buy"`, so it fell through to SELL.
+**Problem**: "long" positions placed as SHORT sells (81 positions affected Nov-Dec 2025)
+**Root Cause**: `side == "buy"` didn't handle `side="long"` from workflow
+**Solution**: Use `_normalize_side()` + `_validate_order_side_mapping()` in alpaca_trader.py v1.3.0
+**Prevention**: Run `python3 scripts/test_order_side.py` before trading
 
-**Impact**: 81 positions affected (Nov 29 - Dec 4, 2025), all intended longs became shorts.
-
-**Solution (v1.3.0)**:
-```python
-# CORRECT CODE - Use _normalize_side()
-def _normalize_side(side: str) -> OrderSide:
-    side_lower = side.lower()
-    if side_lower in ("buy", "long"):
-        return OrderSide.BUY
-    elif side_lower in ("sell", "short"):
-        return OrderSide.SELL
-    else:
-        raise ValueError(f"Invalid order side: {side}")
-
-# Plus defense-in-depth validation
-def _validate_order_side_mapping(input_side: str, output_side: OrderSide) -> None:
-    # Raises RuntimeError if mapping is wrong
-```
-
-**Prevention**:
-1. Run integration test before trading: `python3 scripts/test_order_side.py`
-2. Check logs for: `ORDER SUBMISSION [BRACKET]: ... input_side='long', mapped_side=buy`
-3. Unit tests in `services/trading/tests/test_alpaca_trader.py` (28 tests)
-
-**Files with fix**:
-- `services/trading/common/alpaca_trader.py` (v1.3.0)
-- `services/workflow/common/alpaca_trader.py` (v1.3.0)
-- `services/trading/trading-service.py` (v8.2.0) - has `/api/v1/orders/test` endpoint
+**Full details**: See `Documentation/Implementation/order-side-testing.md`
 
 ---
 
@@ -447,19 +417,10 @@ catalyst-trading-system/
 
 ### Pre-Trading Session Checklist
 ```bash
-# 1. Run order side integration test (CRITICAL after v1.2.0 bug)
+# Run order side test (CRITICAL - see Lesson 6)
 python3 scripts/test_order_side.py
-
-# 2. Check all services healthy
-for port in 5001 5002 5003 5004 5005 5006 5008 5009; do
-  echo "=== Port $port ===" && curl -s http://localhost:$port/health | python3 -m json.tool
-done
-
-# 3. Verify alpaca_trader version in containers
-docker exec catalyst-trading head -10 /app/common/alpaca_trader.py | grep Version
-docker exec catalyst-workflow head -10 /app/common/alpaca_trader.py | grep Version
-# Should show: Version: 1.3.0 or higher
 ```
+**Full checklist**: See `Documentation/Implementation/order-side-testing.md`
 
 ### Check Service Status
 ```bash
