@@ -1,9 +1,9 @@
 # CLAUDE.md - Catalyst Trading System
 
-**Name of Application**: Catalyst Trading System  
-**Name of file**: CLAUDE.md  
-**Version**: 1.0.0  
-**Last Updated**: 2025-11-29  
+**Name of Application**: Catalyst Trading System
+**Name of file**: CLAUDE.md
+**Version**: 1.1.0
+**Last Updated**: 2025-12-06
 **Purpose**: Guidelines for Claude Code operating on production droplet
 
 ---
@@ -349,8 +349,46 @@ docker exec catalyst-scanner-1 head -20 /app/scanner-service.py
 **Solution**: ALWAYS use `get_or_create_security(symbol)` first
 
 ### Lesson 5: Time Zone Confusion
-**Problem**: Perth (AWST) vs US (EST) time calculations wrong  
+**Problem**: Perth (AWST) vs US (EST) time calculations wrong
 **Solution**: Always store UTC, convert for display only
+
+### Lesson 6: Order Side Bug (v1.2.0) - CRITICAL
+**Problem**: All "long" positions were placed as SHORT sells, causing inverted positions
+**Root Cause**: Simple ternary logic in `alpaca_trader.py`:
+```python
+# BUGGY CODE - DO NOT USE
+order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+```
+The workflow sends `side="long"`, but `"long" != "buy"`, so it fell through to SELL.
+
+**Impact**: 81 positions affected (Nov 29 - Dec 4, 2025), all intended longs became shorts.
+
+**Solution (v1.3.0)**:
+```python
+# CORRECT CODE - Use _normalize_side()
+def _normalize_side(side: str) -> OrderSide:
+    side_lower = side.lower()
+    if side_lower in ("buy", "long"):
+        return OrderSide.BUY
+    elif side_lower in ("sell", "short"):
+        return OrderSide.SELL
+    else:
+        raise ValueError(f"Invalid order side: {side}")
+
+# Plus defense-in-depth validation
+def _validate_order_side_mapping(input_side: str, output_side: OrderSide) -> None:
+    # Raises RuntimeError if mapping is wrong
+```
+
+**Prevention**:
+1. Run integration test before trading: `python3 scripts/test_order_side.py`
+2. Check logs for: `ORDER SUBMISSION [BRACKET]: ... input_side='long', mapped_side=buy`
+3. Unit tests in `services/trading/tests/test_alpaca_trader.py` (28 tests)
+
+**Files with fix**:
+- `services/trading/common/alpaca_trader.py` (v1.3.0)
+- `services/workflow/common/alpaca_trader.py` (v1.3.0)
+- `services/trading/trading-service.py` (v8.2.0) - has `/api/v1/orders/test` endpoint
 
 ---
 
@@ -406,6 +444,22 @@ catalyst-trading-system/
 ---
 
 ## 🔄 Common Operations
+
+### Pre-Trading Session Checklist
+```bash
+# 1. Run order side integration test (CRITICAL after v1.2.0 bug)
+python3 scripts/test_order_side.py
+
+# 2. Check all services healthy
+for port in 5001 5002 5003 5004 5005 5006 5008 5009; do
+  echo "=== Port $port ===" && curl -s http://localhost:$port/health | python3 -m json.tool
+done
+
+# 3. Verify alpaca_trader version in containers
+docker exec catalyst-trading head -10 /app/common/alpaca_trader.py | grep Version
+docker exec catalyst-workflow head -10 /app/common/alpaca_trader.py | grep Version
+# Should show: Version: 1.3.0 or higher
+```
 
 ### Check Service Status
 ```bash
@@ -465,6 +519,8 @@ scp -i ~/.ssh/id_rsa root@<DROPLET_IP>:/root/catalyst-trading-mcp/services/*/*.p
 6. **NEVER** skip the three questions at the top of this file
 7. **NEVER** use symbol VARCHAR in queries - use security_id FK
 8. **NEVER** hardcode API keys - use environment variables
+9. **NEVER** use simple ternary for order side conversion - use `_normalize_side()`
+10. **NEVER** trust that "buy"/"sell" is the only valid input - always handle "long"/"short"
 
 ---
 
@@ -478,6 +534,8 @@ scp -i ~/.ssh/id_rsa root@<DROPLET_IP>:/root/catalyst-trading-mcp/services/*/*.p
 6. **ALWAYS** use helper functions for security_id/time_id
 7. **ALWAYS** test on paper trading before live
 8. **ALWAYS** make prioritized list for complex changes
+9. **ALWAYS** run `python3 scripts/test_order_side.py` before trading sessions
+10. **ALWAYS** verify order logs show correct side mapping (long→buy, short→sell)
 
 ---
 
