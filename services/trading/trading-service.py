@@ -2,11 +2,16 @@
 
 # Name of Application: Catalyst Trading System
 # Name of file: trading-service.py
-# Version: 8.1.0
-# Last Updated: 2025-12-03
+# Version: 8.2.0
+# Last Updated: 2025-12-06
 # Purpose: Trading service with ALPACA INTEGRATION for autonomous trading
 
 # REVISION HISTORY:
+# v8.2.0 (2025-12-06) - Order side validation and test endpoint
+# - Added /api/v1/orders/test dry-run endpoint for integration testing
+# - Updated alpaca_trader to v1.3.0 with validation and enhanced logging
+# - Defense-in-depth validation prevents order side bugs
+#
 # v8.1.0 (2025-12-03) - Sub-penny pricing fix
 # - Updated alpaca_trader to v1.1.0 with price rounding
 # - All limit/stop/target prices now rounded to 2 decimal places
@@ -80,7 +85,7 @@ from common.alpaca_trader import alpaca_trader
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "trading"
-SERVICE_VERSION = "8.1.0"  # Sub-penny pricing fix
+SERVICE_VERSION = "8.2.0"  # Order side validation and test endpoint
 SERVICE_TITLE = "Trading Service"
 SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5005
@@ -415,6 +420,79 @@ async def health():
             "error": "unknown",
             "message": str(e)
         }
+
+
+# ============================================================================
+# ORDER SIDE TEST ENDPOINT (v1.3.0 - Integration Testing)
+# ============================================================================
+class OrderTestRequest(BaseModel):
+    """Request model for testing order side mapping"""
+    symbol: str
+    quantity: int
+    side: str
+    dry_run: bool = True
+
+
+@app.post("/api/v1/orders/test")
+async def test_order_mapping(request: OrderTestRequest):
+    """
+    Test order side mapping without submitting to Alpaca.
+
+    This endpoint is used for integration testing to verify that
+    the _normalize_side() function correctly maps input sides
+    to Alpaca OrderSide enums.
+
+    The v1.2.0 bug caused "long" to incorrectly map to SELL.
+    This endpoint allows verification that "long" -> "buy".
+
+    Args:
+        request: OrderTestRequest with symbol, quantity, side, dry_run
+
+    Returns:
+        Mapping result showing input_side -> mapped_side
+    """
+    from common.alpaca_trader import _normalize_side, _validate_order_side_mapping
+    from alpaca.trading.enums import OrderSide
+
+    try:
+        # Normalize the side (this is the function we're testing)
+        mapped_side = _normalize_side(request.side)
+
+        # Validate the mapping (defense in depth)
+        _validate_order_side_mapping(request.side, mapped_side)
+
+        result = {
+            "test": "order_side_mapping",
+            "input_side": request.side,
+            "mapped_side": mapped_side.value,
+            "symbol": request.symbol,
+            "quantity": request.quantity,
+            "dry_run": request.dry_run,
+            "validation": "passed",
+            "would_submit_as": mapped_side.value.upper(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        logger.info(
+            f"ORDER TEST: input_side='{request.side}' -> mapped_side='{mapped_side.value}' "
+            f"(symbol={request.symbol}, qty={request.quantity}, dry_run={request.dry_run})"
+        )
+
+        return result
+
+    except ValueError as e:
+        logger.warning(f"ORDER TEST FAILED (ValueError): {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except RuntimeError as e:
+        # This would be caught by _validate_order_side_mapping if there's a mismatch
+        logger.error(f"ORDER TEST FAILED (RuntimeError): {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    except Exception as e:
+        logger.error(f"ORDER TEST FAILED (Unexpected): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # TRADING CYCLES (RIGOROUS ERROR HANDLING)

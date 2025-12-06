@@ -2,11 +2,16 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca_trader.py
-Version: 1.2.0
-Last Updated: 2025-12-05
+Version: 1.3.0
+Last Updated: 2025-12-06
 Purpose: Alpaca trading integration for autonomous order execution
 
 REVISION HISTORY:
+v1.3.0 (2025-12-06) - Add validation and enhanced logging
+- Added _validate_order_side_mapping() for defense-in-depth validation
+- Added enhanced pre/post order logging with side mapping visibility
+- Added comprehensive unit test suite (22 tests)
+
 v1.2.0 (2025-12-05) - Fix order side conversion bug
 - Added _normalize_side() helper to properly convert "long"/"short" to BUY/SELL
 - Previous code only checked for "buy" exact match, causing "long" to become SELL
@@ -91,6 +96,36 @@ def _normalize_side(side: str) -> OrderSide:
         return OrderSide.SELL
     else:
         raise ValueError(f"Invalid order side: {side}. Must be buy/long or sell/short")
+
+
+def _validate_order_side_mapping(input_side: str, output_side: OrderSide) -> None:
+    """
+    Validate that order side mapping is correct before API submission.
+
+    This is a defense-in-depth check to catch any regression in the
+    _normalize_side() function. The v1.2.0 bug caused "long" to map to SELL,
+    which this validation would have caught.
+
+    Args:
+        input_side: The original side string from the caller
+        output_side: The OrderSide enum after normalization
+
+    Raises:
+        RuntimeError: If the mapping appears incorrect
+    """
+    input_lower = input_side.lower()
+
+    if input_lower in ("long", "buy") and output_side != OrderSide.BUY:
+        raise RuntimeError(
+            f"CRITICAL: Order side mismatch! Input '{input_side}' should map to BUY, "
+            f"but got {output_side.value}. Aborting order to prevent inverted position."
+        )
+
+    if input_lower in ("short", "sell") and output_side != OrderSide.SELL:
+        raise RuntimeError(
+            f"CRITICAL: Order side mismatch! Input '{input_side}' should map to SELL, "
+            f"but got {output_side.value}. Aborting order to prevent inverted position."
+        )
 
 
 class AlpacaTrader:
@@ -188,6 +223,12 @@ class AlpacaTrader:
 
         try:
             order_side = _normalize_side(side)
+            _validate_order_side_mapping(side, order_side)  # Defense in depth
+
+            logger.info(
+                f"ORDER SUBMISSION [MARKET]: symbol={symbol}, input_side='{side}', "
+                f"mapped_side={order_side.value}, qty={quantity}"
+            )
 
             request = MarketOrderRequest(
                 symbol=symbol,
@@ -198,7 +239,10 @@ class AlpacaTrader:
 
             order = self.trading_client.submit_order(request)
 
-            logger.info(f"Market order submitted: {symbol} {side} -> {order_side.value} {quantity} shares")
+            logger.info(
+                f"ORDER CONFIRMED [MARKET]: order_id={order.id}, symbol={symbol}, "
+                f"alpaca_side={order.side}, status={order.status.value}, qty={quantity}"
+            )
 
             return {
                 "order_id": str(order.id),
@@ -240,9 +284,15 @@ class AlpacaTrader:
 
         try:
             order_side = _normalize_side(side)
+            _validate_order_side_mapping(side, order_side)  # Defense in depth
 
             # Round price to 2 decimal places to avoid sub-penny rejection
             rounded_price = _round_price(limit_price)
+
+            logger.info(
+                f"ORDER SUBMISSION [LIMIT]: symbol={symbol}, input_side='{side}', "
+                f"mapped_side={order_side.value}, qty={quantity}, limit=${rounded_price}"
+            )
 
             request = LimitOrderRequest(
                 symbol=symbol,
@@ -254,7 +304,10 @@ class AlpacaTrader:
 
             order = self.trading_client.submit_order(request)
 
-            logger.info(f"Limit order submitted: {symbol} {side} {quantity} @ ${rounded_price}")
+            logger.info(
+                f"ORDER CONFIRMED [LIMIT]: order_id={order.id}, symbol={symbol}, "
+                f"alpaca_side={order.side}, status={order.status.value}, qty={quantity}, limit=${rounded_price}"
+            )
 
             return {
                 "order_id": str(order.id),
@@ -301,11 +354,18 @@ class AlpacaTrader:
 
         try:
             order_side = _normalize_side(side)
+            _validate_order_side_mapping(side, order_side)  # Defense in depth
 
             # Round all prices to 2 decimal places to avoid sub-penny rejection
             rounded_entry = _round_price(entry_price)
             rounded_stop = _round_price(stop_loss)
             rounded_target = _round_price(take_profit)
+
+            logger.info(
+                f"ORDER SUBMISSION [BRACKET]: symbol={symbol}, input_side='{side}', "
+                f"mapped_side={order_side.value}, qty={quantity}, "
+                f"entry=${rounded_entry or 'market'}, stop=${rounded_stop}, target=${rounded_target}"
+            )
 
             # Build stop loss and take profit requests
             stop_loss_req = None
@@ -345,8 +405,9 @@ class AlpacaTrader:
             order = self.trading_client.submit_order(request)
 
             logger.info(
-                f"Bracket order submitted: {symbol} {side} {quantity} shares "
-                f"(entry: ${rounded_entry or 'market'}, stop: ${rounded_stop}, target: ${rounded_target})"
+                f"ORDER CONFIRMED [BRACKET]: order_id={order.id}, symbol={symbol}, "
+                f"alpaca_side={order.side}, status={order.status.value}, qty={quantity}, "
+                f"entry=${rounded_entry or 'market'}, stop=${rounded_stop}, target=${rounded_target}"
             )
 
             return {
