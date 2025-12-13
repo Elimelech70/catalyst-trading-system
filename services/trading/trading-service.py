@@ -2,11 +2,17 @@
 
 # Name of Application: Catalyst Trading System
 # Name of file: trading-service.py
-# Version: 8.2.0
-# Last Updated: 2025-12-06
+# Version: 8.3.0
+# Last Updated: 2025-12-13
 # Purpose: Trading service with ALPACA INTEGRATION for autonomous trading
 
 # REVISION HISTORY:
+# v8.3.0 (2025-12-13) - Critical fixes: order sync, deduplication, limits
+# - Added background task to sync order statuses from Alpaca every 60 seconds
+# - Added position deduplication: blocks duplicate positions for same symbol
+# - Added total position limit (50 max across all cycles)
+# - Updated alpaca_trader to v1.4.0 with bracket order fix
+#
 # v8.2.0 (2025-12-06) - Order side validation and test endpoint
 # - Added /api/v1/orders/test dry-run endpoint for integration testing
 # - Updated alpaca_trader to v1.3.0 with validation and enhanced logging
@@ -74,6 +80,7 @@ from enum import Enum
 from decimal import Decimal
 import sys
 from pathlib import Path
+import asyncio
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -85,7 +92,7 @@ from common.alpaca_trader import alpaca_trader
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "trading"
-SERVICE_VERSION = "8.2.0"  # Order side validation and test endpoint
+SERVICE_VERSION = "8.3.0"  # Order sync, deduplication, position limits
 SERVICE_TITLE = "Trading Service"
 SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5005
@@ -306,57 +313,134 @@ async def get_security_id(symbol: str) -> int:
 # ============================================================================
 from contextlib import asynccontextmanager
 
+# Global reference to background task
+_status_sync_task = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     FastAPI lifespan context manager for startup/shutdown.
     Replaces deprecated @app.on_event decorators.
     """
+    global _status_sync_task
+
     # STARTUP
     logger.info(f"Starting {SERVICE_TITLE} v{SERVICE_VERSION}")
-    
+
     try:
         DATABASE_URL = os.getenv("DATABASE_URL")
         if not DATABASE_URL:
             raise ValueError("DATABASE_URL environment variable not configured")
-        
+
         state.db_pool = await asyncpg.create_pool(
             DATABASE_URL,
             min_size=5,
             max_size=20,
             command_timeout=60
         )
-        
+
         logger.info("Database pool initialized")
-        
+
         # Verify schema
         await verify_schema()
-        
+
+        # Start background order status sync task
+        _status_sync_task = asyncio.create_task(sync_order_statuses())
+        logger.info("[OK] Background order status sync started")
+
         logger.info(f"{SERVICE_TITLE} v{SERVICE_VERSION} ready on port {SERVICE_PORT}")
-        
+
     except ValueError as e:
         logger.critical(f"Configuration error: {e}", exc_info=True)
         raise
-        
+
     except asyncpg.PostgresError as e:
         logger.critical(f"Database initialization failed: {e}", exc_info=True)
         raise
-        
+
     except Exception as e:
         logger.critical(f"Unexpected startup error: {e}", exc_info=True)
         raise
-    
+
     # YIELD CONTROL TO APPLICATION
     yield
-    
+
     # SHUTDOWN
     logger.info(f"Shutting down {SERVICE_TITLE}")
-    
+
+    # Cancel background task
+    if _status_sync_task:
+        _status_sync_task.cancel()
+        try:
+            await _status_sync_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Order status sync task stopped")
+
     if state.db_pool:
         await state.db_pool.close()
         logger.info("Database pool closed")
-    
+
     logger.info(f"{SERVICE_TITLE} shutdown complete")
+
+async def sync_order_statuses():
+    """
+    Background task: Sync order statuses from Alpaca every 60 seconds.
+
+    Updates database alpaca_status field for all open positions by
+    querying Alpaca for current order status. This ensures the database
+    reflects actual broker state (filled, canceled, expired, etc.).
+    """
+    logger.info("[OK] Order status sync task running")
+
+    while True:
+        try:
+            if not state.db_pool:
+                await asyncio.sleep(60)
+                continue
+
+            async with state.db_pool.acquire() as conn:
+                # Find positions that need status sync
+                positions = await conn.fetch("""
+                    SELECT position_id, alpaca_order_id, alpaca_status
+                    FROM positions
+                    WHERE alpaca_order_id IS NOT NULL
+                    AND status = 'open'
+                    AND (alpaca_status IS NULL OR alpaca_status NOT IN ('filled', 'canceled', 'expired', 'rejected', 'error'))
+                """)
+
+                if positions:
+                    logger.debug(f"Syncing {len(positions)} order statuses from Alpaca")
+
+                synced_count = 0
+                for pos in positions:
+                    try:
+                        status_info = await alpaca_trader.get_order_status(pos['alpaca_order_id'])
+                        new_status = status_info.get('status', 'unknown')
+
+                        if new_status != pos['alpaca_status']:
+                            await conn.execute("""
+                                UPDATE positions
+                                SET alpaca_status = $1
+                                WHERE position_id = $2
+                            """, new_status, pos['position_id'])
+                            synced_count += 1
+                            logger.info(f"Order {pos['alpaca_order_id']}: {pos['alpaca_status']} -> {new_status}")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to sync order {pos['alpaca_order_id']}: {e}")
+
+                if synced_count > 0:
+                    logger.info(f"Synced {synced_count} order statuses")
+
+            await asyncio.sleep(60)
+
+        except asyncio.CancelledError:
+            logger.info("Order status sync task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Order status sync error: {e}", exc_info=True)
+            await asyncio.sleep(60)
 
 async def verify_schema():
     """Verify v5.0 normalized schema is deployed"""
@@ -364,19 +448,19 @@ async def verify_schema():
         # Check positions table uses security_id FK
         has_security_id = await state.db_pool.fetchval("""
             SELECT EXISTS (
-                SELECT FROM information_schema.columns 
-                WHERE table_name = 'positions' 
+                SELECT FROM information_schema.columns
+                WHERE table_name = 'positions'
                 AND column_name = 'security_id'
             )
         """)
-        
+
         if not has_security_id:
             raise ValueError(
                 "positions table missing security_id column - schema v5.0 not deployed!"
             )
-        
-        logger.info("âœ… Normalized schema v5.0 verified")
-        
+
+        logger.info("[OK] Normalized schema v5.0 verified")
+
     except asyncpg.PostgresError as e:
         logger.critical(f"Schema verification failed: {e}", exc_info=True)
         raise
@@ -769,15 +853,40 @@ async def create_position(cycle_id: str, request: PositionRequest):
             if not cycle:
                 raise ValueError(f"Cycle not found: {cycle_id}")
             
-            # Check position limits
+            # Check per-cycle position limits
             if cycle['current_positions'] >= cycle['max_positions']:
                 raise RuntimeError(
-                    f"Maximum positions ({cycle['max_positions']}) reached"
+                    f"Maximum positions ({cycle['max_positions']}) reached for this cycle"
                 )
-            
+
+            # Check TOTAL open positions across all cycles (Issue 4 fix)
+            MAX_TOTAL_POSITIONS = 50
+            total_open_positions = await conn.fetchval("""
+                SELECT COUNT(*) FROM positions WHERE status = 'open'
+            """)
+            if total_open_positions >= MAX_TOTAL_POSITIONS:
+                raise RuntimeError(
+                    f"Maximum total positions ({MAX_TOTAL_POSITIONS}) reached across all cycles"
+                )
+
             # Get security_id
             security_id = await get_security_id(request.symbol)
-            
+
+            # Check for existing open position with same symbol (Issue 3 fix - deduplication)
+            existing_position = await conn.fetchval("""
+                SELECT position_id FROM positions
+                WHERE security_id = $1
+                AND status = 'open'
+            """, security_id)
+
+            if existing_position:
+                logger.warning(
+                    f"Duplicate position blocked: {request.symbol} already has open position {existing_position}"
+                )
+                raise RuntimeError(
+                    f"Symbol {request.symbol} already has an open position"
+                )
+
             # Calculate risk amount
             if request.stop_loss and request.entry_price:
                 risk_per_share = abs(request.entry_price - request.stop_loss)

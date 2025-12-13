@@ -2,11 +2,17 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca_trader.py
-Version: 1.3.0
-Last Updated: 2025-12-06
+Version: 1.4.0
+Last Updated: 2025-12-13
 Purpose: Alpaca trading integration for autonomous order execution
 
 REVISION HISTORY:
+v1.4.0 (2025-12-13) - Fix bracket order submission
+- Added OrderClass.BRACKET to LimitOrderRequest and MarketOrderRequest
+- Previous code omitted order_class parameter, causing Alpaca to ignore stop-loss/take-profit
+- Bracket orders now properly create 3-legged orders (entry + stop + target)
+- Fixes critical bug where positions had no automatic risk management
+
 v1.3.0 (2025-12-06) - Add validation and enhanced logging
 - Added _validate_order_side_mapping() for defense-in-depth validation
 - Added enhanced pre/post order logging with side mapping visibility
@@ -49,7 +55,7 @@ from alpaca.trading.requests import (
     StopLossRequest,
     TakeProfitRequest
 )
-from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, QueryOrderStatus
+from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, QueryOrderStatus, OrderClass
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
 
@@ -377,26 +383,28 @@ class AlpacaTrader:
             if rounded_target:
                 take_profit_req = TakeProfitRequest(limit_price=rounded_target)
 
-            # Create order request (market or limit)
+            # Create order request (market or limit) with BRACKET order class
             if rounded_entry:
-                # Limit order entry
+                # Limit order entry with bracket (stop-loss + take-profit)
                 request = LimitOrderRequest(
                     symbol=symbol,
                     qty=quantity,
                     side=order_side,
                     time_in_force=TimeInForce.DAY,
                     limit_price=rounded_entry,
+                    order_class=OrderClass.BRACKET,
                     stop_loss=stop_loss_req,
                     take_profit=take_profit_req
                 )
                 order_type = "limit_bracket"
             else:
-                # Market order entry
+                # Market order entry with bracket (stop-loss + take-profit)
                 request = MarketOrderRequest(
                     symbol=symbol,
                     qty=quantity,
                     side=order_side,
                     time_in_force=TimeInForce.DAY,
+                    order_class=OrderClass.BRACKET,
                     stop_loss=stop_loss_req,
                     take_profit=take_profit_req
                 )
