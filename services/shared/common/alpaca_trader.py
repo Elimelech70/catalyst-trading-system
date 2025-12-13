@@ -207,6 +207,39 @@ class AlpacaTrader:
             logger.error(f"Failed to get price for {symbol}: {e}")
             return None
 
+    async def get_current_prices(self, symbols: List[str]) -> Dict[str, float]:
+        """
+        Get current prices for multiple symbols.
+
+        Args:
+            symbols: List of stock symbols
+
+        Returns:
+            Dictionary mapping symbol to current price
+        """
+        if not self.enabled:
+            raise RuntimeError("Alpaca trading not enabled")
+
+        try:
+            request = StockLatestQuoteRequest(symbol_or_symbols=symbols)
+            quotes = self.data_client.get_stock_latest_quote(request)
+
+            prices = {}
+            for symbol, quote in quotes.items():
+                # Use mid-point of bid/ask
+                if quote.bid_price and quote.ask_price:
+                    prices[symbol] = (quote.bid_price + quote.ask_price) / 2
+                elif quote.ask_price:
+                    prices[symbol] = float(quote.ask_price)
+                elif quote.bid_price:
+                    prices[symbol] = float(quote.bid_price)
+
+            return prices
+
+        except Exception as e:
+            logger.error(f"Failed to get current prices: {e}")
+            raise
+
     async def submit_market_order(
         self,
         symbol: str,

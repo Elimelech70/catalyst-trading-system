@@ -2,11 +2,19 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: risk-manager-service.py
-Version: 7.0.0
-Last Updated: 2025-11-18
+Version: 7.1.0
+Last Updated: 2025-12-14
 Purpose: Autonomous risk management with real-time monitoring and emergency stop
 
 REVISION HISTORY:
+v7.1.0 (2025-12-14) - FALLBACK POSITION MONITORING
+- ✅ Added PositionMonitor class for stop-loss/take-profit enforcement
+- ✅ Monitors positions every 30 seconds as backup for Alpaca brackets
+- ✅ Closes positions via market order when stops are hit
+- ✅ Records close_reason in database for audit trail
+- ✅ Sends alerts on fallback position closes
+- Fixes: Silent bracket order failures left positions unprotected
+
 v7.0.0 (2025-11-18) - AUTONOMOUS TRADING IMPLEMENTATION
 - ✅ Real-time position monitoring (every 60 seconds)
 - ✅ Automatic emergency stop execution at daily loss limit
@@ -100,7 +108,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 SERVICE_NAME = "risk-manager"
-SERVICE_VERSION = "7.0.0"  # AUTONOMOUS MONITORING
+SERVICE_VERSION = "7.1.0"  # FALLBACK POSITION MONITORING
 SERVICE_PORT = 5004
 SCHEMA_VERSION = "v6.0 3NF normalized"
 
@@ -358,6 +366,185 @@ async def monitor_positions_continuously():
 
 
 # ============================================================================
+# FALLBACK POSITION MONITORING (STOP-LOSS/TAKE-PROFIT)
+# ============================================================================
+
+class PositionMonitor:
+    """
+    Fallback position monitoring that checks positions against stop-loss/take-profit.
+
+    This is a SAFETY NET in case Alpaca bracket orders fail silently.
+    Runs every 30 seconds during market hours.
+    """
+
+    def __init__(self, db_pool, alpaca_client):
+        self.db_pool = db_pool
+        self.alpaca_trader = alpaca_client
+        self.running = False
+        self._task: Optional[asyncio.Task] = None
+
+    async def start(self):
+        """Start the position monitoring loop"""
+        self.running = True
+        logger.info("🛡️ Fallback position monitor started (checks every 30s)")
+        self._task = asyncio.create_task(self._run_loop())
+
+    async def stop(self):
+        """Stop the position monitoring loop"""
+        self.running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Position monitor stopped")
+
+    async def _run_loop(self):
+        """Main monitoring loop"""
+        while self.running:
+            try:
+                await self._check_positions()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Position monitor error: {e}")
+
+            await asyncio.sleep(30)  # Check every 30 seconds
+
+    async def _check_positions(self):
+        """Check all open positions against their stop prices"""
+
+        if not self.alpaca_trader.is_enabled():
+            return
+
+        async with self.db_pool.acquire() as conn:
+            # Get all open positions with stop prices
+            positions = await conn.fetch("""
+                SELECT
+                    p.position_id,
+                    p.alpaca_order_id,
+                    s.symbol,
+                    p.quantity,
+                    p.entry_price,
+                    p.stop_loss,
+                    p.take_profit,
+                    p.side
+                FROM positions p
+                JOIN securities s ON s.security_id = p.security_id
+                WHERE p.status = 'open'
+                AND p.stop_loss IS NOT NULL
+            """)
+
+            if not positions:
+                return
+
+            # Get current prices from Alpaca
+            symbols = list(set([p['symbol'] for p in positions]))
+
+            try:
+                current_prices = await self.alpaca_trader.get_current_prices(symbols)
+            except Exception as e:
+                logger.error(f"Failed to get current prices for fallback monitor: {e}")
+                return
+
+            # Check each position
+            for pos in positions:
+                symbol = pos['symbol']
+                current_price = current_prices.get(symbol)
+
+                if current_price is None:
+                    continue
+
+                stop_loss = float(pos['stop_loss']) if pos['stop_loss'] else None
+                take_profit = float(pos['take_profit']) if pos['take_profit'] else None
+                side = pos['side']
+
+                should_close = False
+                close_reason = None
+
+                # Check stop loss (for long positions, close if price <= stop)
+                if stop_loss and side == 'long' and current_price <= stop_loss:
+                    should_close = True
+                    close_reason = f"STOP_LOSS_HIT: {symbol} @ ${current_price:.2f} <= ${stop_loss:.2f}"
+
+                # Check stop loss (for short positions, close if price >= stop)
+                if stop_loss and side == 'short' and current_price >= stop_loss:
+                    should_close = True
+                    close_reason = f"STOP_LOSS_HIT: {symbol} @ ${current_price:.2f} >= ${stop_loss:.2f}"
+
+                # Check take profit (for long positions, close if price >= target)
+                if take_profit and side == 'long' and current_price >= take_profit:
+                    should_close = True
+                    close_reason = f"TAKE_PROFIT_HIT: {symbol} @ ${current_price:.2f} >= ${take_profit:.2f}"
+
+                # Check take profit (for short positions, close if price <= target)
+                if take_profit and side == 'short' and current_price <= take_profit:
+                    should_close = True
+                    close_reason = f"TAKE_PROFIT_HIT: {symbol} @ ${current_price:.2f} <= ${take_profit:.2f}"
+
+                if should_close:
+                    logger.warning(f"🛡️ FALLBACK CLOSE TRIGGERED: {close_reason}")
+                    await self._close_position(conn, pos, current_price, close_reason)
+
+    async def _close_position(self, conn, position: dict, current_price: float, reason: str):
+        """Close a position via market order"""
+
+        symbol = position['symbol']
+        quantity = position['quantity']
+        side = position['side']
+
+        try:
+            # Submit market order to close (sell for long, buy for short)
+            close_side = 'sell' if side == 'long' else 'buy'
+
+            result = await self.alpaca_trader.submit_market_order(
+                symbol=symbol,
+                quantity=quantity,
+                side=close_side
+            )
+
+            logger.info(f"Fallback close order submitted: {symbol} {quantity} shares, reason: {reason}")
+
+            # Calculate P&L
+            entry_price = float(position['entry_price']) if position['entry_price'] else 0
+            if side == 'long':
+                realized_pnl = (current_price - entry_price) * quantity
+            else:
+                realized_pnl = (entry_price - current_price) * quantity
+
+            # Update database
+            await conn.execute("""
+                UPDATE positions
+                SET
+                    status = 'closed',
+                    exit_price = $1,
+                    closed_at = NOW(),
+                    realized_pnl = $2,
+                    close_reason = $3,
+                    alpaca_status = 'closed_by_fallback'
+                WHERE position_id = $4
+            """, current_price, realized_pnl, reason, position['position_id'])
+
+            # Send alert
+            try:
+                await alert_manager.send_alert(
+                    alert_type=AlertType.POSITION_CLOSED,
+                    severity=AlertSeverity.WARNING,
+                    title=f"Fallback Position Close: {symbol}",
+                    message=f"{reason}\nP&L: ${realized_pnl:,.2f}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to send fallback close alert: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to close position {symbol} via fallback: {e}")
+
+
+# Global position monitor instance
+_position_monitor: Optional[PositionMonitor] = None
+
+# ============================================================================
 # LIFESPAN MANAGEMENT
 # ============================================================================
 
@@ -424,12 +611,20 @@ async def lifespan(app: FastAPI):
         # ===================================================================
         # START REAL-TIME MONITORING (AUTONOMOUS TRADING)
         # ===================================================================
-        global _monitoring_task
+        global _monitoring_task, _position_monitor
         _monitoring_task = asyncio.create_task(monitor_positions_continuously())
         logger.info("✅ Real-time position monitoring started (autonomous mode)")
 
+        # ===================================================================
+        # START FALLBACK POSITION MONITOR (STOP-LOSS/TAKE-PROFIT)
+        # ===================================================================
+        _position_monitor = PositionMonitor(state.db_pool, alpaca_trader)
+        await _position_monitor.start()
+        logger.info("✅ Fallback position monitor started (checks stop-loss/take-profit every 30s)")
+
         logger.info(f"✅ {SERVICE_NAME} v{SERVICE_VERSION} ready on port {SERVICE_PORT}")
         logger.info("🤖 AUTONOMOUS MODE: Emergency stop will trigger automatically at daily loss limit")
+        logger.info("🛡️ FALLBACK MODE: Position monitor will enforce stop-loss/take-profit if Alpaca brackets fail")
 
     except Exception as e:
         logger.error(f"Startup failed: {e}")
@@ -439,6 +634,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info(f"Shutting down {SERVICE_NAME}")
+
+    # Stop fallback position monitor
+    if _position_monitor:
+        await _position_monitor.stop()
+        logger.info("Fallback position monitor stopped")
 
     # Cancel monitoring task
     if _monitoring_task:
