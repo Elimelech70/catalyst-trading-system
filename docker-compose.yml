@@ -1,10 +1,14 @@
 # Name of Application: Catalyst Trading System
 # Name of file: docker-compose.yml
-# Version: 5.2.0
-# Last Updated: 2025-10-16
+# Version: 5.3.0
+# Last Updated: 2025-12-14
 # Purpose: Docker Compose with DigitalOcean Cloud Database and Redis Cache
 
 # REVISION HISTORY:
+# v5.3.0 (2025-12-14) - Added shared module volume
+#   - Added services/shared volume mount to trading and risk-manager
+#   - Consolidates alpaca_trader.py to single source of truth
+#   - Prevents duplicate code divergence bugs
 # v5.2.0 (2025-10-16) - Added Redis Cache Service
 #   - Added Redis service per v4.1 architecture design
 #   - Configured all services to use Redis for caching
@@ -231,6 +235,7 @@ services:
       - "5004:5004"
     volumes:
       - ./services/risk-manager:/app
+      - ./services/shared:/app/shared:ro
       - ./config:/app/config:ro
       - risk_logs:/app/logs
     networks:
@@ -271,6 +276,7 @@ services:
       - "5005:5005"
     volumes:
       - ./services/trading:/app
+      - ./services/shared:/app/shared:ro
       - trading_logs:/app/logs
     networks:
       - catalyst-network
@@ -395,6 +401,7 @@ services:
       PYTHONUNBUFFERED: 1
     volumes:
       - ./services/workflow:/app
+      - ./services/shared:/app/shared:ro
       - ./config:/app/config:ro
       - workflow_logs:/app/logs
     networks:
