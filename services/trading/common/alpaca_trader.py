@@ -2,11 +2,15 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca_trader.py
-Version: 1.4.0
-Last Updated: 2025-12-13
+Version: 1.5.0
+Last Updated: 2025-12-20
 Purpose: Alpaca trading integration for autonomous order execution
 
 REVISION HISTORY:
+v1.5.0 (2025-12-20) - Add get_positions method
+- Added get_positions() to retrieve all open positions from Alpaca
+- Used by sync task to detect ghost positions (in DB but not in Alpaca)
+
 v1.4.0 (2025-12-13) - Fix bracket order submission
 - Added OrderClass.BRACKET to LimitOrderRequest and MarketOrderRequest
 - Previous code omitted order_class parameter, causing Alpaca to ignore stop-loss/take-profit
@@ -490,6 +494,32 @@ class AlpacaTrader:
 
         except Exception as e:
             logger.error(f"Failed to close position {symbol}: {e}")
+            raise
+
+    async def get_positions(self) -> List[Dict[str, Any]]:
+        """Get all open positions from Alpaca"""
+        if not self.enabled:
+            raise RuntimeError("Alpaca trading not enabled")
+
+        try:
+            positions = self.trading_client.get_all_positions()
+
+            return [
+                {
+                    "symbol": pos.symbol,
+                    "qty": int(pos.qty),
+                    "side": pos.side.value,
+                    "avg_entry_price": float(pos.avg_entry_price),
+                    "current_price": float(pos.current_price),
+                    "market_value": float(pos.market_value),
+                    "unrealized_pl": float(pos.unrealized_pl),
+                    "unrealized_plpc": float(pos.unrealized_plpc)
+                }
+                for pos in positions
+            ]
+
+        except Exception as e:
+            logger.error(f"Failed to get positions: {e}")
             raise
 
     async def close_all_positions(self) -> List[Dict[str, Any]]:

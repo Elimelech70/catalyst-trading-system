@@ -2,11 +2,19 @@
 
 # Name of Application: Catalyst Trading System
 # Name of file: trading-service.py
-# Version: 8.3.0
-# Last Updated: 2025-12-13
+# Version: 8.4.0
+# Last Updated: 2025-12-20
 # Purpose: Trading service with ALPACA INTEGRATION for autonomous trading
 
 # REVISION HISTORY:
+# v8.4.0 (2025-12-20) - Enhanced order sync with all terminal states
+# - Added all Alpaca terminal states: filled, canceled, expired, rejected,
+#   done_for_day, replaced, error
+# - Auto-close positions when orders reach terminal states (expired, canceled, etc.)
+# - Added ghost position detection (DB positions not in Alpaca)
+# - Improved sync logging with [SYNC] prefix and cycle numbers
+# - Added check for Alpaca trader enabled before sync
+#
 # v8.3.0 (2025-12-13) - Critical fixes: order sync, deduplication, limits
 # - Added background task to sync order statuses from Alpaca every 60 seconds
 # - Added position deduplication: blocks duplicate positions for same symbol
@@ -345,8 +353,12 @@ async def lifespan(app: FastAPI):
         await verify_schema()
 
         # Start background order status sync task
-        _status_sync_task = asyncio.create_task(sync_order_statuses())
-        logger.info("[OK] Background order status sync started")
+        logger.info("[DEBUG] About to create sync task...")
+        try:
+            _status_sync_task = asyncio.create_task(sync_order_statuses())
+            logger.info("[OK] Background order status sync started")
+        except Exception as sync_err:
+            logger.error(f"[ERROR] Failed to start sync task: {sync_err}", exc_info=True)
 
         logger.info(f"{SERVICE_TITLE} v{SERVICE_VERSION} ready on port {SERVICE_PORT}")
 
@@ -390,57 +402,164 @@ async def sync_order_statuses():
     Updates database alpaca_status field for all open positions by
     querying Alpaca for current order status. This ensures the database
     reflects actual broker state (filled, canceled, expired, etc.).
+
+    Alpaca Order Statuses:
+    - Terminal (order finished): filled, canceled, expired, rejected,
+                                 done_for_day, replaced
+    - Active: new, partially_filled, accepted, pending_new, pending_cancel,
+              pending_replace, accepted_for_bidding, stopped, suspended,
+              calculated, held
     """
-    logger.info("[OK] Order status sync task running")
+    # All terminal states where order processing is complete
+    TERMINAL_STATES = (
+        'filled', 'canceled', 'expired', 'rejected',
+        'done_for_day', 'replaced', 'error'
+    )
+
+    logger.info("[OK] Order status sync task started")
+    sync_cycle = 0
 
     while True:
         try:
             if not state.db_pool:
+                logger.warning("Sync task: No database pool available, waiting...")
                 await asyncio.sleep(60)
                 continue
 
+            if not alpaca_trader.is_enabled():
+                logger.warning("Sync task: Alpaca trader not enabled, waiting...")
+                await asyncio.sleep(60)
+                continue
+
+            sync_cycle += 1
+            logger.info(f"[SYNC] Cycle {sync_cycle} starting...")
+
             async with state.db_pool.acquire() as conn:
-                # Find positions that need status sync
+                # Find positions that need status sync (not in terminal state)
                 positions = await conn.fetch("""
-                    SELECT position_id, alpaca_order_id, alpaca_status
-                    FROM positions
-                    WHERE alpaca_order_id IS NOT NULL
-                    AND status = 'open'
-                    AND (alpaca_status IS NULL OR alpaca_status NOT IN ('filled', 'canceled', 'expired', 'rejected', 'error'))
+                    SELECT p.position_id, p.alpaca_order_id, p.alpaca_status, s.symbol
+                    FROM positions p
+                    JOIN securities s ON s.security_id = p.security_id
+                    WHERE p.alpaca_order_id IS NOT NULL
+                    AND p.status = 'open'
+                    AND (p.alpaca_status IS NULL OR p.alpaca_status NOT IN
+                         ('filled', 'canceled', 'expired', 'rejected', 'done_for_day', 'replaced', 'error'))
                 """)
 
-                if positions:
-                    logger.debug(f"Syncing {len(positions)} order statuses from Alpaca")
+                logger.info(f"[SYNC] Found {len(positions)} positions to check")
 
                 synced_count = 0
+                closed_count = 0
+                error_count = 0
+
                 for pos in positions:
                     try:
                         status_info = await alpaca_trader.get_order_status(pos['alpaca_order_id'])
                         new_status = status_info.get('status', 'unknown')
+                        filled_qty = status_info.get('filled_qty', 0)
 
                         if new_status != pos['alpaca_status']:
+                            # Update alpaca_status
                             await conn.execute("""
                                 UPDATE positions
-                                SET alpaca_status = $1
+                                SET alpaca_status = $1, updated_at = NOW()
                                 WHERE position_id = $2
                             """, new_status, pos['position_id'])
                             synced_count += 1
-                            logger.info(f"Order {pos['alpaca_order_id']}: {pos['alpaca_status']} -> {new_status}")
+
+                            logger.info(
+                                f"[SYNC] {pos['symbol']}: {pos['alpaca_status']} -> {new_status} "
+                                f"(filled_qty={filled_qty})"
+                            )
+
+                            # If order reached terminal state, check if we should close position
+                            if new_status in TERMINAL_STATES:
+                                # For expired/canceled/rejected, close the position
+                                if new_status in ('expired', 'canceled', 'rejected', 'done_for_day'):
+                                    await conn.execute("""
+                                        UPDATE positions
+                                        SET status = 'closed',
+                                            close_reason = $1,
+                                            closed_at = NOW(),
+                                            updated_at = NOW()
+                                        WHERE position_id = $2
+                                    """, f"alpaca_{new_status}", pos['position_id'])
+                                    closed_count += 1
+                                    logger.info(f"[SYNC] {pos['symbol']}: Closed (reason: alpaca_{new_status})")
 
                     except Exception as e:
-                        logger.warning(f"Failed to sync order {pos['alpaca_order_id']}: {e}")
+                        error_count += 1
+                        error_msg = str(e)
+                        # Check if order not found (might have been purged by Alpaca)
+                        if 'not found' in error_msg.lower() or '404' in error_msg:
+                            logger.warning(f"[SYNC] {pos['symbol']}: Order not found in Alpaca, marking as error")
+                            await conn.execute("""
+                                UPDATE positions
+                                SET alpaca_status = 'error',
+                                    alpaca_error = $1,
+                                    updated_at = NOW()
+                                WHERE position_id = $2
+                            """, f"Order not found: {error_msg}", pos['position_id'])
+                        else:
+                            logger.warning(f"[SYNC] {pos['symbol']}: Failed to sync - {e}")
 
-                if synced_count > 0:
-                    logger.info(f"Synced {synced_count} order statuses")
+                # Log summary
+                logger.info(
+                    f"[SYNC] Cycle {sync_cycle} complete: "
+                    f"synced={synced_count}, closed={closed_count}, errors={error_count}"
+                )
+
+                # Every 10 cycles, check for ghost positions (open in DB but not in Alpaca)
+                if sync_cycle % 10 == 0:
+                    await check_ghost_positions(conn)
 
             await asyncio.sleep(60)
 
         except asyncio.CancelledError:
-            logger.info("Order status sync task cancelled")
+            logger.info("[SYNC] Order status sync task cancelled")
             break
         except Exception as e:
-            logger.error(f"Order status sync error: {e}", exc_info=True)
+            logger.error(f"[SYNC] Unexpected error: {e}", exc_info=True)
             await asyncio.sleep(60)
+
+
+async def check_ghost_positions(conn):
+    """
+    Check for positions that are open in DB but don't exist in Alpaca.
+    These are 'ghost' positions that should be investigated.
+    """
+    try:
+        if not alpaca_trader.is_enabled():
+            return
+
+        # Get Alpaca positions
+        alpaca_positions = await alpaca_trader.get_positions()
+        alpaca_symbols = {p['symbol'] for p in alpaca_positions} if alpaca_positions else set()
+
+        # Get open positions from DB that are older than 1 day
+        db_positions = await conn.fetch("""
+            SELECT p.position_id, s.symbol, p.alpaca_status, p.opened_at
+            FROM positions p
+            JOIN securities s ON s.security_id = p.security_id
+            WHERE p.status = 'open'
+            AND p.opened_at < NOW() - INTERVAL '1 day'
+        """)
+
+        ghost_count = 0
+        for pos in db_positions:
+            if pos['symbol'] not in alpaca_symbols:
+                ghost_count += 1
+                if ghost_count <= 5:  # Log first 5
+                    logger.warning(
+                        f"[GHOST] {pos['symbol']}: Open in DB since {pos['opened_at']} "
+                        f"but not in Alpaca (status={pos['alpaca_status']})"
+                    )
+
+        if ghost_count > 0:
+            logger.warning(f"[GHOST] Total ghost positions found: {ghost_count}")
+
+    except Exception as e:
+        logger.error(f"[GHOST] Error checking ghost positions: {e}")
 
 async def verify_schema():
     """Verify v5.0 normalized schema is deployed"""
