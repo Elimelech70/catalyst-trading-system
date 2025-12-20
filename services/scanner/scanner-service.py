@@ -2,11 +2,26 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: scanner-service.py
-Version: 6.0.1
-Last Updated: 2025-11-22
+Version: 6.1.0
+Last Updated: 2025-12-20
 Purpose: Scanner service using actual deployed database schema
 
 REVISION HISTORY:
+v6.1.0 (2025-12-20) - IMPROVED SCORING LOGIC
+- FIXED: Momentum scoring now PENALIZES overbought stocks (was rewarding them)
+  * Old: momentum=1.0 (10%+ move) = max score = BUY = WRONG
+  * New: momentum=1.0 triggers overbought penalty = avoid chasing
+- ADDED: RSI calculation and overbought filter
+  * RSI > 70 = overbought = reduce score by 50%
+  * RSI 40-60 = pullback zone = bonus 20%
+- ADDED: Optimal momentum zone (3-7% moves)
+  * Stocks with 3-7% moves score highest
+  * Stocks with >10% moves get penalized (already extended)
+- ADDED: Volume spike warning
+  * Volume 3x+ average WITH high momentum = climax top warning
+- Based on analysis: High scores were correlating with LOSSES, not wins
+  * See: Documentation/Analysis/trading-performance-analysis-2025-12-20.md
+
 v6.0.1 (2025-11-22) - SCHEMA FIX - ALIGNED WITH ACTUAL DATABASE
 - FIXED: scan_results INSERT - removed scan_type, renamed columns to actual schema
   * price_at_scan → price
@@ -55,12 +70,14 @@ from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetAssetsRequest
 from alpaca.trading.enums import AssetClass, AssetStatus
+import ta  # Technical analysis library for RSI
+import pandas as pd
 
 # ============================================================================
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "scanner"
-SERVICE_VERSION = "6.0.1"
+SERVICE_VERSION = "6.1.0"
 SERVICE_TITLE = "Scanner Service"
 SCHEMA_VERSION = "actual deployed schema"
 SERVICE_PORT = 5001
@@ -538,44 +555,109 @@ async def filter_by_technical(stocks: List[Dict]) -> List[Dict]:
         try:
             symbol = stock['symbol']
             
-            # Get price data (mock for now)
+            # Get price data - need 14+ days for RSI calculation
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="5d")
-            
-            if hist.empty:
-                logger.warning(f"No price data for {symbol}")
+            hist = ticker.history(period="1mo")  # Extended for RSI
+
+            if hist.empty or len(hist) < 14:
+                logger.warning(f"Insufficient price data for {symbol}")
                 continue
-            
-            # Calculate scores
+
+            # Calculate base metrics
             current_price = float(hist['Close'].iloc[-1])
             avg_volume = int(hist['Volume'].mean())
-            price_change = float((hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100)
-            
-            # Calculate technical metrics
-            momentum_score = min(1.0, abs(price_change) / 10)
+            current_volume = int(hist['Volume'].iloc[-1])
+            price_change = float((hist['Close'].iloc[-1] / hist['Close'].iloc[-5] - 1) * 100)  # 5-day change
+
+            # ================================================================
+            # IMPROVED SCORING LOGIC v6.1.0
+            # Based on analysis: old scoring was CHASING momentum, not TRADING it
+            # See: Documentation/Analysis/trading-performance-analysis-2025-12-20.md
+            # ================================================================
+
+            # --- RSI Calculation ---
+            try:
+                close_series = pd.Series(hist['Close'].values)
+                rsi_indicator = ta.momentum.RSIIndicator(close_series, window=14)
+                rsi = float(rsi_indicator.rsi().iloc[-1])
+            except Exception:
+                rsi = 50.0  # Neutral if calculation fails
+
+            # --- MOMENTUM SCORE (Improved) ---
+            # Old logic: Higher momentum = higher score (WRONG - chasing)
+            # New logic: Optimal momentum is 3-7%, penalize extremes
+            abs_change = abs(price_change)
+            if abs_change < 2.0:
+                # Too weak - not enough momentum
+                momentum_score = abs_change / 2.0 * 0.5  # Max 0.5
+            elif abs_change <= 7.0:
+                # OPTIMAL ZONE (3-7% moves)
+                momentum_score = 0.7 + (abs_change - 2.0) / 5.0 * 0.3  # 0.7 to 1.0
+            else:
+                # EXTENDED - penalize chasing (was the main problem!)
+                # 10%+ moves get progressively worse scores
+                momentum_score = max(0.3, 1.0 - (abs_change - 7.0) / 10.0)
+
+            # --- VOLUME SCORE ---
+            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
             volume_score = min(1.0, avg_volume / 10_000_000)
-            
-            # Add technical data
-            stock['momentum_score'] = momentum_score
-            stock['volume_score'] = volume_score
-            stock['technical_score'] = (momentum_score + volume_score) / 2
+
+            # --- RSI ADJUSTMENT ---
+            rsi_multiplier = 1.0
+            if rsi > 70:
+                # OVERBOUGHT - reduce score significantly
+                rsi_multiplier = 0.5
+                logger.debug(f"{symbol}: RSI={rsi:.1f} OVERBOUGHT, applying 0.5x penalty")
+            elif rsi > 60:
+                # Getting extended
+                rsi_multiplier = 0.8
+            elif 40 <= rsi <= 60:
+                # PULLBACK ZONE - bonus
+                rsi_multiplier = 1.2
+                logger.debug(f"{symbol}: RSI={rsi:.1f} in pullback zone, 1.2x bonus")
+            elif rsi < 30:
+                # Oversold - could bounce
+                rsi_multiplier = 1.1
+
+            # --- VOLUME SPIKE WARNING ---
+            # High volume + high momentum = likely climax top
+            climax_penalty = 1.0
+            if volume_ratio > 3.0 and momentum_score > 0.8:
+                climax_penalty = 0.6
+                logger.debug(f"{symbol}: Volume spike ({volume_ratio:.1f}x) with high momentum - climax warning")
+
+            # --- TECHNICAL SCORE (RSI-adjusted) ---
+            technical_score = ((momentum_score + volume_score) / 2) * rsi_multiplier
+
+            # Add data to stock dict
+            stock['momentum_score'] = round(momentum_score, 2)
+            stock['volume_score'] = round(volume_score, 2)
+            stock['technical_score'] = round(min(1.0, technical_score), 2)
             stock['price'] = current_price
             stock['volume'] = avg_volume
             stock['change_percent'] = price_change
-            
-            # Calculate composite score (matching schema)
-            stock['composite_score'] = (
+            stock['rsi'] = round(rsi, 1)
+            stock['volume_ratio'] = round(volume_ratio, 2)
+
+            # --- COMPOSITE SCORE (with penalties applied) ---
+            raw_composite = (
                 stock['catalyst_score'] * 0.3 +
                 stock['momentum_score'] * 0.2 +
                 stock['volume_score'] * 0.2 +
                 stock['technical_score'] * 0.3
             )
+            stock['composite_score'] = round(raw_composite * climax_penalty, 2)
             
             # Only keep if meets criteria
-            if (avg_volume >= state.config.min_volume and 
+            if (avg_volume >= state.config.min_volume and
                 state.config.min_price <= current_price <= state.config.max_price):
                 results.append(stock)
-                
+                logger.info(
+                    f"[SCORE] {symbol}: composite={stock['composite_score']:.2f}, "
+                    f"mom={stock['momentum_score']:.2f}, vol={stock['volume_score']:.2f}, "
+                    f"tech={stock['technical_score']:.2f}, RSI={rsi:.1f}, chg={price_change:.1f}%"
+                )
+
         except Exception as e:
             logger.error(f"Failed technical analysis for {stock.get('symbol')}: {e}")
             continue
@@ -596,6 +678,14 @@ async def persist_scan_results(cycle_id: str, picks: List[Dict]) -> bool:
         
         for i, pick in enumerate(picks, 1):
             try:
+                # Store additional metrics in scan_metadata (RSI, volume_ratio, etc.)
+                scan_metadata = json.dumps({
+                    'rsi': pick.get('rsi', 50.0),
+                    'volume_ratio': pick.get('volume_ratio', 1.0),
+                    'change_percent': pick.get('change_percent', 0),
+                    'scoring_version': '6.1.0'
+                })
+
                 await state.db_pool.execute("""
                     INSERT INTO scan_results (
                         cycle_id,
@@ -609,8 +699,9 @@ async def persist_scan_results(cycle_id: str, picks: List[Dict]) -> bool:
                         price,
                         volume,
                         rank,
-                        selected_for_trading
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        selected_for_trading,
+                        scan_metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 """,
                     cycle_id,
                     pick['security_id'],
@@ -623,7 +714,8 @@ async def persist_scan_results(cycle_id: str, picks: List[Dict]) -> bool:
                     pick.get('price', 0),
                     pick.get('volume', 0),
                     i,
-                    True
+                    True,
+                    scan_metadata
                 )
                 success_count += 1
                 
