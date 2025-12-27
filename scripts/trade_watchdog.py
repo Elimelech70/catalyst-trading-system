@@ -2,11 +2,17 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: trade_watchdog.py
-Version: 1.1.0
+Version: 1.2.0
 Last Updated: 2025-12-27
 Purpose: Real-time trade lifecycle monitoring for Doctor Claude
 
 REVISION HISTORY:
+v1.2.0 (2025-12-27) - Phase 2 Complete
+- Removed all references to positions.alpaca_* columns (now dropped)
+- Added order_purpose tracking (entry/exit/stop_loss/take_profit)
+- All order queries use orders table exclusively
+- Updated v_trade_pipeline_status view queries
+
 v1.1.0 (2025-12-27) - Updated to use orders table
 - Queries orders table instead of positions.alpaca_* columns
 - Proper order lifecycle tracking
@@ -167,8 +173,8 @@ class TradeWatchdog:
         
         row = await self.db.fetchrow("""
             SELECT * FROM v_trade_pipeline_status
-            WHERE date = CURRENT_DATE
-            ORDER BY started_at DESC
+            WHERE cycle_date = CURRENT_DATE
+            ORDER BY cycle_start DESC
             LIMIT 1
         """)
         
@@ -182,55 +188,40 @@ class TradeWatchdog:
         return {
             "status": "OK",
             "cycle_id": str(row['cycle_id']),
-            "date": str(row['date']),
-            "state": row['cycle_state'],
-            "phase": row.get('phase'),
-            "mode": row.get('mode'),
-            "pipeline_stage": row.get('pipeline_stage', 'UNKNOWN'),
-            "started_at": row['started_at'].isoformat() if row['started_at'] else None,
-            "last_activity": row['last_activity'].isoformat() if row['last_activity'] else None,
-            "minutes_since_activity": round(float(row['minutes_since_activity'] or 0), 1),
+            "date": str(row['cycle_date']),
+            "state": row['cycle_status'],
+            "started_at": row['cycle_start'].isoformat() if row['cycle_start'] else None,
+            "ended_at": row['cycle_end'].isoformat() if row['cycle_end'] else None,
+            "last_order_at": row['last_order_at'].isoformat() if row['last_order_at'] else None,
             "counts": {
-                "candidates": row.get('candidates_found', 0),
                 "positions_total": row.get('positions_total', 0),
                 "positions_open": row.get('positions_open', 0),
-                "positions_closed": row.get('positions_closed', 0),
                 "orders_total": row.get('orders_total', 0),
                 "orders_pending": row.get('orders_pending', 0),
                 "orders_filled": row.get('orders_filled', 0),
-                "orders_cancelled": row.get('orders_cancelled', 0),
-                "orders_rejected": row.get('orders_rejected', 0)
+                "orders_cancelled": row.get('orders_cancelled', 0)
             },
             "pnl": {
-                "daily": float(row['daily_pnl'] or 0),
-                "realized": float(row.get('realized_pnl') or 0),
-                "unrealized": float(row.get('unrealized_pnl') or 0)
-            },
-            "trades": {
-                "executed": row.get('trades_executed', 0),
-                "won": row.get('trades_won', 0),
-                "lost": row.get('trades_lost', 0)
+                "daily": float(row['daily_pnl'] or 0)
             }
         }
 
     async def _check_pipeline_status_fallback(self) -> Dict[str, Any]:
         """Fallback pipeline check if view doesn't exist"""
         row = await self.db.fetchrow("""
-            SELECT 
+            SELECT
                 tc.cycle_id,
-                tc.date,
-                tc.cycle_state,
+                tc.started_at::date as cycle_date,
+                tc.status as cycle_status,
                 tc.started_at,
-                tc.daily_pnl,
-                tc.trades_executed,
-                tc.trades_won,
-                tc.trades_lost,
+                tc.stopped_at,
                 tc.updated_at,
-                (SELECT COUNT(*) FROM scan_results sr WHERE sr.cycle_id = tc.cycle_id) as candidates,
                 (SELECT COUNT(*) FROM positions p WHERE p.cycle_id = tc.cycle_id) as positions_total,
-                (SELECT COUNT(*) FROM positions p WHERE p.cycle_id = tc.cycle_id AND p.status = 'open') as positions_open
+                (SELECT COUNT(*) FROM positions p WHERE p.cycle_id = tc.cycle_id AND p.status = 'open') as positions_open,
+                (SELECT COUNT(*) FROM orders o WHERE o.cycle_id = tc.cycle_id) as orders_total,
+                (SELECT SUM(COALESCE(realized_pnl, 0)) FROM positions p WHERE p.cycle_id = tc.cycle_id) as daily_pnl
             FROM trading_cycles tc
-            WHERE tc.date = CURRENT_DATE
+            WHERE tc.started_at::date = CURRENT_DATE
             ORDER BY tc.started_at DESC
             LIMIT 1
         """)
@@ -241,24 +232,18 @@ class TradeWatchdog:
                 "message": "No trading cycle found for today",
                 "cycle_id": None
             }
-        
-        minutes_since = 0
-        if row['updated_at']:
-            minutes_since = (datetime.now(row['updated_at'].tzinfo) - row['updated_at']).total_seconds() / 60
-        
+
         return {
             "status": "OK",
             "cycle_id": str(row['cycle_id']),
-            "date": str(row['date']),
-            "state": row['cycle_state'],
-            "pipeline_stage": "FALLBACK_QUERY",
+            "date": str(row['cycle_date']),
+            "state": row['cycle_status'],
             "started_at": row['started_at'].isoformat() if row['started_at'] else None,
-            "last_activity": row['updated_at'].isoformat() if row['updated_at'] else None,
-            "minutes_since_activity": round(minutes_since, 1),
+            "ended_at": row['stopped_at'].isoformat() if row['stopped_at'] else None,
             "counts": {
-                "candidates": row['candidates'],
                 "positions_total": row['positions_total'],
-                "positions_open": row['positions_open']
+                "positions_open": row['positions_open'],
+                "orders_total": row['orders_total']
             },
             "pnl": {
                 "daily": float(row['daily_pnl'] or 0)
@@ -275,7 +260,7 @@ class TradeWatchdog:
     # ========================================================================
     
     async def check_stuck_orders(self) -> List[Dict[str, Any]]:
-        """Find orders that have been pending too long"""
+        """Find orders that have been pending too long - queries ORDERS table only"""
         stuck = await self.db.fetch(f"""
             SELECT
                 o.order_id,
@@ -285,6 +270,7 @@ class TradeWatchdog:
                 o.status,
                 o.side,
                 o.order_type,
+                o.order_purpose,
                 o.quantity,
                 o.submitted_at,
                 EXTRACT(EPOCH FROM (NOW() - o.submitted_at))/60 as minutes_pending
@@ -305,9 +291,10 @@ class TradeWatchdog:
                 "symbol": row['symbol'],
                 "side": row['side'],
                 "order_type": row['order_type'],
+                "order_purpose": row['order_purpose'],
                 "quantity": row['quantity'],
                 "minutes_pending": round(float(row['minutes_pending']), 1),
-                "message": f"Order {row['symbol']} {row['side']} {row['quantity']} pending for {round(float(row['minutes_pending']))} minutes",
+                "message": f"Order {row['symbol']} {row['side']} {row['order_purpose'] or 'unknown'} {row['quantity']} pending for {round(float(row['minutes_pending']))} minutes",
                 "fix": f"UPDATE orders SET status = 'expired', updated_at = NOW() WHERE order_id = {row['order_id']}"
             })
 
@@ -427,6 +414,7 @@ class TradeWatchdog:
                 o.status as db_status,
                 o.filled_avg_price as db_filled_price,
                 o.filled_qty as db_filled_qty,
+                o.order_purpose,
                 s.symbol,
                 o.side,
                 o.quantity
@@ -472,11 +460,12 @@ class TradeWatchdog:
                         "alpaca_order_id": row['alpaca_order_id'],
                         "symbol": row['symbol'],
                         "side": row['side'],
+                        "order_purpose": row['order_purpose'],
                         "db_status": row['db_status'],
                         "alpaca_status": alpaca_status,
                         "alpaca_filled_qty": alpaca_filled_qty,
                         "alpaca_filled_price": alpaca_filled_price,
-                        "message": f"Order {row['symbol']} status: DB={row['db_status']}, Alpaca={alpaca_status}",
+                        "message": f"Order {row['symbol']} {row['order_purpose'] or ''} status: DB={row['db_status']}, Alpaca={alpaca_status}",
                         "fix": fix_sql
                     })
 
