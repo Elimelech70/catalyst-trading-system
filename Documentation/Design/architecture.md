@@ -2,26 +2,31 @@
 
 **Name of Application**: Catalyst Trading System  
 **Name of file**: architecture.md  
-**Version**: 6.0.0  
-**Last Updated**: 2025-10-25  
+**Version**: 7.0.0  
+**Last Updated**: 2025-12-27  
 **Purpose**: System architecture for Production trading system  
-**Scope**: PRODUCTION ARCHITECTURE ONLY
+**Scope**: PRODUCTION ARCHITECTURE + DOCTOR CLAUDE MONITORING
 
 ---
 
 ## REVISION HISTORY
 
+**v7.0.0 (2025-12-27)** - DOCTOR CLAUDE MONITORING INTEGRATION
+- ✅ **NEW**: Doctor Claude trade lifecycle monitoring system
+- ✅ **NEW**: `claude_activity_log` table for audit trail
+- ✅ **NEW**: `doctor_claude_rules` table for auto-fix configuration
+- ✅ **NEW**: `trade_watchdog.py` diagnostic script
+- ✅ **NEW**: `log_activity.py` activity logger
+- ✅ **NEW**: Pipeline status views for real-time monitoring
+- ✅ Claude Code as active watchdog during market hours
+
 **v6.0.0 (2025-10-25)** - PRODUCTION ARCHITECTURE CLEAN SEPARATION
-- ✅ **MAJOR CHANGE**: Research services removed entirely
+- ✅ Research services removed entirely
 - ✅ 9-service microservices (no ML/Research services)
 - ✅ Single DigitalOcean droplet deployment
 - ✅ MCP protocol for Claude Desktop integration
-- ✅ REST APIs for inter-service communication
-- ⚠️ **BREAKING**: Research architecture → separate document (future)
 
 **v5.0.0 (2025-10-22)** - 9-Service Split (superseded)
-
-**v4.1.0 (2025-08-31)** - 7-Service Architecture (superseded)
 
 ---
 
@@ -36,16 +41,13 @@
 ✅ Docker Compose (service orchestration)  
 ✅ Single DigitalOcean droplet  
 ✅ Nginx (SSL termination + reverse proxy)  
+✅ **Doctor Claude monitoring system**  
 
 ### **OUT OF SCOPE (Future Research Architecture)**
 ❌ ML Training Service  
 ❌ Pattern Discovery Service  
 ❌ Backtest Engine  
 ❌ Multi-Agent Coordinator  
-❌ Separate Research droplet  
-❌ Multi-agent AI APIs  
-
-**REASON**: Production-first, complete working system fast, Research built later.
 
 ---
 
@@ -53,11 +55,11 @@
 
 1. [Architecture Overview](#1-architecture-overview)
 2. [Service Architecture](#2-service-architecture)
-3. [Communication Patterns](#3-communication-patterns)
-4. [Data Architecture](#4-data-architecture)
-5. [Deployment Architecture](#5-deployment-architecture)
-6. [Security Architecture](#6-security-architecture)
-7. [Performance Architecture](#7-performance-architecture)
+3. [Doctor Claude Monitoring](#3-doctor-claude-monitoring)
+4. [Communication Patterns](#4-communication-patterns)
+5. [Data Architecture](#5-data-architecture)
+6. [Deployment Architecture](#6-deployment-architecture)
+7. [Security Architecture](#7-security-architecture)
 8. [Reliability Architecture](#8-reliability-architecture)
 
 ---
@@ -68,11 +70,12 @@
 
 ```yaml
 Design Principles:
-  - Production-first: Complete working system in 8 weeks
+  - Production-first: Complete working system
   - Single instance: No premature scaling complexity
   - Proven tech: Docker Compose, PostgreSQL, Redis
   - Clean separation: MCP vs REST, concerns isolated
   - Fail-safe: Risk management enforced at multiple layers
+  - Observable: Doctor Claude monitors trade lifecycle
 ```
 
 ### 1.2 High-Level Architecture
@@ -145,23 +148,23 @@ Design Principles:
 │  ┌───────────────────────────────────────────────────────┐ │
 │  │ INFRASTRUCTURE SERVICES                                │ │
 │  │  ┌─────────────────────┐  ┌──────────────────────┐  │ │
-│  │  │ Redis (6379)        │  │ Health Monitor       │  │ │
-│  │  │ - Pub/sub           │  │ - Service checks     │  │ │
-│  │  │ - Caching           │  │ - Metrics            │  │ │
+│  │  │ Redis (6379)        │  │ PostgreSQL           │  │ │
+│  │  │ - Pub/Sub           │  │ - DigitalOcean       │  │ │
+│  │  │ - Cache             │  │ - Managed DB         │  │ │
 │  │  └─────────────────────┘  └──────────────────────┘  │ │
 │  └───────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────────┐
-│             DATA LAYER                                        │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ DigitalOcean Managed PostgreSQL                       │  │
-│  │ - Database: catalyst_trading_production               │  │
-│  │ - Schema: 3NF normalized (see database-schema.md)     │  │
-│  │ - Size: 1vCPU, 1GB RAM, 10GB storage                 │  │
-│  │ - Backups: Automated daily                            │  │
-│  └───────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐ │
+│  │ DOCTOR CLAUDE MONITORING (NEW in v7.0)                │ │
+│  │  ┌─────────────────────────────────────────────┐    │ │
+│  │  │ Claude Code (Active Watchdog)               │    │ │
+│  │  │ - trade_watchdog.py (diagnostics)           │    │ │
+│  │  │ - log_activity.py (audit trail)             │    │ │
+│  │  │ - Observe → Decide → Act → Log loop         │    │ │
+│  │  │ - Auto-fix safe issues, escalate others     │    │ │
+│  │  └─────────────────────────────────────────────┘    │ │
+│  └───────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -181,6 +184,7 @@ Design Principles:
 | 7 | **Workflow** | REST | 5006 | FastAPI | All services, PostgreSQL, Redis |
 | 8 | **News** | REST | 5008 | FastAPI, FinBERT | PostgreSQL, Redis |
 | 9 | **Reporting** | REST | 5009 | FastAPI, Pandas | PostgreSQL |
+| 10 | **Doctor Claude** | Script | N/A | Python, asyncpg | PostgreSQL, Alpaca API |
 
 ### 2.2 Service Dependency Graph
 
@@ -208,57 +212,124 @@ Design Principles:
                       └─────┬─────┘
                             │
                       ┌─────▼─────┐
-                      │  Trading  │
-                      └─────┬─────┘
-                            │
-                      ┌─────▼─────┐
-                      │ Reporting │
-                      └───────────┘
+                      │  Trading  │◄────────────────┐
+                      └─────┬─────┘                 │
+                            │                       │
+                      ┌─────▼─────┐          ┌─────┴─────┐
+                      │ Reporting │          │  Doctor   │
+                      └───────────┘          │  Claude   │
+                                             └───────────┘
+                                                   │
+                                             Monitors All
+                                             Services via
+                                             DB + Alpaca
 ```
 
 ---
 
-## 3. Communication Patterns
+## 3. Doctor Claude Monitoring
 
-### 3.1 MCP Protocol (Claude Desktop ↔ Orchestration)
+### 3.1 Overview
+
+Doctor Claude is an active monitoring system where Claude Code watches the trade pipeline during market hours, diagnoses issues, applies safe fixes, and logs all activities.
+
+### 3.2 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     DOCTOR CLAUDE                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │                 OBSERVE-DECIDE-ACT LOOP             │  │
+│   │                                                     │  │
+│   │   ┌──────────┐    ┌──────────┐    ┌──────────┐    │  │
+│   │   │   RUN    │───▶│   READ   │───▶│  DECIDE  │    │  │
+│   │   │ WATCHDOG │    │  OUTPUT  │    │          │    │  │
+│   │   └──────────┘    └──────────┘    └────┬─────┘    │  │
+│   │        ▲                               │          │  │
+│   │        │                               ▼          │  │
+│   │   ┌────┴─────┐    ┌──────────┐    ┌──────────┐   │  │
+│   │   │   LOG    │◀───│   LOG    │◀───│   ACT    │   │  │
+│   │   │  RESULT  │    │ DECISION │    │          │   │  │
+│   │   └──────────┘    └──────────┘    └──────────┘   │  │
+│   │        │                                          │  │
+│   │        └──────────── WAIT 5 MIN ─────────────────┘  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+            ┌───────────────┼───────────────┐
+            │               │               │
+            ▼               ▼               ▼
+    ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+    │  PostgreSQL  │ │    Alpaca    │ │    Email     │
+    │   Database   │ │   Broker     │ │   Alerts     │
+    └──────────────┘ └──────────────┘ └──────────────┘
+```
+
+### 3.3 Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **Trade Watchdog** | `trade_watchdog.py` | Diagnostic checks, JSON output |
+| **Activity Logger** | `log_activity.py` | Audit trail to database |
+| **Rules Table** | `doctor_claude_rules` | Auto-fix configuration |
+| **Activity Log** | `claude_activity_log` | Decision/action history |
+| **Pipeline View** | `v_trade_pipeline_status` | Real-time pipeline state |
+
+### 3.4 Checks Performed
+
+| Check | Description | Severity | Auto-Fixable |
+|-------|-------------|----------|--------------|
+| Pipeline Status | Current cycle state | INFO | N/A |
+| Stuck Orders | Orders pending > 5 min | WARNING | No |
+| Phantom Positions | DB position not in Alpaca | CRITICAL | Yes |
+| Orphan Positions | Alpaca position not in DB | CRITICAL | No |
+| Qty Mismatch | DB qty ≠ Alpaca qty | WARNING | Maybe |
+| Order Status Mismatch | DB status ≠ Alpaca status | WARNING | Yes |
+| Stale Cycle | No activity > 30 min | WARNING | No |
+
+### 3.5 Safety Boundaries
+
+**Doctor Claude will NEVER:**
+- Close positions in Alpaca automatically
+- Modify real money amounts
+- Change risk parameters
+- Override emergency stops
+
+**Doctor Claude CAN:**
+- Sync DB state to match Alpaca (read broker, write DB)
+- Mark phantom positions as closed
+- Update order statuses to match Alpaca
+- Alert Craig to issues requiring human judgment
+
+---
+
+## 4. Communication Patterns
+
+### 4.1 MCP Protocol (Claude Desktop ↔ Orchestration)
 
 **Protocol**: Model Context Protocol (MCP)  
 **Transport**: HTTPS (443)  
 **Format**: JSON-RPC 2.0  
 **Authentication**: API Key (custom header)
 
-**Request Flow**:
-```
-1. Claude Desktop → Nginx (HTTPS, port 443)
-2. Nginx → Orchestration (HTTP, port 5000)
-3. Orchestration → Workflow (REST, port 5006)
-4. Workflow → Other services (REST)
-5. Response bubbles back up
-```
-
-### 3.2 REST APIs (Internal Service Communication)
+### 4.2 REST APIs (Internal Service Communication)
 
 **Protocol**: HTTP REST  
 **Format**: JSON  
 **Authentication**: API Key (X-API-Key header)  
 **Network**: Docker bridge network (internal)
 
-### 3.3 Database Access Pattern
+### 4.3 Doctor Claude Communication
 
-**All services use connection pooling:**
+**Database**: Direct PostgreSQL connection via asyncpg  
+**Broker**: Alpaca Trading Client API  
+**Alerts**: Email via SMTP (escalations)  
+**Output**: Structured JSON for Claude Code parsing
 
-```python
-db_pool = await asyncpg.create_pool(
-    dsn=DATABASE_URL,
-    min_size=2,
-    max_size=5,
-    command_timeout=10.0
-)
-```
-
-**Query Pattern (Always use FKs)** - See database-schema.md for details.
-
-### 3.4 Redis Pub/Sub Pattern
+### 4.4 Redis Pub/Sub Pattern
 
 **Redis Channels**:
 ```yaml
@@ -271,41 +342,47 @@ catalyst:news_catalyst - High-strength catalyst detected
 
 ---
 
-## 4. Data Architecture
+## 5. Data Architecture
 
-### 4.1 Database Design Philosophy
+### 5.1 Database Design Philosophy
 
 **Normalization Level**: 3NF (Third Normal Form)  
 **Key Principle**: Security_id FK everywhere, NO symbol VARCHAR duplication  
 **Query Strategy**: Always JOIN to get human-readable data
 
-See **database-schema.md** for complete schema details.
+### 5.2 Core Tables
 
-### 4.2 Caching Strategy
+| Table | Type | Purpose |
+|-------|------|---------|
+| `securities` | Dimension | Master security data |
+| `sectors` | Dimension | GICS sectors |
+| `trading_cycles` | Operations | Daily workflows |
+| `positions` | Operations | Trading positions |
+| `orders` | Operations | Order execution |
+| `scan_results` | Operations | Market scan candidates |
 
-**Redis Cache Layers**:
-```yaml
-Layer 1 - Hot Data (TTL: 1 min):
-  - Latest prices
-  - Open positions
-  - Current risk status
+### 5.3 Doctor Claude Tables (NEW in v7.0)
 
-Layer 2 - Warm Data (TTL: 5 min):
-  - Technical indicators
-  - Scan results
-  - News sentiment scores
+| Table | Purpose |
+|-------|---------|
+| `claude_activity_log` | Audit trail of observations, decisions, actions |
+| `doctor_claude_rules` | Auto-fix rules and escalation configuration |
 
-Layer 3 - Cold Data (TTL: 1 hour):
-  - Performance metrics
-  - Historical patterns
-  - Sector correlations
-```
+### 5.4 Doctor Claude Views (NEW in v7.0)
+
+| View | Purpose |
+|------|---------|
+| `v_trade_pipeline_status` | Real-time pipeline state |
+| `v_claude_activity_summary` | Daily activity summary |
+| `v_recurring_issues` | Issue frequency for learning |
+| `v_recent_escalations` | Issues needing human review |
+| `v_failed_actions` | Failed actions for investigation |
 
 ---
 
-## 5. Deployment Architecture
+## 6. Deployment Architecture
 
-### 5.1 Single Droplet Design
+### 6.1 Single Droplet Design
 
 **DigitalOcean Droplet**:
 ```yaml
@@ -314,7 +391,7 @@ OS: Ubuntu 22.04 LTS
 Location: SFO3 (US West - closest to markets)
 ```
 
-### 5.2 Service Startup Order
+### 6.2 Service Startup Order
 
 ```
 1. Redis (10s startup)
@@ -335,144 +412,108 @@ Location: SFO3 (US West - closest to markets)
 5. Interface layer:
    - Orchestration (depends on Workflow)
    - Reporting
+   ↓
+6. Monitoring layer:
+   - Doctor Claude (runs after market open)
 ```
 
----
-
-## 6. Security Architecture
-
-### 6.1 Network Security
-
-**Firewall Configuration** (UFW):
-```bash
-ufw allow 22/tcp   # SSH
-ufw allow 443/tcp  # HTTPS
-ufw default deny incoming
-ufw default allow outgoing
-ufw enable
-```
-
-### 6.2 Authentication & Authorization
-
-**External (Claude Desktop)**: HTTPS + API Key  
-**Internal (Service-to-Service)**: API Key (X-API-Key header)  
-**Database**: SSL/TLS + Username/Password
-
-### 6.3 Secrets Management
-
-All secrets via environment variables (`.env`), never in Git.
-
----
-
-## 7. Performance Architecture
-
-### 7.1 Response Time Budget
-
-```
-User request (MCP)
-  → Nginx (10ms SSL termination)
-  → Orchestration (50ms)
-  → Workflow (100ms coordination)
-  → Services (200ms business logic)
-  → Database (50ms query)
-Total: ~410ms (target <500ms)
-```
-
-### 7.2 Concurrency Model
+### 6.3 Doctor Claude Deployment
 
 ```yaml
-Workers: 4 per service (Uvicorn)
-Async: asyncio (Python)
-Database Pool: 2-5 connections per service
-Redis Pool: 10 connections per service
+Location: /root/catalyst-trading-mcp/scripts/
+Files:
+  - trade_watchdog.py
+  - log_activity.py
+  - doctor_claude_monitor.sh (wrapper script)
+
+Execution:
+  - During market hours only
+  - Every 5 minutes via loop or cron
+  - Can run as systemd service
+
+Dependencies:
+  - Python 3.10+
+  - asyncpg
+  - alpaca-py
 ```
+
+---
+
+## 7. Security Architecture
+
+### 7.1 Authentication
+
+| Component | Method |
+|-----------|--------|
+| MCP (Claude Desktop) | API Key in header |
+| Internal REST APIs | API Key (X-API-Key) |
+| PostgreSQL | Connection string with SSL |
+| Alpaca | API Key + Secret |
+
+### 7.2 Network Security
+
+- All external traffic via Nginx with SSL
+- Internal services on Docker bridge network
+- No direct database exposure to internet
+- Doctor Claude connects to managed DB via SSL
 
 ---
 
 ## 8. Reliability Architecture
 
-### 8.1 Health Checks
+### 8.1 Health Monitoring
 
-Every service exposes `GET /health` endpoint.
+| Component | Health Check |
+|-----------|--------------|
+| Docker Services | Container health checks |
+| PostgreSQL | Connection pool validation |
+| Redis | PING command |
+| Alpaca | Account status check |
+| Doctor Claude | Watchdog exit codes |
 
-### 8.2 Error Handling
+### 8.2 Error Recovery
 
-**Graceful Degradation**:
-- News API down → Use cached news
-- Database slow → Return cached data
-- Alpaca API error → Retry with exponential backoff
+| Failure | Recovery |
+|---------|----------|
+| Service crash | Docker auto-restart |
+| Database connection | Connection pool retry |
+| Alpaca unavailable | Graceful degradation |
+| Doctor Claude issue | Log and continue |
 
-### 8.3 Failover Strategy
+### 8.3 Observability Stack
 
-**Recovery**:
-- Provision new droplet from snapshot (5 min)
-- Restore database from backup if needed (10 min)
-- Total RTO: ~20 minutes
-
----
-
-## Appendix A: Technology Stack
-
-```yaml
-Programming Language: Python 3.11+
-Web Framework: FastAPI
-MCP Framework: FastMCP (Anthropic)
-Database: PostgreSQL 15
-Cache: Redis 7
-Container: Docker + Docker Compose
-Web Server: Nginx
-Operating System: Ubuntu 22.04 LTS
 ```
-
----
-
-## Appendix B: Deployment Commands
-
-### B.1 Initial Deployment
-
-```bash
-# 1. SSH to droplet
-ssh root@catalyst-droplet
-
-# 2. Clone repository
-git clone https://github.com/Elimelech70/catalyst-trading-system.git
-cd catalyst-trading-system
-
-# 3. Configure environment
-cp .env.example .env.prod
-nano .env.prod  # Add DATABASE_URL, API keys
-
-# 4. Deploy schema
-psql $DATABASE_URL -f database-schema.sql
-
-# 5. Start services
-docker-compose -f docker-compose.prod.yml up -d
-
-# 6. Verify health
-./scripts/health-check.sh
-```
-
-### B.2 Update Deployment
-
-```bash
-# Rolling update (zero downtime)
-./scripts/deploy-update.sh
-
-# Or manual update per service
-docker-compose up -d --no-deps --build orchestration
-docker-compose up -d --no-deps --build scanner
+┌─────────────────────────────────────────────────────────────┐
+│                    OBSERVABILITY                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Traditional Monitoring:                                    │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐          │
+│  │ Docker Logs │ │ Health API  │ │ Redis Pub   │          │
+│  │ /var/log    │ │ /health     │ │ /Sub        │          │
+│  └─────────────┘ └─────────────┘ └─────────────┘          │
+│                                                             │
+│  Doctor Claude (NEW):                                       │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │ • trade_watchdog.py - Pipeline diagnostics          │  │
+│  │ • claude_activity_log - Decision audit trail        │  │
+│  │ • v_trade_pipeline_status - Real-time view          │  │
+│  │ • Auto-fix for safe issues                          │  │
+│  │ • Escalation for critical issues                    │  │
+│  └─────────────────────────────────────────────────────┘  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Related Documents
 
-- **database-schema.md** - Complete 3NF normalized schema
-- **functional-specification.md** - MCP tools, REST APIs, workflows
-- **deployment-guide.md** - Step-by-step deployment instructions
+- **database-schema.md** - Full database schema including Doctor Claude tables
+- **functional-specification.md** - Service APIs and Doctor Claude operational specs
+- **DOCTOR-CLAUDE-DESIGN.md** - Detailed Doctor Claude design
+- **DOCTOR-CLAUDE-IMPLEMENTATION.md** - Deployment guide
 
 ---
 
-**END OF ARCHITECTURE DOCUMENT**
-
-*Production architecture ONLY. 9 services. Single droplet. Clean and focused.* 🎩
+**END OF ARCHITECTURE DOCUMENT v7.0.0**

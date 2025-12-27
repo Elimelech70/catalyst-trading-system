@@ -2,286 +2,216 @@
 
 **Name of Application**: Catalyst Trading System  
 **Name of file**: database-schema.md  
-**Version**: 6.0.0  
-**Last Updated**: 2025-10-25  
-**Purpose**: Normalized database schema for Production trading system  
-**Scope**: PRODUCTION SCHEMA ONLY
+**Version**: 7.0.0  
+**Last Updated**: 2025-12-27  
+**Purpose**: Complete database schema for production trading + Doctor Claude monitoring
 
 ---
 
 ## REVISION HISTORY
 
-**v6.0.0 (2025-10-25)** - PRODUCTION SCHEMA CLEAN SEPARATION
-- ✅ **MAJOR CHANGE**: ML tables removed entirely
-- ✅ Production tables ONLY (trading operations)
-- ✅ Full 3NF normalization maintained
-- ✅ US markets focus (single timezone, USD currency)
-- ✅ No research tables, no ML experiments, no multi-agent logs
-- ⚠️ **BREAKING**: ML features moved to separate research schema (future)
+**v7.0.0 (2025-12-27)** - DOCTOR CLAUDE MONITORING TABLES
+- ✅ **NEW**: `claude_activity_log` table for audit trail
+- ✅ **NEW**: `doctor_claude_rules` table for auto-fix configuration  
+- ✅ **NEW**: `v_trade_pipeline_status` view for real-time monitoring
+- ✅ **NEW**: `v_claude_activity_summary` view for daily summaries
+- ✅ **NEW**: `v_recurring_issues` view for pattern learning
+- ✅ **NEW**: `v_recent_escalations` view
+- ✅ **NEW**: `v_failed_actions` view
+- ✅ **NEW**: `get_autofix_rule()` function
+- ✅ **NEW**: `can_auto_fix()` function
 
-**v5.0.0 (2025-10-06)** - Full 3NF Normalization (superseded)
-
----
-
-## ⚠️ CRITICAL: SCOPE DEFINITION
-
-### **IN SCOPE (Production Schema)**
-✅ Securities master data (US stocks)  
-✅ Trading operations (positions, orders, cycles)  
-✅ Market data (OHLCV, technical indicators)  
-✅ News intelligence (catalysts, sentiment)  
-✅ Risk management (events, limits)  
-✅ Performance tracking (daily/weekly metrics)  
-✅ Scan results (candidate filtering)  
-
-### **OUT OF SCOPE (Future Research Schema)**
-❌ ML experiments table  
-❌ ML models table  
-❌ ML predictions table  
-❌ Agent research logs  
-❌ Pattern discovery table  
-❌ Multi-market correlations (Phase 2+)  
-❌ Chinese/Japanese market tables (Phase 2+)  
-
-**REASON**: Clean Production schema for immediate trading, Research schema built later.
+**v6.0.0 (2025-10-25)** - 3NF NORMALIZED SCHEMA
+- 3NF normalization complete
+- security_id FK everywhere
+- Helper functions for lookups
 
 ---
 
 ## Table of Contents
 
-1. [Normalization Principles](#1-normalization-principles)
-2. [Dimension Tables (Master Data)](#2-dimension-tables-master-data)
-3. [Fact Tables (Time-Series Events)](#3-fact-tables-time-series-events)
+1. [Schema Overview](#1-schema-overview)
+2. [Dimension Tables](#2-dimension-tables)
+3. [Fact Tables](#3-fact-tables)
 4. [Trading Operations Tables](#4-trading-operations-tables)
-5. [Views & Materialized Views](#5-views--materialized-views)
-6. [Helper Functions](#6-helper-functions)
-7. [Indexes & Performance](#7-indexes--performance)
-8. [Usage Patterns](#8-usage-patterns)
-9. [Validation Queries](#9-validation-queries)
+5. [Doctor Claude Tables](#5-doctor-claude-tables)
+6. [Views](#6-views)
+7. [Doctor Claude Views](#7-doctor-claude-views)
+8. [Helper Functions](#8-helper-functions)
+9. [Doctor Claude Functions](#9-doctor-claude-functions)
+10. [Indexes](#10-indexes)
 
 ---
 
-## 1. Normalization Principles
+## 1. Schema Overview
 
-### 1.1 Core Rules (3NF - ALWAYS FOLLOW!)
+### 1.1 Design Philosophy
 
-**Rule #1: Master Data Lives in ONE Place**
-```sql
--- ✅ CORRECT: Symbol stored ONCE in securities table
-SELECT s.symbol, th.close, ns.headline
-FROM trading_history th
-JOIN securities s ON s.security_id = th.security_id
-JOIN news_sentiment ns ON ns.security_id = th.security_id;
-
--- ❌ WRONG: Symbol duplicated everywhere (denormalized)
-SELECT symbol, close FROM trading_history;  -- NO symbol column!
+```yaml
+Normalization: 3NF (Third Normal Form)
+Key Principle: security_id FK everywhere, NO symbol VARCHAR duplication
+Query Strategy: Always JOIN to get human-readable data
+Monitoring: Doctor Claude tables for trade lifecycle tracking
 ```
 
-**Rule #2: All Relationships Use Foreign Keys**
-```sql
--- Every table references securities via security_id FK
--- Every time-series table references time_dimension via time_id FK
--- NO VARCHAR(10) symbol columns anywhere except securities table!
+### 1.2 Table Categories
+
+| Category | Tables | Purpose |
+|----------|--------|---------|
+| **Dimension** | securities, sectors, time_dimension | Master data |
+| **Fact** | trading_history, news_sentiment, technical_indicators | Time-series data |
+| **Operations** | trading_cycles, positions, orders, scan_results, risk_events | Trading workflow |
+| **Monitoring** | claude_activity_log, doctor_claude_rules | Doctor Claude |
+
+### 1.3 Entity Relationship Overview
+
 ```
-
-**Rule #3: Query With JOINs**
-```sql
--- Always JOIN to get human-readable data
--- Database stores IDs (integers), queries return symbols (JOINed)
+┌─────────────────────────────────────────────────────────────────┐
+│                    DIMENSION TABLES                              │
+│  ┌───────────┐    ┌───────────┐    ┌────────────────┐          │
+│  │ securities│    │  sectors  │    │ time_dimension │          │
+│  │ (master)  │◄───│ (GICS)    │    │ (time entity)  │          │
+│  └─────┬─────┘    └───────────┘    └───────┬────────┘          │
+│        │                                    │                    │
+└────────┼────────────────────────────────────┼────────────────────┘
+         │                                    │
+         │  security_id FK                    │  time_id FK
+         │                                    │
+┌────────▼────────────────────────────────────▼────────────────────┐
+│                      FACT TABLES                                  │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐ │
+│  │ trading_history │  │ news_sentiment  │  │technical_indicators│ │
+│  └─────────────────┘  └─────────────────┘  └──────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
+         │
+         │  security_id FK
+         │
+┌────────▼─────────────────────────────────────────────────────────┐
+│                   OPERATIONS TABLES                               │
+│  ┌───────────────┐  ┌───────────┐  ┌────────┐  ┌────────────┐  │
+│  │trading_cycles │  │ positions │  │ orders │  │scan_results│  │
+│  └───────┬───────┘  └─────┬─────┘  └────────┘  └────────────┘  │
+│          │                │                                      │
+│          │  cycle_id FK   │                                      │
+│          └────────────────┘                                      │
+└──────────────────────────────────────────────────────────────────┘
+         │
+         │  Monitored by
+         │
+┌────────▼─────────────────────────────────────────────────────────┐
+│                   DOCTOR CLAUDE TABLES (NEW v7.0)                │
+│  ┌───────────────────┐  ┌─────────────────────┐                 │
+│  │claude_activity_log│  │ doctor_claude_rules │                 │
+│  │ (audit trail)     │  │ (auto-fix config)   │                 │
+│  └───────────────────┘  └─────────────────────┘                 │
+└──────────────────────────────────────────────────────────────────┘
 ```
-
-### 1.2 Benefits of Normalization
-
-**Data Integrity**:
-- Symbol change? Update ONE row in securities table
-- Sector change? Update ONE row in sectors table
-- Referential integrity enforced by database
-
-**Performance**:
-- Integer FK joins faster than VARCHAR comparisons
-- Smaller indexes (integers vs strings)
-- Better query optimization
-
-**ML Quality**:
-- Consistent security_id across all tables
-- No ambiguity (AAPL vs aapl vs Apple Inc.)
-- Clean joins for feature engineering
 
 ---
 
-## 2. Dimension Tables (Master Data)
+## 2. Dimension Tables
 
-### 2.1 Securities Table (Master Entity)
+### 2.1 Securities
 
 ```sql
 CREATE TABLE securities (
-    -- Primary Key
     security_id SERIAL PRIMARY KEY,
-    
-    -- Symbol & Identity
-    symbol VARCHAR(10) NOT NULL UNIQUE,
-    company_name VARCHAR(255),
-    
-    -- Classification
+    symbol VARCHAR(20) NOT NULL UNIQUE,
+    name VARCHAR(255),
     sector_id INTEGER REFERENCES sectors(sector_id),
-    exchange VARCHAR(20) NOT NULL,  -- 'NYSE', 'NASDAQ'
-    security_type VARCHAR(20) DEFAULT 'stock',  -- 'stock', 'etf'
-    
-    -- Market Data
-    currency VARCHAR(3) DEFAULT 'USD',
-    trading_hours_start TIME DEFAULT '09:30:00',  -- ET
-    trading_hours_end TIME DEFAULT '16:00:00',    -- ET
-    
-    -- Status
+    exchange VARCHAR(20),
+    asset_type VARCHAR(20) DEFAULT 'stock',
     is_active BOOLEAN DEFAULT true,
-    listed_date DATE,
-    delisted_date DATE,
-    
-    -- Metadata
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX idx_securities_symbol ON securities(symbol);
 CREATE INDEX idx_securities_sector ON securities(sector_id);
-CREATE INDEX idx_securities_active ON securities(is_active) WHERE is_active = true;
 
-COMMENT ON TABLE securities IS 'Master securities table - SINGLE SOURCE OF TRUTH for all symbols';
-COMMENT ON COLUMN securities.security_id IS 'Primary key - used as FK in ALL other tables';
-COMMENT ON COLUMN securities.symbol IS 'Stock ticker - ONLY place symbol is stored as VARCHAR';
+COMMENT ON TABLE securities IS 'Master security/stock reference - SINGLE SOURCE OF TRUTH for symbols';
 ```
 
-### 2.2 Sectors Table
+### 2.2 Sectors
 
 ```sql
 CREATE TABLE sectors (
     sector_id SERIAL PRIMARY KEY,
-    sector_code VARCHAR(10) NOT NULL UNIQUE,  -- 'TECH', 'HLTH', etc.
-    sector_name VARCHAR(100) NOT NULL,        -- 'Technology', 'Healthcare'
-    industry_group VARCHAR(100),
-    gics_code VARCHAR(8),  -- Global Industry Classification Standard
+    sector_code VARCHAR(10) NOT NULL UNIQUE,
+    sector_name VARCHAR(100) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Seed with 11 GICS sectors
-INSERT INTO sectors (sector_code, sector_name, gics_code) VALUES
-    ('TECH', 'Information Technology', '45'),
-    ('HLTH', 'Health Care', '35'),
-    ('FINL', 'Financials', '40'),
-    ('DISC', 'Consumer Discretionary', '25'),
-    ('STPL', 'Consumer Staples', '30'),
-    ('ENRG', 'Energy', '10'),
-    ('UTIL', 'Utilities', '55'),
-    ('INDU', 'Industrials', '20'),
-    ('MATL', 'Materials', '15'),
-    ('RLST', 'Real Estate', '60'),
-    ('COMM', 'Communication Services', '50');
-
-COMMENT ON TABLE sectors IS 'GICS sector master data - normalized sector information';
+COMMENT ON TABLE sectors IS 'GICS sector classification';
 ```
 
-### 2.3 Time Dimension Table
+### 2.3 Time Dimension
 
 ```sql
 CREATE TABLE time_dimension (
-    time_id BIGSERIAL PRIMARY KEY,
+    time_id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL UNIQUE,
-    
-    -- Date Components
     date DATE NOT NULL,
-    year INTEGER NOT NULL,
-    month INTEGER NOT NULL,
-    day INTEGER NOT NULL,
-    day_of_week INTEGER NOT NULL,  -- 0=Monday, 6=Sunday
-    
-    -- Time Components
+    time TIME NOT NULL,
     hour INTEGER NOT NULL,
     minute INTEGER NOT NULL,
-    
-    -- Market Context
-    is_market_hours BOOLEAN NOT NULL,
-    is_trading_day BOOLEAN NOT NULL,
-    market_session VARCHAR(20),  -- 'pre-market', 'open', 'close', 'after-hours'
-    
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    day_of_week INTEGER NOT NULL,
+    is_market_hours BOOLEAN DEFAULT false,
+    market_phase VARCHAR(20)
 );
 
 CREATE INDEX idx_time_timestamp ON time_dimension(timestamp);
 CREATE INDEX idx_time_date ON time_dimension(date);
-CREATE INDEX idx_time_market_hours ON time_dimension(is_market_hours) WHERE is_market_hours = true;
 
-COMMENT ON TABLE time_dimension IS 'Time as an entity - ALL time-series tables reference this';
-COMMENT ON COLUMN time_dimension.time_id IS 'Primary key - used as FK in time-series tables';
+COMMENT ON TABLE time_dimension IS 'Time as a dimension for fact tables';
 ```
 
 ---
 
-## 3. Fact Tables (Time-Series Events)
+## 3. Fact Tables
 
-### 3.1 Trading History (OHLCV Data)
+### 3.1 Trading History
 
 ```sql
 CREATE TABLE trading_history (
     history_id BIGSERIAL PRIMARY KEY,
-    
-    -- Foreign Keys (NO symbol column!)
     security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    time_id BIGINT NOT NULL REFERENCES time_dimension(time_id),
-    
-    -- OHLCV Data
+    time_id INTEGER NOT NULL REFERENCES time_dimension(time_id),
     open DECIMAL(12, 4) NOT NULL,
     high DECIMAL(12, 4) NOT NULL,
     low DECIMAL(12, 4) NOT NULL,
     close DECIMAL(12, 4) NOT NULL,
     volume BIGINT NOT NULL,
-    
-    -- Derived Metrics
     vwap DECIMAL(12, 4),
     trade_count INTEGER,
-    
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    CONSTRAINT unique_security_time UNIQUE(security_id, time_id),
-    CONSTRAINT chk_ohlc CHECK (high >= low AND high >= open AND high >= close AND low <= open AND low <= close)
+    UNIQUE(security_id, time_id)
 );
 
-CREATE INDEX idx_trading_history_security ON trading_history(security_id);
-CREATE INDEX idx_trading_history_time ON trading_history(time_id);
-CREATE INDEX idx_trading_history_security_time ON trading_history(security_id, time_id DESC);
+CREATE INDEX idx_history_security_time ON trading_history(security_id, time_id DESC);
 
-COMMENT ON TABLE trading_history IS 'OHLCV bars - uses security_id FK (NOT symbol)';
+COMMENT ON TABLE trading_history IS 'OHLCV price bars - uses security_id FK';
 ```
 
 ### 3.2 News Sentiment
 
 ```sql
 CREATE TABLE news_sentiment (
-    news_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Foreign Keys
+    sentiment_id BIGSERIAL PRIMARY KEY,
     security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    time_id BIGINT NOT NULL REFERENCES time_dimension(time_id),
-    
-    -- News Content
+    time_id INTEGER NOT NULL REFERENCES time_dimension(time_id),
     headline TEXT NOT NULL,
-    summary TEXT,
+    source VARCHAR(100),
+    sentiment_score DECIMAL(5, 4),
+    magnitude DECIMAL(5, 4),
+    catalyst_type VARCHAR(50),
+    catalyst_strength INTEGER,
     url TEXT,
-    source VARCHAR(100) NOT NULL,  -- 'Benzinga', 'NewsAPI', etc.
-    
-    -- Sentiment Analysis
-    sentiment_score DECIMAL(5, 4),  -- -1.0 to 1.0
-    sentiment_label VARCHAR(20),    -- 'positive', 'negative', 'neutral'
-    
-    -- Catalyst Classification
-    catalyst_type VARCHAR(50),      -- 'earnings', 'fda_approval', 'merger', etc.
-    catalyst_strength DECIMAL(5, 4), -- 0.0 to 1.0
-    
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_news_security ON news_sentiment(security_id);
-CREATE INDEX idx_news_time ON news_sentiment(time_id);
-CREATE INDEX idx_news_catalyst ON news_sentiment(catalyst_type);
+CREATE INDEX idx_news_security_time ON news_sentiment(security_id, time_id DESC);
+CREATE INDEX idx_news_catalyst ON news_sentiment(catalyst_type, catalyst_strength);
 
 COMMENT ON TABLE news_sentiment IS 'News events with sentiment - uses security_id FK';
 ```
@@ -291,48 +221,18 @@ COMMENT ON TABLE news_sentiment IS 'News events with sentiment - uses security_i
 ```sql
 CREATE TABLE technical_indicators (
     indicator_id BIGSERIAL PRIMARY KEY,
-    
-    -- Foreign Keys
     security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    time_id BIGINT NOT NULL REFERENCES time_dimension(time_id),
-    
-    -- Timeframe
-    timeframe VARCHAR(10) NOT NULL,  -- '1m', '5m', '15m', '1h', '1d'
-    
-    -- Momentum Indicators
-    rsi_14 DECIMAL(8, 4),
-    macd DECIMAL(12, 4),
-    macd_signal DECIMAL(12, 4),
-    macd_histogram DECIMAL(12, 4),
-    
-    -- Trend Indicators
-    sma_9 DECIMAL(12, 4),
-    sma_20 DECIMAL(12, 4),
-    sma_50 DECIMAL(12, 4),
-    sma_200 DECIMAL(12, 4),
-    ema_9 DECIMAL(12, 4),
-    ema_21 DECIMAL(12, 4),
-    
-    -- Volatility Indicators
-    atr_14 DECIMAL(12, 4),
-    bb_upper DECIMAL(12, 4),
-    bb_middle DECIMAL(12, 4),
-    bb_lower DECIMAL(12, 4),
-    
-    -- Volume Indicators
-    vwap DECIMAL(12, 4),
-    relative_volume DECIMAL(8, 4),
-    
+    time_id INTEGER NOT NULL REFERENCES time_dimension(time_id),
+    indicator_type VARCHAR(50) NOT NULL,
+    value DECIMAL(20, 8) NOT NULL,
+    parameters JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    CONSTRAINT unique_security_time_tf UNIQUE(security_id, time_id, timeframe)
+    UNIQUE(security_id, time_id, indicator_type)
 );
 
-CREATE INDEX idx_technical_security ON technical_indicators(security_id);
-CREATE INDEX idx_technical_time ON technical_indicators(time_id);
-CREATE INDEX idx_technical_timeframe ON technical_indicators(timeframe);
+CREATE INDEX idx_indicators_security_time ON technical_indicators(security_id, time_id DESC);
 
-COMMENT ON TABLE technical_indicators IS 'Technical analysis - uses security_id FK';
+COMMENT ON TABLE technical_indicators IS 'Technical analysis indicators - uses security_id FK';
 ```
 
 ---
@@ -344,27 +244,18 @@ COMMENT ON TABLE technical_indicators IS 'Technical analysis - uses security_id 
 ```sql
 CREATE TABLE trading_cycles (
     cycle_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Cycle Info
     date DATE NOT NULL UNIQUE,
-    cycle_state VARCHAR(50) NOT NULL,  -- 'scanning', 'evaluating', 'trading', 'monitoring', 'closed'
-    phase VARCHAR(50),  -- 'pre-market', 'opening-range', 'morning', 'midday', 'power-hour', 'closed'
-    
-    -- Session Configuration
-    mode VARCHAR(20) NOT NULL DEFAULT 'supervised',  -- 'autonomous', 'supervised', 'normal', 'aggressive', 'conservative'
-    configuration JSONB,  -- Additional configuration as JSON
-    
-    -- Timing
+    cycle_state VARCHAR(50) NOT NULL,
+    phase VARCHAR(50),
+    mode VARCHAR(20) NOT NULL DEFAULT 'supervised',
+    configuration JSONB,
     started_at TIMESTAMP WITH TIME ZONE,
     stopped_at TIMESTAMP WITH TIME ZONE,
-    
-    -- Performance Summary
     daily_pnl DECIMAL(12, 2) DEFAULT 0.0,
     daily_pnl_pct DECIMAL(8, 4) DEFAULT 0.0,
     trades_executed INTEGER DEFAULT 0,
     trades_won INTEGER DEFAULT 0,
     trades_lost INTEGER DEFAULT 0,
-    
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -380,43 +271,27 @@ COMMENT ON TABLE trading_cycles IS 'Daily trading workflow state tracking';
 ```sql
 CREATE TABLE positions (
     position_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Foreign Keys
     cycle_id UUID NOT NULL REFERENCES trading_cycles(cycle_id),
     security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    
-    -- Position Details
-    side VARCHAR(10) NOT NULL,  -- 'long', 'short'
+    side VARCHAR(10) NOT NULL,
     quantity INTEGER NOT NULL,
     entry_price DECIMAL(12, 4) NOT NULL,
     current_price DECIMAL(12, 4),
-    
-    -- Risk Management
     stop_loss DECIMAL(12, 4),
     take_profit DECIMAL(12, 4),
     risk_amount DECIMAL(12, 2) NOT NULL,
-    
-    -- P&L
     unrealized_pnl DECIMAL(12, 2),
     unrealized_pnl_pct DECIMAL(8, 4),
     realized_pnl DECIMAL(12, 2),
     realized_pnl_pct DECIMAL(8, 4),
-    
-    -- Status
-    status VARCHAR(20) NOT NULL DEFAULT 'open',  -- 'open', 'closed', 'stopped_out'
-    
-    -- Trading Context
-    pattern VARCHAR(50),   -- 'bull_flag', 'cup_and_handle', etc.
-    catalyst VARCHAR(255), -- News catalyst that drove the trade
-    
-    -- Timing
+    status VARCHAR(20) NOT NULL DEFAULT 'open',
+    pattern VARCHAR(50),
+    catalyst VARCHAR(255),
     entry_time TIMESTAMP WITH TIME ZONE NOT NULL,
     exit_time TIMESTAMP WITH TIME ZONE,
-    
     metadata JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
     CONSTRAINT chk_quantity CHECK (quantity > 0),
     CONSTRAINT chk_side CHECK (side IN ('long', 'short'))
 );
@@ -424,9 +299,8 @@ CREATE TABLE positions (
 CREATE INDEX idx_positions_cycle ON positions(cycle_id);
 CREATE INDEX idx_positions_security ON positions(security_id);
 CREATE INDEX idx_positions_status ON positions(status) WHERE status = 'open';
-CREATE INDEX idx_positions_entry_time ON positions(entry_time DESC);
 
-COMMENT ON TABLE positions IS 'Trading positions - uses security_id FK (NOT symbol)';
+COMMENT ON TABLE positions IS 'Trading positions - uses security_id FK';
 ```
 
 ### 4.3 Orders
@@ -434,36 +308,23 @@ COMMENT ON TABLE positions IS 'Trading positions - uses security_id FK (NOT symb
 ```sql
 CREATE TABLE orders (
     order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Foreign Keys
     position_id UUID REFERENCES positions(position_id),
     security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    
-    -- Order Details
-    side VARCHAR(10) NOT NULL,  -- 'buy', 'sell'
-    order_type VARCHAR(20) NOT NULL,  -- 'market', 'limit', 'stop', 'stop_limit'
+    side VARCHAR(10) NOT NULL,
+    order_type VARCHAR(20) NOT NULL,
     quantity INTEGER NOT NULL,
-    
-    -- Pricing
     limit_price DECIMAL(12, 4),
     stop_price DECIMAL(12, 4),
     filled_avg_price DECIMAL(12, 4),
-    
-    -- Status
-    status VARCHAR(50) NOT NULL,  -- 'submitted', 'filled', 'partially_filled', 'cancelled', 'rejected'
+    status VARCHAR(50) NOT NULL,
     filled_qty INTEGER DEFAULT 0,
-    
-    -- Alpaca Integration
     alpaca_order_id VARCHAR(100) UNIQUE,
-    
-    -- Timing
     submitted_at TIMESTAMP WITH TIME ZONE NOT NULL,
     filled_at TIMESTAMP WITH TIME ZONE,
     cancelled_at TIMESTAMP WITH TIME ZONE,
-    
     metadata JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     CONSTRAINT chk_order_quantity CHECK (quantity > 0),
     CONSTRAINT chk_order_side CHECK (side IN ('buy', 'sell'))
 );
@@ -472,7 +333,6 @@ CREATE INDEX idx_orders_position ON orders(position_id);
 CREATE INDEX idx_orders_security ON orders(security_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_alpaca ON orders(alpaca_order_id);
-CREATE INDEX idx_orders_submitted ON orders(submitted_at DESC);
 
 COMMENT ON TABLE orders IS 'Order execution history - uses security_id FK';
 ```
@@ -482,47 +342,26 @@ COMMENT ON TABLE orders IS 'Order execution history - uses security_id FK';
 ```sql
 CREATE TABLE scan_results (
     scan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Foreign Keys
     cycle_id UUID NOT NULL REFERENCES trading_cycles(cycle_id),
     security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    
-    -- Scan Metadata
     scan_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    rank INTEGER NOT NULL,  -- 1-5 (top 5 candidates)
-    
-    -- Scoring
-    final_score DECIMAL(5, 4) NOT NULL,
-    catalyst_score DECIMAL(5, 4),
-    technical_score DECIMAL(5, 4),
-    pattern_score DECIMAL(5, 4),
-    
-    -- Market Data (at time of scan)
-    price DECIMAL(12, 4) NOT NULL,
-    volume BIGINT NOT NULL,
-    
-    -- Analysis
-    pattern VARCHAR(50),
-    catalyst_type VARCHAR(50),
-    news_headline TEXT,
-    
-    -- Entry/Exit Levels
-    support_level DECIMAL(12, 4),
-    resistance_level DECIMAL(12, 4),
-    suggested_entry DECIMAL(12, 4),
-    suggested_stop DECIMAL(12, 4),
-    suggested_target DECIMAL(12, 4),
-    
-    -- Selection
-    selected_for_trading BOOLEAN DEFAULT false,
-    
+    rank_in_scan INTEGER NOT NULL,
+    price_at_scan DECIMAL(12, 4) NOT NULL,
+    volume_at_scan BIGINT,
+    gap_percent DECIMAL(8, 4),
+    relative_volume DECIMAL(8, 2),
+    float_shares BIGINT,
+    catalyst_score INTEGER,
+    pattern_score INTEGER,
+    technical_score INTEGER,
+    composite_score DECIMAL(8, 4),
+    status VARCHAR(20) DEFAULT 'candidate',
     metadata JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX idx_scan_cycle ON scan_results(cycle_id);
 CREATE INDEX idx_scan_security ON scan_results(security_id);
-CREATE INDEX idx_scan_rank ON scan_results(cycle_id, rank);
 CREATE INDEX idx_scan_timestamp ON scan_results(scan_timestamp DESC);
 
 COMMENT ON TABLE scan_results IS 'Market scan candidates - uses security_id FK';
@@ -533,180 +372,368 @@ COMMENT ON TABLE scan_results IS 'Market scan candidates - uses security_id FK';
 ```sql
 CREATE TABLE risk_events (
     event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Event Classification
-    event_type VARCHAR(50) NOT NULL,  -- 'daily_loss_limit', 'position_limit', 'emergency_stop', etc.
-    severity VARCHAR(20) NOT NULL,     -- 'info', 'warning', 'critical'
-    
-    -- Context
     cycle_id UUID REFERENCES trading_cycles(cycle_id),
     position_id UUID REFERENCES positions(position_id),
-    
-    -- Event Details
+    event_type VARCHAR(50) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
     message TEXT NOT NULL,
-    threshold_value DECIMAL(12, 4),
-    actual_value DECIMAL(12, 4),
-    
-    -- Action Taken
-    action_taken VARCHAR(100),  -- 'rejected_trade', 'closed_position', 'emergency_stop', etc.
-    
-    metadata JSONB,
+    details JSONB,
+    resolved BOOLEAN DEFAULT false,
+    resolved_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_risk_events_type ON risk_events(event_type);
-CREATE INDEX idx_risk_events_severity ON risk_events(severity);
-CREATE INDEX idx_risk_events_cycle ON risk_events(cycle_id);
-CREATE INDEX idx_risk_events_created ON risk_events(created_at DESC);
+CREATE INDEX idx_risk_cycle ON risk_events(cycle_id);
+CREATE INDEX idx_risk_type ON risk_events(event_type);
+CREATE INDEX idx_risk_unresolved ON risk_events(resolved) WHERE resolved = false;
 
 COMMENT ON TABLE risk_events IS 'Risk management event log';
 ```
 
 ---
 
-## 5. Views & Materialized Views
+## 5. Doctor Claude Tables
 
-### 5.1 Latest Securities View (Materialized)
+### 5.1 Claude Activity Log
+
+```sql
+CREATE TABLE claude_activity_log (
+    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    logged_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    session_id VARCHAR(50),
+    cycle_id UUID,
+    
+    -- Observation
+    observation_type VARCHAR(50) NOT NULL,
+    observation_summary JSONB,
+    issues_found INTEGER DEFAULT 0,
+    critical_count INTEGER DEFAULT 0,
+    warning_count INTEGER DEFAULT 0,
+    
+    -- Decision
+    decision VARCHAR(50),
+    decision_reasoning TEXT,
+    
+    -- Action
+    action_type VARCHAR(50),
+    action_detail TEXT,
+    action_target VARCHAR(100),
+    action_result VARCHAR(20),
+    error_message TEXT,
+    
+    -- Issue Classification
+    issue_type VARCHAR(50),
+    issue_severity VARCHAR(20),
+    
+    -- Performance
+    fix_duration_ms INTEGER,
+    watchdog_duration_ms INTEGER,
+    
+    -- Metadata
+    metadata JSONB
+);
+
+CREATE INDEX idx_cal_logged_at ON claude_activity_log(logged_at DESC);
+CREATE INDEX idx_cal_session ON claude_activity_log(session_id);
+CREATE INDEX idx_cal_cycle ON claude_activity_log(cycle_id) WHERE cycle_id IS NOT NULL;
+CREATE INDEX idx_cal_decision ON claude_activity_log(decision);
+CREATE INDEX idx_cal_issue_type ON claude_activity_log(issue_type) WHERE issue_type IS NOT NULL;
+CREATE INDEX idx_cal_action_result ON claude_activity_log(action_result) WHERE action_result = 'failed';
+
+COMMENT ON TABLE claude_activity_log IS 'Audit trail of Doctor Claude monitoring activities';
+COMMENT ON COLUMN claude_activity_log.observation_type IS 'watchdog_run, manual_check, startup, shutdown';
+COMMENT ON COLUMN claude_activity_log.decision IS 'auto_fix, escalate, monitor, no_action, defer';
+```
+
+### 5.2 Doctor Claude Rules
+
+```sql
+CREATE TABLE doctor_claude_rules (
+    rule_id SERIAL PRIMARY KEY,
+    issue_type VARCHAR(50) NOT NULL UNIQUE,
+    description TEXT,
+    auto_fix_enabled BOOLEAN DEFAULT false,
+    escalate_threshold INTEGER DEFAULT 1,
+    fix_template TEXT,
+    fix_requires_confirmation BOOLEAN DEFAULT false,
+    escalation_channel VARCHAR(50) DEFAULT 'email',
+    escalation_priority VARCHAR(20) DEFAULT 'normal',
+    max_auto_fixes_per_hour INTEGER DEFAULT 10,
+    cooldown_minutes INTEGER DEFAULT 5,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE doctor_claude_rules IS 'Configurable rules for Doctor Claude auto-fix decisions';
+
+-- Default rules
+INSERT INTO doctor_claude_rules (issue_type, description, auto_fix_enabled, escalation_priority) VALUES
+('ORDER_STATUS_MISMATCH', 'DB order status differs from Alpaca', true, 'normal'),
+('PHANTOM_POSITION', 'Position in DB but not in Alpaca', true, 'high'),
+('ORPHAN_POSITION', 'Position in Alpaca but not in DB', false, 'critical'),
+('QTY_MISMATCH', 'Position quantity differs', false, 'high'),
+('STUCK_ORDER', 'Order pending too long', false, 'normal'),
+('CYCLE_STALE', 'No activity for extended period', false, 'normal'),
+('SERVICE_UNHEALTHY', 'Service not responding', false, 'critical'),
+('DAILY_LOSS_WARNING', 'Approaching loss limit', false, 'critical')
+ON CONFLICT (issue_type) DO NOTHING;
+```
+
+---
+
+## 6. Views
+
+### 6.1 Latest Securities View
 
 ```sql
 CREATE MATERIALIZED VIEW v_securities_latest AS
 SELECT 
     s.security_id,
     s.symbol,
-    s.company_name,
+    s.name,
     sec.sector_name,
-    th.close AS last_price,
-    th.volume AS last_volume,
-    td.timestamp AS last_update
+    th.close as latest_price,
+    th.volume as latest_volume,
+    td.timestamp as price_timestamp
 FROM securities s
-LEFT JOIN sectors sec ON sec.sector_id = s.sector_id
+LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
 LEFT JOIN LATERAL (
-    SELECT th2.close, th2.volume, th2.time_id
-    FROM trading_history th2
-    WHERE th2.security_id = s.security_id
-    ORDER BY th2.time_id DESC
+    SELECT th.close, th.volume, th.time_id
+    FROM trading_history th
+    WHERE th.security_id = s.security_id
+    ORDER BY th.time_id DESC
     LIMIT 1
 ) th ON true
-LEFT JOIN time_dimension td ON td.time_id = th.time_id
+LEFT JOIN time_dimension td ON th.time_id = td.time_id
 WHERE s.is_active = true;
 
 CREATE UNIQUE INDEX idx_v_securities_latest ON v_securities_latest(security_id);
-CREATE INDEX idx_v_securities_symbol ON v_securities_latest(symbol);
-
-COMMENT ON MATERIALIZED VIEW v_securities_latest IS 'Cached latest price for active securities';
 ```
 
-### 5.2 Latest Scan View (Materialized)
+### 6.2 Latest Scan View
 
 ```sql
 CREATE MATERIALIZED VIEW v_scan_latest AS
 SELECT 
-    sr.scan_id,
-    sr.cycle_id,
+    sr.*,
     s.symbol,
-    s.company_name,
-    sr.rank,
-    sr.final_score,
-    sr.price,
-    sr.volume,
-    sr.pattern,
-    sr.catalyst_type,
-    sr.selected_for_trading,
-    sr.scan_timestamp
+    s.name
 FROM scan_results sr
-JOIN securities s ON s.security_id = sr.security_id
-WHERE sr.cycle_id = (
-    SELECT cycle_id FROM trading_cycles ORDER BY date DESC LIMIT 1
+JOIN securities s ON sr.security_id = s.security_id
+WHERE sr.scan_timestamp = (
+    SELECT MAX(scan_timestamp) FROM scan_results
 );
-
-CREATE INDEX idx_v_scan_latest_rank ON v_scan_latest(rank);
-
-COMMENT ON MATERIALIZED VIEW v_scan_latest IS 'Latest scan results with symbols';
 ```
 
 ---
 
-## 6. Helper Functions
+## 7. Doctor Claude Views
 
-### 6.1 Get or Create Security
+### 7.1 Trade Pipeline Status
 
 ```sql
-CREATE OR REPLACE FUNCTION get_or_create_security(p_symbol VARCHAR(10))
+CREATE OR REPLACE VIEW v_trade_pipeline_status AS
+SELECT 
+    tc.cycle_id,
+    tc.date,
+    tc.cycle_state,
+    tc.phase,
+    tc.mode,
+    tc.started_at,
+    tc.daily_pnl,
+    tc.trades_executed,
+    tc.trades_won,
+    tc.trades_lost,
+    tc.updated_at as last_activity,
+    
+    -- Counts
+    COALESCE(scan.candidates, 0) as candidates_found,
+    COALESCE(pos.total, 0) as positions_total,
+    COALESCE(pos.open_count, 0) as positions_open,
+    COALESCE(pos.closed_count, 0) as positions_closed,
+    COALESCE(ord.total, 0) as orders_total,
+    COALESCE(ord.submitted, 0) as orders_pending,
+    COALESCE(ord.filled, 0) as orders_filled,
+    COALESCE(ord.cancelled, 0) as orders_cancelled,
+    COALESCE(ord.rejected, 0) as orders_rejected,
+    
+    -- P&L
+    COALESCE(pos.realized_pnl, 0) as realized_pnl,
+    COALESCE(pos.unrealized_pnl, 0) as unrealized_pnl,
+    
+    -- Health
+    EXTRACT(EPOCH FROM (NOW() - tc.updated_at))/60 as minutes_since_activity,
+    CASE 
+        WHEN tc.cycle_state = 'closed' THEN 'COMPLETE'
+        WHEN COALESCE(pos.open_count, 0) > 0 AND COALESCE(ord.submitted, 0) = 0 THEN 'MONITORING'
+        WHEN COALESCE(ord.submitted, 0) > 0 THEN 'ORDERS_PENDING'
+        WHEN COALESCE(scan.candidates, 0) > 0 AND COALESCE(pos.total, 0) = 0 THEN 'AWAITING_ENTRY'
+        ELSE 'SCANNING'
+    END as pipeline_stage
+
+FROM trading_cycles tc
+LEFT JOIN LATERAL (
+    SELECT COUNT(*) as candidates FROM scan_results sr WHERE sr.cycle_id = tc.cycle_id
+) scan ON true
+LEFT JOIN LATERAL (
+    SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE p.status = 'open') as open_count,
+        COUNT(*) FILTER (WHERE p.status = 'closed') as closed_count,
+        COALESCE(SUM(p.realized_pnl) FILTER (WHERE p.status = 'closed'), 0) as realized_pnl,
+        COALESCE(SUM(p.unrealized_pnl) FILTER (WHERE p.status = 'open'), 0) as unrealized_pnl
+    FROM positions p WHERE p.cycle_id = tc.cycle_id
+) pos ON true
+LEFT JOIN LATERAL (
+    SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE o.status IN ('submitted', 'pending_new', 'accepted')) as submitted,
+        COUNT(*) FILTER (WHERE o.status = 'filled') as filled,
+        COUNT(*) FILTER (WHERE o.status = 'cancelled') as cancelled,
+        COUNT(*) FILTER (WHERE o.status = 'rejected') as rejected
+    FROM orders o JOIN positions p ON o.position_id = p.position_id WHERE p.cycle_id = tc.cycle_id
+) ord ON true
+WHERE tc.date >= CURRENT_DATE - INTERVAL '7 days'
+ORDER BY tc.date DESC, tc.started_at DESC;
+
+COMMENT ON VIEW v_trade_pipeline_status IS 'Real-time trade pipeline status for Doctor Claude';
+```
+
+### 7.2 Claude Activity Summary
+
+```sql
+CREATE OR REPLACE VIEW v_claude_activity_summary AS
+SELECT 
+    DATE(logged_at) as activity_date,
+    session_id,
+    COUNT(*) as total_observations,
+    SUM(issues_found) as total_issues_found,
+    SUM(critical_count) as total_critical,
+    SUM(warning_count) as total_warnings,
+    COUNT(*) FILTER (WHERE decision = 'auto_fix') as auto_fixes,
+    COUNT(*) FILTER (WHERE decision = 'escalate') as escalations,
+    COUNT(*) FILTER (WHERE action_result = 'success') as successful_actions,
+    COUNT(*) FILTER (WHERE action_result = 'failed') as failed_actions,
+    MIN(logged_at) as session_start,
+    MAX(logged_at) as session_end,
+    ROUND(EXTRACT(EPOCH FROM (MAX(logged_at) - MIN(logged_at)))/3600, 2) as session_hours
+FROM claude_activity_log
+GROUP BY DATE(logged_at), session_id
+ORDER BY activity_date DESC;
+
+COMMENT ON VIEW v_claude_activity_summary IS 'Daily summary of Doctor Claude activities';
+```
+
+### 7.3 Recurring Issues
+
+```sql
+CREATE OR REPLACE VIEW v_recurring_issues AS
+SELECT 
+    issue_type,
+    COUNT(*) as occurrences,
+    COUNT(*) FILTER (WHERE action_result = 'success') as times_fixed,
+    COUNT(*) FILTER (WHERE action_result = 'failed') as times_failed,
+    COUNT(*) FILTER (WHERE decision = 'escalate') as times_escalated,
+    ROUND(AVG(fix_duration_ms)) as avg_fix_ms,
+    MAX(logged_at) as last_occurrence,
+    MIN(logged_at) as first_occurrence
+FROM claude_activity_log
+WHERE issue_type IS NOT NULL
+  AND logged_at > NOW() - INTERVAL '30 days'
+GROUP BY issue_type
+ORDER BY occurrences DESC;
+
+COMMENT ON VIEW v_recurring_issues IS 'Issue frequency for Doctor Claude learning';
+```
+
+### 7.4 Recent Escalations
+
+```sql
+CREATE OR REPLACE VIEW v_recent_escalations AS
+SELECT 
+    logged_at,
+    session_id,
+    issue_type,
+    issue_severity,
+    decision_reasoning,
+    observation_summary->>'message' as issue_message,
+    cycle_id
+FROM claude_activity_log
+WHERE decision = 'escalate'
+  AND logged_at > NOW() - INTERVAL '7 days'
+ORDER BY logged_at DESC;
+
+COMMENT ON VIEW v_recent_escalations IS 'Issues escalated to human review';
+```
+
+### 7.5 Failed Actions
+
+```sql
+CREATE OR REPLACE VIEW v_failed_actions AS
+SELECT 
+    logged_at,
+    session_id,
+    issue_type,
+    action_type,
+    action_detail,
+    action_target,
+    error_message,
+    cycle_id
+FROM claude_activity_log
+WHERE action_result = 'failed'
+  AND logged_at > NOW() - INTERVAL '7 days'
+ORDER BY logged_at DESC;
+
+COMMENT ON VIEW v_failed_actions IS 'Failed actions requiring investigation';
+```
+
+---
+
+## 8. Helper Functions
+
+### 8.1 Get or Create Security
+
+```sql
+CREATE OR REPLACE FUNCTION get_or_create_security(p_symbol VARCHAR)
 RETURNS INTEGER AS $$
 DECLARE
     v_security_id INTEGER;
 BEGIN
-    -- Try to find existing security
     SELECT security_id INTO v_security_id
-    FROM securities
-    WHERE symbol = UPPER(p_symbol);
+    FROM securities WHERE symbol = UPPER(p_symbol);
     
-    -- If not found, create it
     IF v_security_id IS NULL THEN
-        INSERT INTO securities (symbol, exchange)
-        VALUES (UPPER(p_symbol), 'UNKNOWN')
+        INSERT INTO securities (symbol) 
+        VALUES (UPPER(p_symbol))
         RETURNING security_id INTO v_security_id;
     END IF;
     
     RETURN v_security_id;
 END;
 $$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION get_or_create_security IS 'Get security_id for symbol, creating if needed';
 ```
 
-### 6.2 Get or Create Time
+### 8.2 Get or Create Time
 
 ```sql
 CREATE OR REPLACE FUNCTION get_or_create_time(p_timestamp TIMESTAMP WITH TIME ZONE)
-RETURNS BIGINT AS $$
+RETURNS INTEGER AS $$
 DECLARE
-    v_time_id BIGINT;
-    v_date DATE;
-    v_hour INTEGER;
-    v_is_market_hours BOOLEAN;
-    v_market_session VARCHAR(20);
+    v_time_id INTEGER;
 BEGIN
-    -- Try to find existing time entry
     SELECT time_id INTO v_time_id
-    FROM time_dimension
-    WHERE timestamp = p_timestamp;
+    FROM time_dimension WHERE timestamp = p_timestamp;
     
-    -- If not found, create it
     IF v_time_id IS NULL THEN
-        v_date := p_timestamp::DATE;
-        v_hour := EXTRACT(HOUR FROM p_timestamp AT TIME ZONE 'America/New_York');
-        
-        -- Determine market hours (9:30 AM - 4:00 PM ET)
-        v_is_market_hours := (
-            v_hour >= 9 AND v_hour < 16 AND
-            EXTRACT(DOW FROM v_date) BETWEEN 1 AND 5
-        );
-        
-        -- Determine market session
-        v_market_session := CASE
-            WHEN v_hour < 9 THEN 'pre-market'
-            WHEN v_hour >= 9 AND v_hour < 10 THEN 'open'
-            WHEN v_hour >= 15 AND v_hour < 16 THEN 'close'
-            WHEN v_hour >= 16 THEN 'after-hours'
-            ELSE 'regular'
-        END;
-        
-        INSERT INTO time_dimension (
-            timestamp, date, year, month, day, day_of_week,
-            hour, minute, is_market_hours, is_trading_day, market_session
-        ) VALUES (
+        INSERT INTO time_dimension (timestamp, date, time, hour, minute, day_of_week)
+        VALUES (
             p_timestamp,
-            v_date,
-            EXTRACT(YEAR FROM v_date),
-            EXTRACT(MONTH FROM v_date),
-            EXTRACT(DAY FROM v_date),
-            EXTRACT(DOW FROM v_date),
-            v_hour,
+            p_timestamp::DATE,
+            p_timestamp::TIME,
+            EXTRACT(HOUR FROM p_timestamp),
             EXTRACT(MINUTE FROM p_timestamp),
-            v_is_market_hours,
-            EXTRACT(DOW FROM v_date) BETWEEN 1 AND 5,
-            v_market_session
+            EXTRACT(DOW FROM p_timestamp)
         )
         RETURNING time_id INTO v_time_id;
     END IF;
@@ -714,261 +741,102 @@ BEGIN
     RETURN v_time_id;
 END;
 $$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION get_or_create_time IS 'Get time_id for timestamp, creating if needed';
 ```
 
-### 6.3 Update Position P&L
+---
+
+## 9. Doctor Claude Functions
+
+### 9.1 Get Auto-Fix Rule
 
 ```sql
-CREATE OR REPLACE FUNCTION update_position_pnl(
-    p_position_id UUID,
-    p_current_price DECIMAL(12, 4)
-)
-RETURNS VOID AS $$
-DECLARE
-    v_entry_price DECIMAL(12, 4);
-    v_quantity INTEGER;
-    v_side VARCHAR(10);
-    v_unrealized_pnl DECIMAL(12, 2);
-    v_unrealized_pnl_pct DECIMAL(8, 4);
+CREATE OR REPLACE FUNCTION get_autofix_rule(p_issue_type VARCHAR)
+RETURNS TABLE (
+    auto_fix_enabled BOOLEAN,
+    fix_template TEXT,
+    max_auto_fixes_per_hour INTEGER,
+    cooldown_minutes INTEGER
+) AS $$
 BEGIN
-    -- Get position details
-    SELECT entry_price, quantity, side
-    INTO v_entry_price, v_quantity, v_side
-    FROM positions
-    WHERE position_id = p_position_id;
-    
-    -- Calculate P&L based on side
-    IF v_side = 'long' THEN
-        v_unrealized_pnl := (p_current_price - v_entry_price) * v_quantity;
-    ELSE
-        v_unrealized_pnl := (v_entry_price - p_current_price) * v_quantity;
-    END IF;
-    
-    v_unrealized_pnl_pct := (v_unrealized_pnl / (v_entry_price * v_quantity)) * 100;
-    
-    -- Update position
-    UPDATE positions
-    SET current_price = p_current_price,
-        unrealized_pnl = v_unrealized_pnl,
-        unrealized_pnl_pct = v_unrealized_pnl_pct,
-        updated_at = NOW()
-    WHERE position_id = p_position_id;
+    RETURN QUERY
+    SELECT 
+        r.auto_fix_enabled,
+        r.fix_template,
+        r.max_auto_fixes_per_hour,
+        r.cooldown_minutes
+    FROM doctor_claude_rules r
+    WHERE r.issue_type = p_issue_type
+      AND r.is_active = true;
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION update_position_pnl IS 'Update position with current price and P&L';
+COMMENT ON FUNCTION get_autofix_rule IS 'Get auto-fix configuration for issue type';
+```
+
+### 9.2 Can Auto-Fix (Rate Limiting)
+
+```sql
+CREATE OR REPLACE FUNCTION can_auto_fix(p_issue_type VARCHAR)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_rule RECORD;
+    v_recent_fixes INTEGER;
+    v_last_fix TIMESTAMP WITH TIME ZONE;
+BEGIN
+    SELECT * INTO v_rule
+    FROM doctor_claude_rules
+    WHERE issue_type = p_issue_type AND is_active = true;
+    
+    IF NOT FOUND OR NOT v_rule.auto_fix_enabled THEN
+        RETURN false;
+    END IF;
+    
+    SELECT COUNT(*), MAX(logged_at) 
+    INTO v_recent_fixes, v_last_fix
+    FROM claude_activity_log
+    WHERE issue_type = p_issue_type
+      AND decision = 'auto_fix'
+      AND logged_at > NOW() - INTERVAL '1 hour';
+    
+    IF v_recent_fixes >= v_rule.max_auto_fixes_per_hour THEN
+        RETURN false;
+    END IF;
+    
+    IF v_last_fix IS NOT NULL AND 
+       v_last_fix > NOW() - (v_rule.cooldown_minutes || ' minutes')::INTERVAL THEN
+        RETURN false;
+    END IF;
+    
+    RETURN true;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION can_auto_fix IS 'Check rate limits before auto-fixing';
 ```
 
 ---
 
-## 7. Indexes & Performance
+## 10. Indexes
 
-### 7.1 Performance Tips
+### 10.1 Performance Indexes Summary
 
-**Query Pattern 1: Get Latest Price**
-```sql
--- ✅ FAST: Uses v_securities_latest materialized view
-SELECT symbol, last_price 
-FROM v_securities_latest 
-WHERE symbol = 'TSLA';
-
--- ❌ SLOW: Full table scan
-SELECT s.symbol, th.close
-FROM trading_history th
-JOIN securities s ON s.security_id = th.security_id
-WHERE s.symbol = 'TSLA'
-ORDER BY th.time_id DESC
-LIMIT 1;
-```
-
-**Query Pattern 2: Get News for Symbol**
-```sql
--- ✅ FAST: Uses security_id FK join
-SELECT ns.headline, ns.sentiment_score, td.timestamp
-FROM news_sentiment ns
-JOIN securities s ON s.security_id = ns.security_id
-JOIN time_dimension td ON td.time_id = ns.time_id
-WHERE s.symbol = 'TSLA'
-  AND td.timestamp >= NOW() - INTERVAL '24 hours'
-ORDER BY td.timestamp DESC;
-```
-
----
-
-## 8. Usage Patterns
-
-### 8.1 Inserting Market Data
-
-```python
-# Python example: Store OHLCV bar
-
-# Step 1: Get security_id
-security_id = await db.fetchval(
-    "SELECT get_or_create_security($1)", symbol
-)
-
-# Step 2: Get time_id
-time_id = await db.fetchval(
-    "SELECT get_or_create_time($1)", bar_timestamp
-)
-
-# Step 3: Insert bar with FKs
-await db.execute("""
-    INSERT INTO trading_history (
-        security_id, time_id, open, high, low, close, volume
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-    ON CONFLICT (security_id, time_id) DO UPDATE
-    SET close = EXCLUDED.close, volume = EXCLUDED.volume
-""", security_id, time_id, open, high, low, close, volume)
-```
-
-### 8.2 Querying with JOINs
-
-```python
-# Python example: Get scan results with symbols
-results = await db.fetch("""
-    SELECT 
-        s.symbol,
-        sr.rank,
-        sr.final_score,
-        sr.price,
-        sr.pattern,
-        sr.catalyst_type
-    FROM scan_results sr
-    JOIN securities s ON s.security_id = sr.security_id
-    WHERE sr.cycle_id = $1
-    ORDER BY sr.rank
-""", cycle_id)
-```
-
-### 8.3 Opening a Position
-
-```python
-# Get security_id first
-security_id = await db.fetchval(
-    "SELECT get_or_create_security($1)", symbol
-)
-
-# Insert position
-position_id = await db.fetchval("""
-    INSERT INTO positions (
-        cycle_id, security_id, side, quantity,
-        entry_price, stop_loss, take_profit,
-        risk_amount, pattern, catalyst, entry_time, status
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'open')
-    RETURNING position_id
-""", cycle_id, security_id, side, quantity,
-     entry_price, stop_loss, take_profit,
-     risk_amount, pattern, catalyst)
-```
-
----
-
-## 9. Validation Queries
-
-### 9.1 Check Normalization
-
-```sql
--- ✅ Should return 0 (no symbol columns in fact tables)
-SELECT COUNT(*)
-FROM information_schema.columns
-WHERE table_name IN ('trading_history', 'news_sentiment', 'technical_indicators', 
-                     'positions', 'orders', 'scan_results')
-  AND column_name = 'symbol';
--- Expected: 0 (only securities table has symbol)
-```
-
-### 9.2 Check Foreign Keys
-
-```sql
--- ✅ All fact tables should have FK to securities
-SELECT 
-    tc.table_name,
-    kcu.column_name,
-    ccu.table_name AS referenced_table
-FROM information_schema.table_constraints tc
-JOIN information_schema.key_column_usage kcu 
-    ON tc.constraint_name = kcu.constraint_name
-JOIN information_schema.constraint_column_usage ccu 
-    ON ccu.constraint_name = tc.constraint_name
-WHERE tc.constraint_type = 'FOREIGN KEY'
-  AND ccu.table_name = 'securities'
-ORDER BY tc.table_name;
-```
-
-### 9.3 Check Data Integrity
-
-```sql
--- ✅ No orphaned records (should return 0)
-SELECT COUNT(*) FROM news_sentiment ns
-LEFT JOIN securities s ON s.security_id = ns.security_id
-WHERE s.security_id IS NULL;
-
-SELECT COUNT(*) FROM positions p
-LEFT JOIN securities s ON s.security_id = p.security_id
-WHERE s.security_id IS NULL;
-```
-
----
-
-## 10. Maintenance
-
-### 10.1 Daily Tasks
-
-```sql
--- Refresh materialized views
-REFRESH MATERIALIZED VIEW CONCURRENTLY v_securities_latest;
-REFRESH MATERIALIZED VIEW CONCURRENTLY v_scan_latest;
-```
-
-### 10.2 Weekly Tasks
-
-```sql
-ANALYZE trading_history;
-ANALYZE news_sentiment;
-ANALYZE positions;
-ANALYZE orders;
-```
-
-### 10.3 Monthly Tasks
-
-```sql
-VACUUM ANALYZE;
-REINDEX DATABASE catalyst_trading_production;
-```
+| Table | Index | Columns | Purpose |
+|-------|-------|---------|---------|
+| securities | idx_securities_symbol | symbol | Fast symbol lookup |
+| trading_history | idx_history_security_time | security_id, time_id | Time-series queries |
+| positions | idx_positions_status | status | Open position queries |
+| orders | idx_orders_alpaca | alpaca_order_id | Broker reconciliation |
+| claude_activity_log | idx_cal_logged_at | logged_at | Recent activity |
+| claude_activity_log | idx_cal_issue_type | issue_type | Issue analysis |
 
 ---
 
 ## Related Documents
 
-- **architecture.md** - System architecture overview
-- **functional-specification.md** - Service APIs and workflows
-- **deployment-guide.md** - Database deployment steps
+- **architecture.md** - System architecture including Doctor Claude
+- **functional-specification.md** - Service APIs and operations
+- **DOCTOR-CLAUDE-DESIGN.md** - Doctor Claude detailed design
 
 ---
 
-## Appendix: Table Summary
-
-| Table | Type | Purpose | FK to securities | FK to time_dimension |
-|-------|------|---------|------------------|----------------------|
-| **securities** | Dimension | Master security data | - | - |
-| **sectors** | Dimension | GICS sectors | - | - |
-| **time_dimension** | Dimension | Time as entity | - | - |
-| **trading_history** | Fact | OHLCV bars | ✅ | ✅ |
-| **news_sentiment** | Fact | News events | ✅ | ✅ |
-| **technical_indicators** | Fact | Technical analysis | ✅ | ✅ |
-| **trading_cycles** | Operations | Daily workflows | - | - |
-| **positions** | Operations | Trading positions | ✅ | - |
-| **orders** | Operations | Order execution | ✅ | - |
-| **scan_results** | Operations | Market scan candidates | ✅ | - |
-| **risk_events** | Operations | Risk management log | - | - |
-
-**Total Tables**: 11 | **Views**: 2 | **Materialized Views**: 2 | **Helper Functions**: 3
-
----
-
-**END OF DATABASE SCHEMA DOCUMENT**
-
-*Production schema ONLY. Clean, normalized, ready for trading.* 🎩
+**END OF DATABASE SCHEMA DOCUMENT v7.0.0**
