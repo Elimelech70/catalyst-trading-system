@@ -2,11 +2,17 @@
 
 # Name of Application: Catalyst Trading System
 # Name of file: trading-service.py
-# Version: 8.4.0
-# Last Updated: 2025-12-20
+# Version: 8.5.0
+# Last Updated: 2025-12-26
 # Purpose: Trading service with ALPACA INTEGRATION for autonomous trading
 
 # REVISION HISTORY:
+# v8.5.0 (2025-12-26) - P&L tracking when orders fill
+# - Capture actual entry fill price (filled_avg_price) when orders fill
+# - Add P&L calculation when positions close via ghost detection
+# - Update entry_price, exit_price, realized_pnl, pnl_percent fields
+# - Fixes critical bug: all 140 positions had NULL exit_price and realized_pnl
+#
 # v8.4.0 (2025-12-20) - Enhanced order sync with all terminal states
 # - Added all Alpaca terminal states: filled, canceled, expired, rejected,
 #   done_for_day, replaced, error
@@ -100,7 +106,7 @@ from common.alpaca_trader import alpaca_trader
 # SERVICE METADATA
 # ============================================================================
 SERVICE_NAME = "trading"
-SERVICE_VERSION = "8.3.0"  # Order sync, deduplication, position limits
+SERVICE_VERSION = "8.5.0"  # P&L tracking, entry fill price, ghost P&L calculation
 SERVICE_TITLE = "Trading Service"
 SCHEMA_VERSION = "v6.0 3NF normalized"
 SERVICE_PORT = 5005
@@ -457,6 +463,7 @@ async def sync_order_statuses():
                         status_info = await alpaca_trader.get_order_status(pos['alpaca_order_id'])
                         new_status = status_info.get('status', 'unknown')
                         filled_qty = status_info.get('filled_qty', 0)
+                        filled_avg_price = status_info.get('filled_avg_price')
 
                         if new_status != pos['alpaca_status']:
                             # Update alpaca_status
@@ -469,8 +476,19 @@ async def sync_order_statuses():
 
                             logger.info(
                                 f"[SYNC] {pos['symbol']}: {pos['alpaca_status']} -> {new_status} "
-                                f"(filled_qty={filled_qty})"
+                                f"(filled_qty={filled_qty}, fill_price={filled_avg_price})"
                             )
+
+                            # v8.5.0: When order fills, update entry_price with actual fill price
+                            if new_status == 'filled' and filled_avg_price:
+                                await conn.execute("""
+                                    UPDATE positions
+                                    SET entry_price = $1, updated_at = NOW()
+                                    WHERE position_id = $2
+                                """, filled_avg_price, pos['position_id'])
+                                logger.info(
+                                    f"[SYNC] {pos['symbol']}: Updated entry_price to {filled_avg_price}"
+                                )
 
                             # If order reached terminal state, check if we should close position
                             if new_status in TERMINAL_STATES:
@@ -526,7 +544,8 @@ async def sync_order_statuses():
 async def check_ghost_positions(conn):
     """
     Check for positions that are open in DB but don't exist in Alpaca.
-    These are 'ghost' positions that should be investigated.
+    These are 'ghost' positions that were closed by stop-loss or take-profit.
+    v8.5.0: Now closes these positions with P&L calculation.
     """
     try:
         if not alpaca_trader.is_enabled():
@@ -536,27 +555,84 @@ async def check_ghost_positions(conn):
         alpaca_positions = await alpaca_trader.get_positions()
         alpaca_symbols = {p['symbol'] for p in alpaca_positions} if alpaca_positions else set()
 
-        # Get open positions from DB that are older than 1 day
+        # Get open positions from DB that are older than 1 hour and alpaca_status='filled'
+        # These are positions where entry filled but now not in Alpaca = closed by stop/take-profit
         db_positions = await conn.fetch("""
-            SELECT p.position_id, s.symbol, p.alpaca_status, p.opened_at
+            SELECT p.position_id, s.symbol, p.alpaca_status, p.opened_at,
+                   p.entry_price, p.quantity, p.side, p.stop_loss, p.take_profit
             FROM positions p
             JOIN securities s ON s.security_id = p.security_id
             WHERE p.status = 'open'
-            AND p.opened_at < NOW() - INTERVAL '1 day'
+            AND p.alpaca_status = 'filled'
+            AND p.opened_at < NOW() - INTERVAL '1 hour'
         """)
 
         ghost_count = 0
+        closed_count = 0
         for pos in db_positions:
             if pos['symbol'] not in alpaca_symbols:
                 ghost_count += 1
-                if ghost_count <= 5:  # Log first 5
+
+                # v8.5.0: Close the ghost position with P&L calculation
+                try:
+                    # Try to get current price as exit estimate
+                    current_price = await alpaca_trader.get_current_price(pos['symbol'])
+
+                    entry_price = float(pos['entry_price']) if pos['entry_price'] else 0
+                    quantity = pos['quantity'] or 0
+                    side = pos['side']
+
+                    # Use current price, or estimate from stop/take-profit levels
+                    if current_price:
+                        exit_price = current_price
+                        close_reason = 'alpaca_position_closed'
+                    elif pos['stop_loss']:
+                        exit_price = float(pos['stop_loss'])
+                        close_reason = 'stop_loss_estimated'
+                    elif pos['take_profit']:
+                        exit_price = float(pos['take_profit'])
+                        close_reason = 'take_profit_estimated'
+                    else:
+                        exit_price = entry_price
+                        close_reason = 'closed_no_exit_price'
+
+                    # Calculate P&L
+                    if side == 'long':
+                        realized_pnl = (exit_price - entry_price) * quantity
+                    else:  # short
+                        realized_pnl = (entry_price - exit_price) * quantity
+
+                    pnl_percent = ((exit_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+                    if side == 'short':
+                        pnl_percent = -pnl_percent
+
+                    # Update position with P&L
+                    await conn.execute("""
+                        UPDATE positions
+                        SET status = 'closed',
+                            exit_price = $1,
+                            realized_pnl = $2,
+                            pnl_percent = $3,
+                            close_reason = $4,
+                            closed_at = NOW(),
+                            updated_at = NOW()
+                        WHERE position_id = $5
+                    """, exit_price, realized_pnl, pnl_percent, close_reason, pos['position_id'])
+
+                    closed_count += 1
+                    logger.info(
+                        f"[GHOST] {pos['symbol']}: Closed with P&L - "
+                        f"entry={entry_price:.2f}, exit={exit_price:.2f}, "
+                        f"pnl=${realized_pnl:.2f} ({pnl_percent:.1f}%)"
+                    )
+
+                except Exception as e:
                     logger.warning(
-                        f"[GHOST] {pos['symbol']}: Open in DB since {pos['opened_at']} "
-                        f"but not in Alpaca (status={pos['alpaca_status']})"
+                        f"[GHOST] {pos['symbol']}: Failed to close with P&L - {e}"
                     )
 
         if ghost_count > 0:
-            logger.warning(f"[GHOST] Total ghost positions found: {ghost_count}")
+            logger.info(f"[GHOST] Found {ghost_count} ghost positions, closed {closed_count} with P&L")
 
     except Exception as e:
         logger.error(f"[GHOST] Error checking ghost positions: {e}")
