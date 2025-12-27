@@ -369,6 +369,8 @@ Doctor Claude is an active monitoring system that runs during market hours to:
 4. **Act** - Execute safe fixes or alert human
 5. **Log** - Record all activities for audit trail
 
+**See operations.md** for complete state machines, data flows, and the core trading pattern.
+
 ### 11.2 Components
 
 | Component | File | Purpose |
@@ -382,10 +384,12 @@ Doctor Claude is an active monitoring system that runs during market hours to:
 | Check | Query Source | Comparison |
 |-------|--------------|------------|
 | Pipeline Status | `v_trade_pipeline_status` | N/A (status only) |
-| Stuck Orders | `orders` table | submitted_at > 5 min |
+| Stuck Orders | `orders.status` | Pending status > 5 min |
 | Position Reconciliation | `positions` table | vs Alpaca `get_all_positions()` |
-| Order Status Sync | `orders` table | vs Alpaca `get_order_by_id()` |
+| Order Status Sync | `orders.alpaca_order_id` | vs Alpaca `get_order_by_id()` |
 | Stale Cycle | `trading_cycles` | updated_at > 30 min |
+
+**Critical:** Doctor Claude queries the `orders` table for order reconciliation, NOT positions.
 
 ### 11.4 Issue Taxonomy
 
@@ -564,8 +568,51 @@ SELECT * FROM v_recurring_issues;
 
 - **architecture.md** - System architecture
 - **database-schema.md** - Database schema
+- **operations.md** - Core patterns, state machines, data flows
+- **ORDERS-POSITIONS-IMPLEMENTATION.md** - Orders vs positions implementation guide
+- **ARCHITECTURE-RULES.md** - Mandatory rules for Claude Code
 - **DOCTOR-CLAUDE-DESIGN.md** - Doctor Claude detailed design
 - **DOCTOR-CLAUDE-IMPLEMENTATION.md** - Deployment guide
+- **work-summary-2025-12-27.md** - Implementation work summary
+
+---
+
+## Appendix: Deployment Status (Dec 27, 2025)
+
+### Current State
+
+Doctor Claude was deployed on December 27, 2025 with the following results:
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `trade_watchdog.py` | ✅ Deployed | v1.0.0 |
+| `log_activity.py` | ✅ Deployed | v1.0.0 |
+| `doctor_claude_monitor.sh` | ✅ Deployed | Monitoring loop script |
+| `claude_activity_log` table | ✅ Created | With all indexes |
+| `doctor_claude_rules` table | ✅ Created | 10 default rules loaded |
+| Views | ✅ Created | All 5 views operational |
+
+### Initial Findings
+
+First watchdog run found **27 stuck orders** - old positions from Nov-Dec with pending `alpaca_status`. These represent historical data that should be cleaned up.
+
+### Recommended Actions
+
+1. **Before Next Trading Session (Dec 30):**
+   ```bash
+   # Start Doctor Claude monitoring
+   nohup ./scripts/doctor_claude_monitor.sh &
+   ```
+
+2. **Clean up old stuck orders:**
+   ```sql
+   -- Review stuck positions
+   SELECT position_id, symbol, alpaca_status, entry_time
+   FROM positions p
+   JOIN securities s ON p.security_id = s.security_id
+   WHERE alpaca_status IN ('pending', 'submitted', 'accepted')
+     AND entry_time < NOW() - INTERVAL '7 days';
+   ```
 
 ---
 

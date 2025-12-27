@@ -88,23 +88,62 @@ Monitoring: Doctor Claude tables for trade lifecycle tracking
          │
 ┌────────▼─────────────────────────────────────────────────────────┐
 │                   OPERATIONS TABLES                               │
-│  ┌───────────────┐  ┌───────────┐  ┌────────┐  ┌────────────┐  │
-│  │trading_cycles │  │ positions │  │ orders │  │scan_results│  │
-│  └───────┬───────┘  └─────┬─────┘  └────────┘  └────────────┘  │
-│          │                │                                      │
-│          │  cycle_id FK   │                                      │
-│          └────────────────┘                                      │
+│                                                                   │
+│  ┌───────────────┐                                               │
+│  │trading_cycles │ (One per day)                                 │
+│  └───────┬───────┘                                               │
+│          │                                                        │
+│          │ cycle_id FK                                           │
+│          │                                                        │
+│  ┌───────▼───────┐         ┌─────────────┐                      │
+│  │   POSITIONS   │◀────────│   ORDERS    │                      │
+│  │  (Holdings)   │   N:1   │(Instructions)│                     │
+│  └───────────────┘         └─────────────┘                      │
+│                                   │                              │
+│  ⚠️ CRITICAL RELATIONSHIP:        │                              │
+│  One Position = Many Orders       │ self-reference               │
+│  (entry, SL, TP, scale orders)    │ for bracket legs            │
+│                                   ▼                              │
+│                            parent_order_id                       │
+│                                                                   │
+│  ┌───────────────┐                                               │
+│  │ scan_results  │ (Candidates)                                  │
+│  └───────────────┘                                               │
 └──────────────────────────────────────────────────────────────────┘
          │
          │  Monitored by
          │
 ┌────────▼─────────────────────────────────────────────────────────┐
-│                   DOCTOR CLAUDE TABLES (NEW v7.0)                │
+│                   DOCTOR CLAUDE TABLES                           │
 │  ┌───────────────────┐  ┌─────────────────────┐                 │
 │  │claude_activity_log│  │ doctor_claude_rules │                 │
 │  │ (audit trail)     │  │ (auto-fix config)   │                 │
 │  └───────────────────┘  └─────────────────────┘                 │
 └──────────────────────────────────────────────────────────────────┘
+```
+
+### 1.4 Orders vs Positions (CRITICAL DISTINCTION)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   ORDERS ≠ POSITIONS                                            │
+│                                                                 │
+│   Order = Request sent to broker    Position = What you own     │
+│   ─────────────────────────────    ──────────────────────────  │
+│   "Buy 100 AAPL at $150"           "Long 100 AAPL @ $149.95"   │
+│                                                                 │
+│   One position can have MANY orders:                           │
+│                                                                 │
+│   POSITION: Long 100 AAPL                                       │
+│       │                                                         │
+│       ├── ORDER #1: BUY 100 @ $150 (entry) ......... filled    │
+│       ├── ORDER #2: SELL 100 @ $147 (stop loss) .... cancelled │
+│       └── ORDER #3: SELL 100 @ $155 (take profit) .. filled    │
+│                                                                 │
+│   See operations.md for complete lifecycle diagrams.            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -266,75 +305,166 @@ CREATE INDEX idx_cycles_state ON trading_cycles(cycle_state);
 COMMENT ON TABLE trading_cycles IS 'Daily trading workflow state tracking';
 ```
 
-### 4.2 Positions
+### 4.2 Orders (REQUIRED - All orders to Alpaca)
 
 ```sql
+-- ============================================================================
+-- ORDERS TABLE - MANDATORY
+-- Every order sent to Alpaca MUST have a row in this table
+-- ============================================================================
+
+CREATE TABLE orders (
+    -- Primary Key
+    order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Foreign Keys
+    position_id UUID REFERENCES positions(position_id),  -- NULL until position created
+    security_id INTEGER NOT NULL REFERENCES securities(security_id),
+    cycle_id UUID REFERENCES trading_cycles(cycle_id),
+    
+    -- Order Hierarchy (for bracket orders)
+    parent_order_id UUID REFERENCES orders(order_id),    -- Links bracket legs to parent
+    order_class VARCHAR(20),                             -- 'simple', 'bracket', 'oco', 'oto'
+    
+    -- Order Specification
+    side VARCHAR(10) NOT NULL,                           -- 'buy', 'sell'
+    order_type VARCHAR(20) NOT NULL,                     -- 'market', 'limit', 'stop', 'stop_limit'
+    time_in_force VARCHAR(10) DEFAULT 'day',             -- 'day', 'gtc', 'ioc', 'fok'
+    quantity INTEGER NOT NULL,
+    limit_price DECIMAL(12, 4),                          -- For limit and stop_limit orders
+    stop_price DECIMAL(12, 4),                           -- For stop and stop_limit orders
+    trail_percent DECIMAL(5, 2),                         -- For trailing stop orders
+    trail_price DECIMAL(12, 4),                          -- For trailing stop orders
+    
+    -- Alpaca Integration
+    alpaca_order_id VARCHAR(100) UNIQUE,                 -- Alpaca's order ID
+    alpaca_client_order_id VARCHAR(100),                 -- Our client order ID sent to Alpaca
+    
+    -- Order Status (see operations.md for state machine)
+    status VARCHAR(50) NOT NULL DEFAULT 'created',
+        -- Lifecycle: created → submitted → accepted → [partial_fill] → filled
+        --                                           → cancelled
+        --                                           → rejected
+        --                                           → expired
+    
+    -- Fill Information
+    filled_qty INTEGER DEFAULT 0,
+    filled_avg_price DECIMAL(12, 4),
+    
+    -- Timestamps
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    submitted_at TIMESTAMP WITH TIME ZONE,               -- When sent to Alpaca
+    accepted_at TIMESTAMP WITH TIME ZONE,                -- When Alpaca accepted
+    filled_at TIMESTAMP WITH TIME ZONE,                  -- When fully filled
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    expired_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Metadata
+    rejection_reason TEXT,                               -- Why Alpaca rejected
+    cancel_reason TEXT,                                  -- Why cancelled
+    metadata JSONB,                                      -- Additional context
+    
+    -- Constraints
+    CONSTRAINT chk_order_side CHECK (side IN ('buy', 'sell')),
+    CONSTRAINT chk_order_type CHECK (order_type IN ('market', 'limit', 'stop', 'stop_limit', 'trailing_stop')),
+    CONSTRAINT chk_order_class CHECK (order_class IS NULL OR order_class IN ('simple', 'bracket', 'oco', 'oto')),
+    CONSTRAINT chk_order_quantity CHECK (quantity > 0),
+    CONSTRAINT chk_filled_qty CHECK (filled_qty >= 0 AND filled_qty <= quantity)
+);
+
+-- Essential Indexes
+CREATE INDEX idx_orders_position ON orders(position_id) WHERE position_id IS NOT NULL;
+CREATE INDEX idx_orders_security ON orders(security_id);
+CREATE INDEX idx_orders_cycle ON orders(cycle_id);
+CREATE INDEX idx_orders_alpaca_id ON orders(alpaca_order_id) WHERE alpaca_order_id IS NOT NULL;
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_parent ON orders(parent_order_id) WHERE parent_order_id IS NOT NULL;
+CREATE INDEX idx_orders_submitted ON orders(submitted_at DESC) WHERE submitted_at IS NOT NULL;
+CREATE INDEX idx_orders_pending ON orders(status) WHERE status IN ('submitted', 'accepted', 'pending_new', 'partial_fill');
+
+COMMENT ON TABLE orders IS 'All orders sent to Alpaca - NEVER store order data in positions table';
+COMMENT ON COLUMN orders.position_id IS 'NULL for entry orders until position created, then updated';
+COMMENT ON COLUMN orders.parent_order_id IS 'For bracket orders: links take_profit and stop_loss to entry order';
+COMMENT ON COLUMN orders.order_class IS 'bracket = entry with legs, oco = one-cancels-other, oto = one-triggers-other';
+```
+
+### 4.3 Positions (Holdings only - NO order columns)
+
+```sql
+-- ============================================================================
+-- POSITIONS TABLE - Holdings only
+-- Order data belongs in the orders table, NOT here
+-- ============================================================================
+
 CREATE TABLE positions (
+    -- Primary Key
     position_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Foreign Keys
     cycle_id UUID NOT NULL REFERENCES trading_cycles(cycle_id),
     security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    side VARCHAR(10) NOT NULL,
-    quantity INTEGER NOT NULL,
-    entry_price DECIMAL(12, 4) NOT NULL,
+    
+    -- Position Specification
+    side VARCHAR(10) NOT NULL,                           -- 'long', 'short'
+    quantity INTEGER NOT NULL,                           -- Current quantity (can change)
+    
+    -- Entry Information
+    entry_price DECIMAL(12, 4) NOT NULL,                 -- Average entry price
+    entry_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    
+    -- Exit Information
+    exit_price DECIMAL(12, 4),                           -- Average exit price
+    exit_time TIMESTAMP WITH TIME ZONE,
+    
+    -- Current State
     current_price DECIMAL(12, 4),
+    
+    -- Risk Parameters
     stop_loss DECIMAL(12, 4),
     take_profit DECIMAL(12, 4),
-    risk_amount DECIMAL(12, 2) NOT NULL,
+    risk_amount DECIMAL(12, 2),
+    
+    -- P&L Tracking
     unrealized_pnl DECIMAL(12, 2),
     unrealized_pnl_pct DECIMAL(8, 4),
     realized_pnl DECIMAL(12, 2),
     realized_pnl_pct DECIMAL(8, 4),
-    status VARCHAR(20) NOT NULL DEFAULT 'open',
+    
+    -- Status (see operations.md for state machine)
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        -- Lifecycle: pending → open → closed
+        --            pending → cancelled (if entry never fills)
+    
+    -- Analysis Context
     pattern VARCHAR(50),
     catalyst VARCHAR(255),
-    entry_time TIMESTAMP WITH TIME ZONE NOT NULL,
-    exit_time TIMESTAMP WITH TIME ZONE,
-    metadata JSONB,
+    
+    -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    CONSTRAINT chk_quantity CHECK (quantity > 0),
-    CONSTRAINT chk_side CHECK (side IN ('long', 'short'))
+    
+    -- Metadata
+    metadata JSONB,
+    
+    -- Constraints
+    CONSTRAINT chk_position_side CHECK (side IN ('long', 'short')),
+    CONSTRAINT chk_position_status CHECK (status IN ('pending', 'open', 'closed', 'cancelled')),
+    CONSTRAINT chk_position_quantity CHECK (quantity >= 0)
 );
+
+-- ============================================================================
+-- ⛔ FORBIDDEN COLUMNS - These must NOT exist in positions table:
+--    alpaca_order_id   -- WRONG: Use orders table
+--    alpaca_status     -- WRONG: Use orders table
+-- ============================================================================
 
 CREATE INDEX idx_positions_cycle ON positions(cycle_id);
 CREATE INDEX idx_positions_security ON positions(security_id);
-CREATE INDEX idx_positions_status ON positions(status) WHERE status = 'open';
+CREATE INDEX idx_positions_status ON positions(status);
+CREATE INDEX idx_positions_open ON positions(status) WHERE status = 'open';
 
-COMMENT ON TABLE positions IS 'Trading positions - uses security_id FK';
-```
-
-### 4.3 Orders
-
-```sql
-CREATE TABLE orders (
-    order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    position_id UUID REFERENCES positions(position_id),
-    security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    side VARCHAR(10) NOT NULL,
-    order_type VARCHAR(20) NOT NULL,
-    quantity INTEGER NOT NULL,
-    limit_price DECIMAL(12, 4),
-    stop_price DECIMAL(12, 4),
-    filled_avg_price DECIMAL(12, 4),
-    status VARCHAR(50) NOT NULL,
-    filled_qty INTEGER DEFAULT 0,
-    alpaca_order_id VARCHAR(100) UNIQUE,
-    submitted_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    filled_at TIMESTAMP WITH TIME ZONE,
-    cancelled_at TIMESTAMP WITH TIME ZONE,
-    metadata JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    CONSTRAINT chk_order_quantity CHECK (quantity > 0),
-    CONSTRAINT chk_order_side CHECK (side IN ('buy', 'sell'))
-);
-
-CREATE INDEX idx_orders_position ON orders(position_id);
-CREATE INDEX idx_orders_security ON orders(security_id);
-CREATE INDEX idx_orders_status ON orders(status);
-CREATE INDEX idx_orders_alpaca ON orders(alpaca_order_id);
-
-COMMENT ON TABLE orders IS 'Order execution history - uses security_id FK';
+COMMENT ON TABLE positions IS 'Actual holdings only - order data is in the orders table';
 ```
 
 ### 4.4 Scan Results
@@ -835,6 +965,9 @@ COMMENT ON FUNCTION can_auto_fix IS 'Check rate limits before auto-fixing';
 
 - **architecture.md** - System architecture including Doctor Claude
 - **functional-specification.md** - Service APIs and operations
+- **operations.md** - Core patterns, state machines, data flows
+- **ORDERS-POSITIONS-IMPLEMENTATION.md** - Orders vs positions implementation guide
+- **ARCHITECTURE-RULES.md** - Mandatory rules for Claude Code
 - **DOCTOR-CLAUDE-DESIGN.md** - Doctor Claude detailed design
 
 ---

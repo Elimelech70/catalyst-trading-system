@@ -283,12 +283,27 @@ Doctor Claude is an active monitoring system where Claude Code watches the trade
 | Check | Description | Severity | Auto-Fixable |
 |-------|-------------|----------|--------------|
 | Pipeline Status | Current cycle state | INFO | N/A |
-| Stuck Orders | Orders pending > 5 min | WARNING | No |
+| Stuck Orders | Positions with pending alpaca_status > 5 min | WARNING | No |
 | Phantom Positions | DB position not in Alpaca | CRITICAL | Yes |
 | Orphan Positions | Alpaca position not in DB | CRITICAL | No |
 | Qty Mismatch | DB qty ≠ Alpaca qty | WARNING | Maybe |
-| Order Status Mismatch | DB status ≠ Alpaca status | WARNING | Yes |
+| Order Status Mismatch | DB alpaca_status ≠ Alpaca status | WARNING | Yes |
 | Stale Cycle | No activity > 30 min | WARNING | No |
+
+### 3.5 Schema Adaptation (Deployed)
+
+The original design referenced a separate `orders` table. The actual deployment uses the `positions` table with order-tracking columns:
+
+```sql
+-- Positions table includes order tracking columns:
+positions.alpaca_order_id    -- Links to Alpaca order
+positions.alpaca_status      -- Order status from Alpaca
+```
+
+This means:
+- `check_stuck_orders()` uses `positions.alpaca_status`
+- `check_order_sync()` uses `positions.alpaca_order_id`  
+- `v_trade_pipeline_status` uses `positions.alpaca_status` for order counts
 
 ### 3.5 Safety Boundaries
 
@@ -348,27 +363,60 @@ catalyst:news_catalyst - High-strength catalyst detected
 
 **Normalization Level**: 3NF (Third Normal Form)  
 **Key Principle**: Security_id FK everywhere, NO symbol VARCHAR duplication  
-**Query Strategy**: Always JOIN to get human-readable data
+**Query Strategy**: Always JOIN to get human-readable data  
+**Critical Rule**: Orders and Positions are SEPARATE entities (see operations.md)
 
-### 5.2 Core Tables
+### 5.2 Core Entity Relationships
 
-| Table | Type | Purpose |
-|-------|------|---------|
-| `securities` | Dimension | Master security data |
-| `sectors` | Dimension | GICS sectors |
-| `trading_cycles` | Operations | Daily workflows |
-| `positions` | Operations | Trading positions |
-| `orders` | Operations | Order execution |
-| `scan_results` | Operations | Market scan candidates |
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  SCAN_RESULTS   │     │     ORDERS      │     │   POSITIONS     │
+│                 │     │                 │     │                 │
+│  "What to buy"  │────▶│  "Instructions  │────▶│  "What I own"   │
+│                 │     │   to broker"    │     │                 │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+     Candidates              Requests              Holdings
+                                │
+                                │ 1:N (One position has MANY orders)
+                                ▼
+                    Entry, Stop Loss, Take Profit, Scale orders
+```
 
-### 5.3 Doctor Claude Tables (NEW in v7.0)
+### 5.3 Core Tables
+
+| Table | Type | Purpose | Key Relationships |
+|-------|------|---------|-------------------|
+| `securities` | Dimension | Master security data | Referenced by all |
+| `sectors` | Dimension | GICS sectors | → securities |
+| `trading_cycles` | Operations | Daily workflows | → positions, orders |
+| `orders` | Operations | **All orders to Alpaca** | → positions (N:1) |
+| `positions` | Operations | Actual holdings | ← orders (1:N) |
+| `scan_results` | Operations | Market scan candidates | → securities |
+
+### 5.4 Orders vs Positions (CRITICAL)
+
+| Entity | What It Stores | Example |
+|--------|----------------|---------|
+| **Order** | Instruction to broker | "Buy 100 AAPL at $150" |
+| **Position** | Actual shares held | "Long 100 AAPL @ $149.95" |
+
+**One position can have MANY orders:**
+- Entry order (creates position when filled)
+- Stop loss order (protection)
+- Take profit order (protection)
+- Scale-in orders (add to position)
+- Scale-out orders (partial exit)
+
+See **operations.md** for complete state machines and data flows.
+
+### 5.5 Doctor Claude Tables
 
 | Table | Purpose |
 |-------|---------|
 | `claude_activity_log` | Audit trail of observations, decisions, actions |
 | `doctor_claude_rules` | Auto-fix rules and escalation configuration |
 
-### 5.4 Doctor Claude Views (NEW in v7.0)
+### 5.6 Doctor Claude Views
 
 | View | Purpose |
 |------|---------|
@@ -509,8 +557,11 @@ Dependencies:
 
 ## Related Documents
 
-- **database-schema.md** - Full database schema including Doctor Claude tables
+- **database-schema.md** - Full database schema including orders table
 - **functional-specification.md** - Service APIs and Doctor Claude operational specs
+- **operations.md** - Core patterns, state machines, data flows
+- **ORDERS-POSITIONS-IMPLEMENTATION.md** - Orders vs positions implementation guide
+- **ARCHITECTURE-RULES.md** - Mandatory rules for Claude Code
 - **DOCTOR-CLAUDE-DESIGN.md** - Detailed Doctor Claude design
 - **DOCTOR-CLAUDE-IMPLEMENTATION.md** - Deployment guide
 
