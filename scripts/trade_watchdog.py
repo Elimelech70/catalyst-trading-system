@@ -2,11 +2,16 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: trade_watchdog.py
-Version: 1.0.0
+Version: 1.1.0
 Last Updated: 2025-12-27
 Purpose: Real-time trade lifecycle monitoring for Doctor Claude
 
 REVISION HISTORY:
+v1.1.0 (2025-12-27) - Updated to use orders table
+- Queries orders table instead of positions.alpaca_* columns
+- Proper order lifecycle tracking
+- Supports bracket order legs
+
 v1.0.0 (2025-12-27) - Initial implementation
 - Pipeline status check from v_trade_pipeline_status view
 - Stuck order detection
@@ -273,19 +278,20 @@ class TradeWatchdog:
         """Find orders that have been pending too long"""
         stuck = await self.db.fetch(f"""
             SELECT
-                p.position_id,
-                p.alpaca_order_id,
+                o.order_id,
+                o.position_id,
+                o.alpaca_order_id,
                 s.symbol,
-                p.alpaca_status as status,
-                p.side,
-                'limit' as order_type,
-                p.quantity,
-                p.opened_at as submitted_at,
-                EXTRACT(EPOCH FROM (NOW() - p.opened_at))/60 as minutes_pending
-            FROM positions p
-            JOIN securities s ON p.security_id = s.security_id
-            WHERE p.alpaca_status IN ('submitted', 'pending_new', 'accepted', 'new')
-              AND p.opened_at < NOW() - INTERVAL '{STUCK_ORDER_MINUTES} minutes'
+                o.status,
+                o.side,
+                o.order_type,
+                o.quantity,
+                o.submitted_at,
+                EXTRACT(EPOCH FROM (NOW() - o.submitted_at))/60 as minutes_pending
+            FROM orders o
+            JOIN securities s ON o.security_id = s.security_id
+            WHERE o.status IN ('submitted', 'pending_new', 'accepted', 'new', 'created')
+              AND o.submitted_at < NOW() - INTERVAL '{STUCK_ORDER_MINUTES} minutes'
         """)
 
         issues = []
@@ -293,7 +299,8 @@ class TradeWatchdog:
             issues.append({
                 "type": "STUCK_ORDER",
                 "severity": "WARNING",
-                "position_id": str(row['position_id']),
+                "order_id": str(row['order_id']),
+                "position_id": str(row['position_id']) if row['position_id'] else None,
                 "alpaca_order_id": row['alpaca_order_id'],
                 "symbol": row['symbol'],
                 "side": row['side'],
@@ -301,7 +308,7 @@ class TradeWatchdog:
                 "quantity": row['quantity'],
                 "minutes_pending": round(float(row['minutes_pending']), 1),
                 "message": f"Order {row['symbol']} {row['side']} {row['quantity']} pending for {round(float(row['minutes_pending']))} minutes",
-                "fix": None  # Requires manual review - may be market conditions
+                "fix": f"UPDATE orders SET status = 'expired', updated_at = NOW() WHERE order_id = {row['order_id']}"
             })
 
         return issues
@@ -411,29 +418,31 @@ class TradeWatchdog:
         if not self.alpaca:
             return []
 
-        # Get recent non-terminal positions from DB (using positions table)
-        db_positions = await self.db.fetch("""
+        # Get recent non-terminal orders from orders table
+        db_orders = await self.db.fetch("""
             SELECT
-                p.position_id,
-                p.alpaca_order_id,
-                p.alpaca_status as db_status,
-                p.entry_price as db_filled_price,
+                o.order_id,
+                o.position_id,
+                o.alpaca_order_id,
+                o.status as db_status,
+                o.filled_avg_price as db_filled_price,
+                o.filled_qty as db_filled_qty,
                 s.symbol,
-                p.side,
-                p.quantity
-            FROM positions p
-            JOIN securities s ON p.security_id = s.security_id
-            WHERE p.alpaca_order_id IS NOT NULL
-              AND p.alpaca_status NOT IN ('filled', 'cancelled', 'rejected', 'expired')
-              AND p.opened_at > NOW() - INTERVAL '24 hours'
+                o.side,
+                o.quantity
+            FROM orders o
+            JOIN securities s ON o.security_id = s.security_id
+            WHERE o.alpaca_order_id IS NOT NULL
+              AND o.status NOT IN ('filled', 'cancelled', 'rejected', 'expired')
+              AND o.submitted_at > NOW() - INTERVAL '24 hours'
         """)
 
-        if not db_positions:
+        if not db_orders:
             return []
 
         issues = []
 
-        for row in db_positions:
+        for row in db_orders:
             try:
                 alpaca_order = self.alpaca.get_order_by_id(row['alpaca_order_id'])
                 alpaca_status = alpaca_order.status.value.lower() if hasattr(alpaca_order.status, 'value') else str(alpaca_order.status).lower()
@@ -442,20 +451,24 @@ class TradeWatchdog:
 
                 # Status mismatch
                 if alpaca_status != row['db_status']:
-                    fix_parts = [f"UPDATE positions SET alpaca_status = '{alpaca_status}'"]
+                    fix_parts = [f"status = '{alpaca_status}'"]
 
                     # If filled, also update fill details
-                    if alpaca_status == 'filled' and alpaca_filled_price:
-                        fix_parts.append(f"entry_price = {alpaca_filled_price}")
+                    if alpaca_status == 'filled':
+                        fix_parts.append(f"filled_qty = {alpaca_filled_qty}")
+                        if alpaca_filled_price:
+                            fix_parts.append(f"filled_avg_price = {alpaca_filled_price}")
+                        fix_parts.append("filled_at = NOW()")
 
                     fix_parts.append("updated_at = NOW()")
-                    fix_sql = ", ".join(fix_parts[1:])
-                    fix_sql = f"UPDATE positions SET alpaca_status = '{alpaca_status}', {fix_sql} WHERE position_id = {row['position_id']}"
+                    fix_sql = ", ".join(fix_parts)
+                    fix_sql = f"UPDATE orders SET {fix_sql} WHERE order_id = {row['order_id']}"
 
                     issues.append({
                         "type": "ORDER_STATUS_MISMATCH",
                         "severity": "WARNING",
-                        "position_id": str(row['position_id']),
+                        "order_id": str(row['order_id']),
+                        "position_id": str(row['position_id']) if row['position_id'] else None,
                         "alpaca_order_id": row['alpaca_order_id'],
                         "symbol": row['symbol'],
                         "side": row['side'],
@@ -463,7 +476,7 @@ class TradeWatchdog:
                         "alpaca_status": alpaca_status,
                         "alpaca_filled_qty": alpaca_filled_qty,
                         "alpaca_filled_price": alpaca_filled_price,
-                        "message": f"Position {row['symbol']} status: DB={row['db_status']}, Alpaca={alpaca_status}",
+                        "message": f"Order {row['symbol']} status: DB={row['db_status']}, Alpaca={alpaca_status}",
                         "fix": fix_sql
                     })
 
@@ -474,18 +487,20 @@ class TradeWatchdog:
                     issues.append({
                         "type": "ORDER_NOT_FOUND",
                         "severity": "WARNING",
-                        "position_id": str(row['position_id']),
+                        "order_id": str(row['order_id']),
+                        "position_id": str(row['position_id']) if row['position_id'] else None,
                         "alpaca_order_id": row['alpaca_order_id'],
                         "symbol": row['symbol'],
                         "db_status": row['db_status'],
                         "message": f"Order {row['alpaca_order_id']} not found in Alpaca - may be expired",
-                        "fix": f"UPDATE positions SET alpaca_status = 'expired', updated_at = NOW() WHERE position_id = {row['position_id']}"
+                        "fix": f"UPDATE orders SET status = 'expired', updated_at = NOW() WHERE order_id = {row['order_id']}"
                     })
                 else:
                     issues.append({
                         "type": "ORDER_FETCH_ERROR",
                         "severity": "WARNING",
-                        "position_id": str(row['position_id']),
+                        "order_id": str(row['order_id']),
+                        "position_id": str(row['position_id']) if row['position_id'] else None,
                         "alpaca_order_id": row['alpaca_order_id'],
                         "symbol": row['symbol'],
                         "message": f"Could not fetch Alpaca order: {error_str}",
