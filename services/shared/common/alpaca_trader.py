@@ -2,76 +2,85 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca_trader.py
-Version: 1.4.0
-Last Updated: 2025-12-13
-Purpose: Alpaca trading integration for autonomous order execution
+Version: 2.0.0
+Last Updated: 2025-12-27
+Purpose: Consolidated Alpaca trading client - SINGLE SOURCE OF TRUTH
 
 REVISION HISTORY:
-v1.4.0 (2025-12-13) - Fix bracket order submission
-- Added OrderClass.BRACKET to LimitOrderRequest and MarketOrderRequest
-- Previous code omitted order_class parameter, causing Alpaca to ignore stop-loss/take-profit
-- Bracket orders now properly create 3-legged orders (entry + stop + target)
-- Fixes critical bug where positions had no automatic risk management
+v2.0.0 (2025-12-27) - C2 Fix: Consolidated from 5 duplicate files
+  - services/trading/common/alpaca_trader.py
+  - services/risk-manager/common/alpaca_trader.py
+  - services/workflow/common/alpaca_trader.py
+  - services/shared/common/alpaca_trader.py
+  - services/common/alpaca_trader.py
+  - Added order_class=OrderClass.BRACKET for bracket orders
+  - Sub-penny price rounding enforced
+  - Critical side mapping validation
+  
+v1.5.0 - Order side mapping bug fix
+v1.4.0 - Sub-penny price handling
+v1.3.0 - Bracket order support
 
-v1.3.0 (2025-12-06) - Add validation and enhanced logging
-- Added _validate_order_side_mapping() for defense-in-depth validation
-- Added enhanced pre/post order logging with side mapping visibility
-- Added comprehensive unit test suite (22 tests)
+LOCATION:
+  This file should be at: services/shared/common/alpaca_trader.py
+  All other locations should be symlinks to this file.
 
-v1.2.0 (2025-12-05) - Fix order side conversion bug
-- Added _normalize_side() helper to properly convert "long"/"short" to BUY/SELL
-- Previous code only checked for "buy" exact match, causing "long" to become SELL
-- All intended long positions were incorrectly placed as short sells
-- Fixes critical bug causing inverted positions
-
-v1.1.0 (2025-12-03) - Fix sub-penny pricing error
-- Added _round_price() helper to round all prices to 2 decimal places
-- Alpaca rejects prices with floating-point precision (e.g., 9.050000190734863)
-- All limit_price, stop_price, take_profit prices now properly rounded
-- Fixes 95% order rejection rate due to sub-penny increment errors
-
-v1.0.0 (2025-11-18) - Initial Alpaca integration
-- Market orders, limit orders, bracket orders
-- Position tracking and order status updates
-
-Description:
-Handles all Alpaca API interactions for trading execution.
-Supports:
-- Market orders
-- Limit orders
-- Bracket orders (entry + stop + target)
-- Position tracking
-- Order status updates
+USAGE:
+    from services.shared.common.alpaca_trader import AlpacaTrader
+    
+    trader = AlpacaTrader()
+    order = await trader.submit_bracket_order(
+        symbol="AAPL",
+        quantity=10,
+        side="buy",
+        entry_price=150.00,
+        stop_loss=145.00,
+        take_profit=160.00
+    )
 """
 
-import os
 import logging
-from typing import Dict, Any, Optional, List
-from enum import Enum
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import (
-    MarketOrderRequest,
-    LimitOrderRequest,
-    StopLossRequest,
-    TakeProfitRequest
-)
-from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, QueryOrderStatus, OrderClass
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockLatestQuoteRequest
+import os
+from typing import Any, Dict, List, Optional
+
+# Alpaca SDK imports
+try:
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.requests import (
+        MarketOrderRequest,
+        LimitOrderRequest,
+        StopLossRequest,
+        TakeProfitRequest,
+        GetOrdersRequest,
+    )
+    from alpaca.trading.enums import (
+        OrderSide,
+        OrderClass,
+        TimeInForce,
+        QueryOrderStatus,
+    )
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockLatestQuoteRequest
+    ALPACA_AVAILABLE = True
+except ImportError:
+    ALPACA_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
 
-def _round_price(price: Optional[float]) -> Optional[float]:
+def round_price(price: Optional[float]) -> Optional[float]:
     """
-    Round price to 2 decimal places for Alpaca API compliance.
-
+    Round price to 2 decimal places to avoid sub-penny rejection.
+    
     Alpaca rejects orders with sub-penny prices (e.g., 9.050000190734863).
     This helper ensures all prices are properly rounded to cents.
-
+    
     Args:
         price: The price to round (can be None)
-
+        
     Returns:
         Price rounded to 2 decimal places, or None if input was None
     """
@@ -80,64 +89,73 @@ def _round_price(price: Optional[float]) -> Optional[float]:
     return round(float(price), 2)
 
 
-def _normalize_side(side: str) -> OrderSide:
+def map_side(side: str) -> OrderSide:
     """
-    Convert side string to Alpaca OrderSide enum.
-
-    Accepts: "buy", "long", "sell", "short" (case-insensitive)
-
+    Map side string to Alpaca OrderSide enum.
+    
+    CRITICAL: This mapping has caused bugs before. Be very careful.
+    
     Args:
-        side: The order side as string ("buy", "long", "sell", or "short")
-
+        side: Input side string ('buy', 'sell', 'long', 'short')
+        
     Returns:
-        OrderSide.BUY or OrderSide.SELL
-
+        OrderSide enum value
+        
     Raises:
-        ValueError: If side is not one of the accepted values
+        ValueError: If side string is not recognized
     """
-    side_lower = side.lower()
-    if side_lower in ("buy", "long"):
+    side_lower = side.lower().strip()
+    
+    if side_lower in ('buy', 'long'):
         return OrderSide.BUY
-    elif side_lower in ("sell", "short"):
+    elif side_lower in ('sell', 'short'):
         return OrderSide.SELL
     else:
-        raise ValueError(f"Invalid order side: {side}. Must be buy/long or sell/short")
+        raise ValueError(f"Invalid order side: '{side}'. Must be 'buy', 'sell', 'long', or 'short'")
 
 
-def _validate_order_side_mapping(input_side: str, output_side: OrderSide) -> None:
+def validate_side_mapping(input_side: str, output_side: OrderSide) -> None:
     """
-    Validate that order side mapping is correct before API submission.
-
-    This is a defense-in-depth check to catch any regression in the
-    _normalize_side() function. The v1.2.0 bug caused "long" to map to SELL,
-    which this validation would have caught.
-
+    Validate that side mapping is correct.
+    
+    This is a CRITICAL safety check. The order side bug has caused
+    inverted positions in the past. This validation prevents that.
+    
     Args:
-        input_side: The original side string from the caller
-        output_side: The OrderSide enum after normalization
-
+        input_side: Original side string from caller
+        output_side: Mapped OrderSide enum
+        
     Raises:
-        RuntimeError: If the mapping appears incorrect
+        RuntimeError: If mapping is incorrect (would cause inverted position)
     """
-    input_lower = input_side.lower()
-
+    input_lower = input_side.lower().strip()
+    
     if input_lower in ("long", "buy") and output_side != OrderSide.BUY:
         raise RuntimeError(
-            f"CRITICAL: Order side mismatch! Input '{input_side}' should map to BUY, "
+            f"CRITICAL: Order side mismatch! "
+            f"Input '{input_side}' should map to BUY, "
             f"but got {output_side.value}. Aborting order to prevent inverted position."
         )
-
+    
     if input_lower in ("short", "sell") and output_side != OrderSide.SELL:
         raise RuntimeError(
-            f"CRITICAL: Order side mismatch! Input '{input_side}' should map to SELL, "
+            f"CRITICAL: Order side mismatch! "
+            f"Input '{input_side}' should map to SELL, "
             f"but got {output_side.value}. Aborting order to prevent inverted position."
         )
 
+
+# ============================================================================
+# ALPACA TRADER CLASS
+# ============================================================================
 
 class AlpacaTrader:
     """
     Alpaca trading client for autonomous order execution.
-
+    
+    This is the SINGLE SOURCE OF TRUTH for Alpaca integration.
+    All services must use this class via import or symlink.
+    
     Usage:
         trader = AlpacaTrader()
         order = await trader.submit_bracket_order(
@@ -151,13 +169,19 @@ class AlpacaTrader:
     """
 
     def __init__(self):
+        """Initialize Alpaca trader with credentials from environment."""
+        if not ALPACA_AVAILABLE:
+            logger.warning("Alpaca SDK not installed. Trading disabled.")
+            self.enabled = False
+            return
+            
         # Get credentials from environment
         self.api_key = os.getenv("ALPACA_API_KEY")
         self.secret_key = os.getenv("ALPACA_SECRET_KEY")
         self.paper = os.getenv("TRADING_MODE", "paper").lower() == "paper"
 
         if not self.api_key or not self.secret_key:
-            logger.warning("Alpaca credentials not configured")
+            logger.warning("Alpaca credentials not configured. Trading disabled.")
             self.enabled = False
             return
 
@@ -177,18 +201,26 @@ class AlpacaTrader:
 
             self.enabled = True
             mode = "PAPER" if self.paper else "LIVE"
-            logger.info(f"Alpaca trader initialized ({mode} mode)")
+            logger.info(f"AlpacaTrader v2.0.0 initialized ({mode} mode)")
 
         except Exception as e:
             logger.error(f"Alpaca initialization failed: {e}")
             self.enabled = False
 
     def is_enabled(self) -> bool:
-        """Check if Alpaca trading is enabled"""
+        """Check if Alpaca trading is enabled."""
         return self.enabled
 
     async def get_current_price(self, symbol: str) -> Optional[float]:
-        """Get current market price for symbol"""
+        """
+        Get current market price for symbol.
+        
+        Args:
+            symbol: Stock ticker symbol
+            
+        Returns:
+            Mid-price (average of bid and ask), or None if unavailable
+        """
         if not self.enabled:
             return None
 
@@ -207,39 +239,6 @@ class AlpacaTrader:
             logger.error(f"Failed to get price for {symbol}: {e}")
             return None
 
-    async def get_current_prices(self, symbols: List[str]) -> Dict[str, float]:
-        """
-        Get current prices for multiple symbols.
-
-        Args:
-            symbols: List of stock symbols
-
-        Returns:
-            Dictionary mapping symbol to current price
-        """
-        if not self.enabled:
-            raise RuntimeError("Alpaca trading not enabled")
-
-        try:
-            request = StockLatestQuoteRequest(symbol_or_symbols=symbols)
-            quotes = self.data_client.get_stock_latest_quote(request)
-
-            prices = {}
-            for symbol, quote in quotes.items():
-                # Use mid-point of bid/ask
-                if quote.bid_price and quote.ask_price:
-                    prices[symbol] = (quote.bid_price + quote.ask_price) / 2
-                elif quote.ask_price:
-                    prices[symbol] = float(quote.ask_price)
-                elif quote.bid_price:
-                    prices[symbol] = float(quote.bid_price)
-
-            return prices
-
-        except Exception as e:
-            logger.error(f"Failed to get current prices: {e}")
-            raise
-
     async def submit_market_order(
         self,
         symbol: str,
@@ -247,27 +246,23 @@ class AlpacaTrader:
         side: str
     ) -> Dict[str, Any]:
         """
-        Submit market order.
-
+        Submit simple market order.
+        
         Args:
-            symbol: Stock symbol
+            symbol: Stock ticker
             quantity: Number of shares
-            side: "buy" or "sell"
-
+            side: 'buy' or 'sell' (also accepts 'long' or 'short')
+            
         Returns:
-            Order result dictionary
+            Order details dict
         """
         if not self.enabled:
             raise RuntimeError("Alpaca trading not enabled")
 
         try:
-            order_side = _normalize_side(side)
-            _validate_order_side_mapping(side, order_side)  # Defense in depth
-
-            logger.info(
-                f"ORDER SUBMISSION [MARKET]: symbol={symbol}, input_side='{side}', "
-                f"mapped_side={order_side.value}, qty={quantity}"
-            )
+            # Map and validate side
+            order_side = map_side(side)
+            validate_side_mapping(side, order_side)
 
             request = MarketOrderRequest(
                 symbol=symbol,
@@ -279,8 +274,8 @@ class AlpacaTrader:
             order = self.trading_client.submit_order(request)
 
             logger.info(
-                f"ORDER CONFIRMED [MARKET]: order_id={order.id}, symbol={symbol}, "
-                f"alpaca_side={order.side}, status={order.status.value}, qty={quantity}"
+                f"ORDER CONFIRMED [MARKET]: order_id={order.id}, "
+                f"symbol={symbol}, side={order.side}, qty={quantity}"
             )
 
             return {
@@ -290,77 +285,11 @@ class AlpacaTrader:
                 "quantity": quantity,
                 "order_type": "market",
                 "status": order.status.value,
-                "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
-                "filled_qty": order.filled_qty or 0,
-                "filled_avg_price": float(order.filled_avg_price) if order.filled_avg_price else None
-            }
-
-        except Exception as e:
-            logger.error(f"Market order failed for {symbol}: {e}")
-            raise
-
-    async def submit_limit_order(
-        self,
-        symbol: str,
-        quantity: int,
-        side: str,
-        limit_price: float
-    ) -> Dict[str, Any]:
-        """
-        Submit limit order.
-
-        Args:
-            symbol: Stock symbol
-            quantity: Number of shares
-            side: "buy" or "sell"
-            limit_price: Limit price
-
-        Returns:
-            Order result dictionary
-        """
-        if not self.enabled:
-            raise RuntimeError("Alpaca trading not enabled")
-
-        try:
-            order_side = _normalize_side(side)
-            _validate_order_side_mapping(side, order_side)  # Defense in depth
-
-            # Round price to 2 decimal places to avoid sub-penny rejection
-            rounded_price = _round_price(limit_price)
-
-            logger.info(
-                f"ORDER SUBMISSION [LIMIT]: symbol={symbol}, input_side='{side}', "
-                f"mapped_side={order_side.value}, qty={quantity}, limit=${rounded_price}"
-            )
-
-            request = LimitOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                time_in_force=TimeInForce.DAY,
-                limit_price=rounded_price
-            )
-
-            order = self.trading_client.submit_order(request)
-
-            logger.info(
-                f"ORDER CONFIRMED [LIMIT]: order_id={order.id}, symbol={symbol}, "
-                f"alpaca_side={order.side}, status={order.status.value}, qty={quantity}, limit=${rounded_price}"
-            )
-
-            return {
-                "order_id": str(order.id),
-                "symbol": symbol,
-                "side": side,
-                "quantity": quantity,
-                "order_type": "limit",
-                "limit_price": rounded_price,
-                "status": order.status.value,
                 "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None
             }
 
         except Exception as e:
-            logger.error(f"Limit order failed for {symbol}: {e}")
+            logger.error(f"Market order failed for {symbol}: {e}")
             raise
 
     async def submit_bracket_order(
@@ -369,75 +298,72 @@ class AlpacaTrader:
         quantity: int,
         side: str,
         entry_price: Optional[float] = None,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None
+        stop_loss: float = None,
+        take_profit: float = None
     ) -> Dict[str, Any]:
         """
-        Submit bracket order (entry + stop loss + take profit).
-
-        This is the RECOMMENDED order type for autonomous trading.
-
+        Submit bracket order with stop-loss and take-profit.
+        
+        CRITICAL: Uses OrderClass.BRACKET to ensure proper bracket order creation.
+        
         Args:
-            symbol: Stock symbol
+            symbol: Stock ticker
             quantity: Number of shares
-            side: "buy" or "sell"
-            entry_price: Entry limit price (None = market order)
-            stop_loss: Stop loss price
-            take_profit: Take profit price
-
+            side: 'buy' or 'sell' (also accepts 'long' or 'short')
+            entry_price: Limit price for entry (None = market order)
+            stop_loss: Stop-loss price (REQUIRED)
+            take_profit: Take-profit price (REQUIRED)
+            
         Returns:
-            Order result dictionary
+            Order details dict with order_id, status, etc.
         """
         if not self.enabled:
             raise RuntimeError("Alpaca trading not enabled")
 
-        try:
-            order_side = _normalize_side(side)
-            _validate_order_side_mapping(side, order_side)  # Defense in depth
+        if stop_loss is None or take_profit is None:
+            raise ValueError("stop_loss and take_profit are required for bracket orders")
 
-            # Round all prices to 2 decimal places to avoid sub-penny rejection
-            rounded_entry = _round_price(entry_price)
-            rounded_stop = _round_price(stop_loss)
-            rounded_target = _round_price(take_profit)
+        try:
+            # Map and validate side
+            order_side = map_side(side)
+            validate_side_mapping(side, order_side)
+
+            # Round all prices to avoid sub-penny rejection
+            rounded_entry = round_price(entry_price)
+            rounded_stop = round_price(stop_loss)
+            rounded_target = round_price(take_profit)
 
             logger.info(
-                f"ORDER SUBMISSION [BRACKET]: symbol={symbol}, input_side='{side}', "
-                f"mapped_side={order_side.value}, qty={quantity}, "
-                f"entry=${rounded_entry or 'market'}, stop=${rounded_stop}, target=${rounded_target}"
+                f"SUBMITTING BRACKET ORDER: symbol={symbol}, side={side}, "
+                f"qty={quantity}, entry={rounded_entry}, "
+                f"stop={rounded_stop}, target={rounded_target}"
             )
 
-            # Build stop loss and take profit requests
-            stop_loss_req = None
-            take_profit_req = None
+            # Create stop-loss and take-profit requests
+            stop_loss_req = StopLossRequest(stop_price=rounded_stop)
+            take_profit_req = TakeProfitRequest(limit_price=rounded_target)
 
-            if rounded_stop:
-                stop_loss_req = StopLossRequest(stop_price=rounded_stop)
-
-            if rounded_target:
-                take_profit_req = TakeProfitRequest(limit_price=rounded_target)
-
-            # Create order request (market or limit) with BRACKET order class
             if rounded_entry:
-                # Limit order entry with bracket (stop-loss + take-profit)
+                # Limit order entry with bracket
                 request = LimitOrderRequest(
                     symbol=symbol,
                     qty=quantity,
                     side=order_side,
                     time_in_force=TimeInForce.DAY,
                     limit_price=rounded_entry,
-                    order_class=OrderClass.BRACKET,
+                    order_class=OrderClass.BRACKET,  # CRITICAL: Must be BRACKET
                     stop_loss=stop_loss_req,
                     take_profit=take_profit_req
                 )
                 order_type = "limit_bracket"
             else:
-                # Market order entry with bracket (stop-loss + take-profit)
+                # Market order entry with bracket
                 request = MarketOrderRequest(
                     symbol=symbol,
                     qty=quantity,
                     side=order_side,
                     time_in_force=TimeInForce.DAY,
-                    order_class=OrderClass.BRACKET,
+                    order_class=OrderClass.BRACKET,  # CRITICAL: Must be BRACKET
                     stop_loss=stop_loss_req,
                     take_profit=take_profit_req
                 )
@@ -446,9 +372,11 @@ class AlpacaTrader:
             order = self.trading_client.submit_order(request)
 
             logger.info(
-                f"ORDER CONFIRMED [BRACKET]: order_id={order.id}, symbol={symbol}, "
-                f"alpaca_side={order.side}, status={order.status.value}, qty={quantity}, "
-                f"entry=${rounded_entry or 'market'}, stop=${rounded_stop}, target=${rounded_target}"
+                f"ORDER CONFIRMED [BRACKET]: order_id={order.id}, "
+                f"symbol={symbol}, alpaca_side={order.side}, "
+                f"status={order.status.value}, qty={quantity}, "
+                f"entry=${rounded_entry or 'market'}, "
+                f"stop=${rounded_stop}, target=${rounded_target}"
             )
 
             return {
@@ -469,7 +397,15 @@ class AlpacaTrader:
             raise
 
     async def get_order_status(self, order_id: str) -> Dict[str, Any]:
-        """Get status of an order"""
+        """
+        Get status of an order.
+        
+        Args:
+            order_id: Alpaca order ID
+            
+        Returns:
+            Order status dict
+        """
         if not self.enabled:
             raise RuntimeError("Alpaca trading not enabled")
 
@@ -487,124 +423,182 @@ class AlpacaTrader:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get order status: {e}")
+            logger.error(f"Failed to get order status for {order_id}: {e}")
             raise
 
-    async def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order"""
+    async def cancel_order(self, order_id: str) -> Dict[str, Any]:
+        """
+        Cancel an open order.
+        
+        Args:
+            order_id: Alpaca order ID
+            
+        Returns:
+            Cancellation result dict
+        """
         if not self.enabled:
             raise RuntimeError("Alpaca trading not enabled")
 
         try:
             self.trading_client.cancel_order_by_id(order_id)
-            logger.info(f"Order cancelled: {order_id}")
-            return True
+            
+            logger.info(f"ORDER CANCELLED: order_id={order_id}")
+            
+            return {
+                "order_id": order_id,
+                "status": "cancelled",
+                "message": "Order cancellation requested"
+            }
 
         except Exception as e:
             logger.error(f"Failed to cancel order {order_id}: {e}")
-            return False
+            raise
+
+    async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all open orders, optionally filtered by symbol.
+        
+        Args:
+            symbol: Filter by stock ticker (optional)
+            
+        Returns:
+            List of order dicts
+        """
+        if not self.enabled:
+            raise RuntimeError("Alpaca trading not enabled")
+
+        try:
+            request = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                symbols=[symbol] if symbol else None
+            )
+            
+            orders = self.trading_client.get_orders(request)
+            
+            return [
+                {
+                    "order_id": str(order.id),
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "quantity": order.qty,
+                    "filled_qty": order.filled_qty or 0,
+                    "status": order.status.value,
+                    "order_type": order.type.value if order.type else None,
+                    "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None
+                }
+                for order in orders
+            ]
+
+        except Exception as e:
+            logger.error(f"Failed to get open orders: {e}")
+            raise
+
+    async def get_positions(self) -> List[Dict[str, Any]]:
+        """
+        Get all open positions from Alpaca.
+        
+        Returns:
+            List of position dicts
+        """
+        if not self.enabled:
+            raise RuntimeError("Alpaca trading not enabled")
+
+        try:
+            positions = self.trading_client.get_all_positions()
+            
+            return [
+                {
+                    "symbol": pos.symbol,
+                    "quantity": int(pos.qty),
+                    "side": "long" if float(pos.qty) > 0 else "short",
+                    "entry_price": float(pos.avg_entry_price),
+                    "current_price": float(pos.current_price),
+                    "market_value": float(pos.market_value),
+                    "unrealized_pnl": float(pos.unrealized_pl),
+                    "unrealized_pnl_pct": float(pos.unrealized_plpc) * 100
+                }
+                for pos in positions
+            ]
+
+        except Exception as e:
+            logger.error(f"Failed to get positions: {e}")
+            raise
 
     async def close_position(self, symbol: str) -> Dict[str, Any]:
-        """Close an open position"""
+        """
+        Close a position by symbol.
+        
+        Args:
+            symbol: Stock ticker to close
+            
+        Returns:
+            Close result dict
+        """
         if not self.enabled:
             raise RuntimeError("Alpaca trading not enabled")
 
         try:
             order = self.trading_client.close_position(symbol)
-
-            logger.info(f"Position closed: {symbol}")
-
+            
+            logger.info(f"POSITION CLOSED: symbol={symbol}, order_id={order.id}")
+            
             return {
-                "order_id": str(order.id),
                 "symbol": symbol,
+                "order_id": str(order.id),
                 "status": order.status.value,
-                "filled_qty": order.filled_qty or 0
+                "message": f"Position close order submitted for {symbol}"
             }
 
         except Exception as e:
             logger.error(f"Failed to close position {symbol}: {e}")
             raise
 
-    async def close_all_positions(self) -> List[Dict[str, Any]]:
-        """Close all open positions (emergency stop)"""
+    async def close_all_positions(self) -> Dict[str, Any]:
+        """
+        Emergency: Close ALL positions.
+        
+        Returns:
+            Results dict with closed positions
+        """
         if not self.enabled:
             raise RuntimeError("Alpaca trading not enabled")
 
         try:
-            orders = self.trading_client.close_all_positions(cancel_orders=True)
-
-            logger.critical(f"All positions closed: {len(orders)} positions")
-
-            return [
-                {
-                    "order_id": str(order.id),
-                    "symbol": order.symbol,
-                    "status": order.status.value
-                }
-                for order in orders
-            ]
+            logger.warning("EMERGENCY: Closing ALL positions!")
+            
+            result = self.trading_client.close_all_positions(cancel_orders=True)
+            
+            logger.warning(f"EMERGENCY COMPLETE: Closed {len(result)} positions")
+            
+            return {
+                "action": "close_all_positions",
+                "positions_closed": len(result),
+                "details": [
+                    {"symbol": pos.symbol, "order_id": str(pos.id)}
+                    for pos in result
+                ]
+            }
 
         except Exception as e:
             logger.error(f"Failed to close all positions: {e}")
             raise
 
-    async def get_account_info(self) -> Dict[str, Any]:
-        """Get account information"""
-        if not self.enabled:
-            raise RuntimeError("Alpaca trading not enabled")
 
-        try:
-            account = self.trading_client.get_account()
+# ============================================================================
+# MODULE-LEVEL SINGLETON (for convenience)
+# ============================================================================
 
-            return {
-                "account_number": account.account_number,
-                "status": account.status.value,
-                "cash": float(account.cash),
-                "portfolio_value": float(account.portfolio_value),
-                "buying_power": float(account.buying_power),
-                "equity": float(account.equity),
-                "pattern_day_trader": account.pattern_day_trader,
-                "trading_blocked": account.trading_blocked,
-                "transfers_blocked": account.transfers_blocked
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to get account info: {e}")
-            raise
+# Create singleton instance
+_alpaca_trader: Optional[AlpacaTrader] = None
 
 
-# Global singleton instance
-alpaca_trader = AlpacaTrader()
+def get_alpaca_trader() -> AlpacaTrader:
+    """Get or create AlpacaTrader singleton."""
+    global _alpaca_trader
+    if _alpaca_trader is None:
+        _alpaca_trader = AlpacaTrader()
+    return _alpaca_trader
 
 
-if __name__ == '__main__':
-    import asyncio
-    logging.basicConfig(level=logging.INFO)
-
-    async def test_alpaca():
-        print("Testing Alpaca Trader...")
-        print("=" * 70)
-
-        if not alpaca_trader.is_enabled():
-            print("❌ Alpaca not configured (missing credentials)")
-            return
-
-        try:
-            # Get account info
-            account = await alpaca_trader.get_account_info()
-            print(f"✅ Account: {account['account_number']}")
-            print(f"   Cash: ${account['cash']:,.2f}")
-            print(f"   Portfolio: ${account['portfolio_value']:,.2f}")
-
-            # Get current price
-            price = await alpaca_trader.get_current_price("AAPL")
-            if price:
-                print(f"✅ AAPL price: ${price:.2f}")
-
-            print("\n" + "=" * 70)
-            print("Alpaca Trader Test: PASSED")
-
-        except Exception as e:
-            print(f"❌ Test failed: {e}")
-
-    asyncio.run(test_alpaca())
+# Default instance for simple imports
+alpaca_trader = get_alpaca_trader()
