@@ -1,45 +1,23 @@
 # Catalyst Trading System - Database Schema
 
-**Name of Application**: Catalyst Trading System  
-**Name of file**: database-schema.md  
-**Version**: 7.0.0  
-**Last Updated**: 2025-12-27  
-**Purpose**: Complete database schema for production trading + Doctor Claude monitoring
+**Name of Application:** Catalyst Trading System  
+**Name of file:** database-schema.md  
+**Version:** 8.0.0  
+**Last Updated:** 2025-12-28  
+**Purpose:** Complete database schema including consciousness framework
 
 ---
 
 ## REVISION HISTORY
 
-**v7.0.0 (2025-12-27)** - DOCTOR CLAUDE MONITORING TABLES
-- ✅ **NEW**: `claude_activity_log` table for audit trail
-- ✅ **NEW**: `doctor_claude_rules` table for auto-fix configuration  
-- ✅ **NEW**: `v_trade_pipeline_status` view for real-time monitoring
-- ✅ **NEW**: `v_claude_activity_summary` view for daily summaries
-- ✅ **NEW**: `v_recurring_issues` view for pattern learning
-- ✅ **NEW**: `v_recent_escalations` view
-- ✅ **NEW**: `v_failed_actions` view
-- ✅ **NEW**: `get_autofix_rule()` function
-- ✅ **NEW**: `can_auto_fix()` function
-
-**v6.0.0 (2025-10-25)** - 3NF NORMALIZED SCHEMA
-- 3NF normalization complete
-- security_id FK everywhere
-- Helper functions for lookups
-
----
-
-## Table of Contents
-
-1. [Schema Overview](#1-schema-overview)
-2. [Dimension Tables](#2-dimension-tables)
-3. [Fact Tables](#3-fact-tables)
-4. [Trading Operations Tables](#4-trading-operations-tables)
-5. [Doctor Claude Tables](#5-doctor-claude-tables)
-6. [Views](#6-views)
-7. [Doctor Claude Views](#7-doctor-claude-views)
-8. [Helper Functions](#8-helper-functions)
-9. [Doctor Claude Functions](#9-doctor-claude-functions)
-10. [Indexes](#10-indexes)
+- **v8.0.0 (2025-12-28)** - Consciousness Framework Schema
+  - Added catalyst_research database schema
+  - Claude consciousness tables (state, messages, observations, learnings, questions)
+  - Sync tracking between trading and research databases
+  - Three-database architecture documentation
+  
+- **v7.0.0 (2025-12-27)** - Orders ≠ Positions separation
+- **v6.0.0 (2025-12-14)** - 3NF normalization, helper functions
 
 ---
 
@@ -50,926 +28,902 @@
 ```yaml
 Normalization: 3NF (Third Normal Form)
 Key Principle: security_id FK everywhere, NO symbol VARCHAR duplication
-Query Strategy: Always JOIN to get human-readable data
-Monitoring: Doctor Claude tables for trade lifecycle tracking
+Orders Rule: Orders ≠ Positions (C1 critical fix)
+Consciousness: Separate research database for AI memory
+Public Release: Trading schema released, research schema private
 ```
 
-### 1.2 Table Categories
+### 1.2 Three-Database Architecture
 
-| Category | Tables | Purpose |
-|----------|--------|---------|
-| **Dimension** | securities, sectors, time_dimension | Master data |
-| **Fact** | trading_history, news_sentiment, technical_indicators | Time-series data |
-| **Operations** | trading_cycles, positions, orders, scan_results, risk_events | Trading workflow |
-| **Monitoring** | claude_activity_log, doctor_claude_rules | Doctor Claude |
+| Database | Purpose | Release Status |
+|----------|---------|----------------|
+| `catalyst_trading` / `catalyst_public` | US trading operations | ✅ PUBLIC |
+| `catalyst_intl` | HKEX trading operations | ❌ PRIVATE |
+| `catalyst_research` | Claude consciousness framework | ❌ NEVER PUBLIC |
 
 ### 1.3 Entity Relationship Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    DIMENSION TABLES                              │
-│  ┌───────────┐    ┌───────────┐    ┌────────────────┐          │
-│  │ securities│    │  sectors  │    │ time_dimension │          │
-│  │ (master)  │◄───│ (GICS)    │    │ (time entity)  │          │
-│  └─────┬─────┘    └───────────┘    └───────┬────────┘          │
-│        │                                    │                    │
-└────────┼────────────────────────────────────┼────────────────────┘
-         │                                    │
-         │  security_id FK                    │  time_id FK
-         │                                    │
-┌────────▼────────────────────────────────────▼────────────────────┐
-│                      FACT TABLES                                  │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐ │
-│  │ trading_history │  │ news_sentiment  │  │technical_indicators│ │
-│  └─────────────────┘  └─────────────────┘  └──────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         │  security_id FK
-         │
-┌────────▼─────────────────────────────────────────────────────────┐
-│                   OPERATIONS TABLES                               │
-│                                                                   │
-│  ┌───────────────┐                                               │
-│  │trading_cycles │ (One per day)                                 │
-│  └───────┬───────┘                                               │
-│          │                                                        │
-│          │ cycle_id FK                                           │
-│          │                                                        │
-│  ┌───────▼───────┐         ┌─────────────┐                      │
-│  │   POSITIONS   │◀────────│   ORDERS    │                      │
-│  │  (Holdings)   │   N:1   │(Instructions)│                     │
-│  └───────────────┘         └─────────────┘                      │
-│                                   │                              │
-│  ⚠️ CRITICAL RELATIONSHIP:        │                              │
-│  One Position = Many Orders       │ self-reference               │
-│  (entry, SL, TP, scale orders)    │ for bracket legs            │
-│                                   ▼                              │
-│                            parent_order_id                       │
-│                                                                   │
-│  ┌───────────────┐                                               │
-│  │ scan_results  │ (Candidates)                                  │
-│  └───────────────┘                                               │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         │  Monitored by
-         │
-┌────────▼─────────────────────────────────────────────────────────┐
-│                   DOCTOR CLAUDE TABLES                           │
-│  ┌───────────────────┐  ┌─────────────────────┐                 │
-│  │claude_activity_log│  │ doctor_claude_rules │                 │
-│  │ (audit trail)     │  │ (auto-fix config)   │                 │
-│  └───────────────────┘  └─────────────────────┘                 │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### 1.4 Orders vs Positions (CRITICAL DISTINCTION)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│   ORDERS ≠ POSITIONS                                            │
-│                                                                 │
-│   Order = Request sent to broker    Position = What you own     │
-│   ─────────────────────────────    ──────────────────────────  │
-│   "Buy 100 AAPL at $150"           "Long 100 AAPL @ $149.95"   │
-│                                                                 │
-│   One position can have MANY orders:                           │
-│                                                                 │
-│   POSITION: Long 100 AAPL                                       │
-│       │                                                         │
-│       ├── ORDER #1: BUY 100 @ $150 (entry) ......... filled    │
-│       ├── ORDER #2: SELL 100 @ $147 (stop loss) .... cancelled │
-│       └── ORDER #3: SELL 100 @ $155 (take profit) .. filled    │
-│                                                                 │
-│   See operations.md for complete lifecycle diagrams.            │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        TRADING DATABASE                                      │
+│                                                                              │
+│   ┌────────────┐     ┌────────────┐     ┌────────────┐                     │
+│   │ securities │     │ trading_   │     │ scan_      │                     │
+│   │            │     │ sessions   │     │ results    │                     │
+│   └─────┬──────┘     └─────┬──────┘     └────────────┘                     │
+│         │                  │                                                 │
+│         │ security_id      │ session_id                                     │
+│         ▼                  ▼                                                 │
+│   ┌────────────┐     ┌────────────┐                                        │
+│   │ positions  │◄────│  orders    │  ⚠️ Orders ≠ Positions                 │
+│   │ (holdings) │ 1:N │(instructions)│  One position = many orders           │
+│   └────────────┘     └────────────┘                                        │
+│         │                                                                    │
+│         ▼                                                                    │
+│   ┌────────────┐     ┌────────────┐                                        │
+│   │ decisions  │     │ claude_    │  ◄── JSON staging for Claude Code      │
+│   │            │     │ outputs    │                                        │
+│   └────────────┘     └────────────┘                                        │
+│                            │                                                 │
+└────────────────────────────┼─────────────────────────────────────────────────┘
+                             │
+                             │ Sync (pull observations/learnings)
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        RESEARCH DATABASE                                     │
+│                        (Consciousness Framework)                             │
+│                                                                              │
+│   ┌────────────┐     ┌────────────┐     ┌────────────┐                     │
+│   │ claude_    │     │ claude_    │     │ claude_    │                     │
+│   │ state      │     │ messages   │     │ observations│                    │
+│   └────────────┘     └────────────┘     └────────────┘                     │
+│                                                                              │
+│   ┌────────────┐     ┌────────────┐     ┌────────────┐                     │
+│   │ claude_    │     │ claude_    │     │ sync_log   │                     │
+│   │ learnings  │     │ questions  │     │            │                     │
+│   └────────────┘     └────────────┘     └────────────┘                     │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Dimension Tables
+## 2. Trading Database Schema
 
-### 2.1 Securities
+### 2.1 Securities Table
 
 ```sql
 CREATE TABLE securities (
     security_id SERIAL PRIMARY KEY,
     symbol VARCHAR(20) NOT NULL UNIQUE,
-    name VARCHAR(255),
-    sector_id INTEGER REFERENCES sectors(sector_id),
-    exchange VARCHAR(20),
-    asset_type VARCHAR(20) DEFAULT 'stock',
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    name VARCHAR(200),
+    exchange VARCHAR(20) DEFAULT 'US',
+    sector VARCHAR(100),
+    industry VARCHAR(100),
+    market_cap DECIMAL(20, 2),
+    avg_volume BIGINT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_securities_symbol ON securities(symbol);
-CREATE INDEX idx_securities_sector ON securities(sector_id);
+CREATE INDEX idx_securities_active ON securities(is_active) WHERE is_active = TRUE;
 
-COMMENT ON TABLE securities IS 'Master security/stock reference - SINGLE SOURCE OF TRUTH for symbols';
+COMMENT ON TABLE securities IS 'Master table of tradeable instruments';
 ```
 
-### 2.2 Sectors
+### 2.2 Trading Sessions Table
 
 ```sql
-CREATE TABLE sectors (
-    sector_id SERIAL PRIMARY KEY,
-    sector_code VARCHAR(10) NOT NULL UNIQUE,
-    sector_name VARCHAR(100) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+CREATE TABLE trading_sessions (
+    session_id SERIAL PRIMARY KEY,
+    session_uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
+    session_date DATE NOT NULL,
+    mode VARCHAR(20) DEFAULT 'autonomous',
+    status VARCHAR(20) DEFAULT 'active',
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    ended_at TIMESTAMPTZ,
+    starting_capital DECIMAL(14,2),
+    ending_capital DECIMAL(14,2),
+    realized_pnl DECIMAL(14,2) DEFAULT 0,
+    total_trades INTEGER DEFAULT 0,
+    winning_trades INTEGER DEFAULT 0,
+    losing_trades INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-COMMENT ON TABLE sectors IS 'GICS sector classification';
+CREATE INDEX idx_sessions_date ON trading_sessions(session_date DESC);
+
+COMMENT ON TABLE trading_sessions IS 'Daily trading session tracking';
 ```
 
-### 2.3 Time Dimension
+### 2.3 Positions Table (Holdings Only)
 
 ```sql
-CREATE TABLE time_dimension (
-    time_id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMP WITH TIME ZONE NOT NULL UNIQUE,
-    date DATE NOT NULL,
-    time TIME NOT NULL,
-    hour INTEGER NOT NULL,
-    minute INTEGER NOT NULL,
-    day_of_week INTEGER NOT NULL,
-    is_market_hours BOOLEAN DEFAULT false,
-    market_phase VARCHAR(20)
-);
-
-CREATE INDEX idx_time_timestamp ON time_dimension(timestamp);
-CREATE INDEX idx_time_date ON time_dimension(date);
-
-COMMENT ON TABLE time_dimension IS 'Time as a dimension for fact tables';
-```
-
----
-
-## 3. Fact Tables
-
-### 3.1 Trading History
-
-```sql
-CREATE TABLE trading_history (
-    history_id BIGSERIAL PRIMARY KEY,
-    security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    time_id INTEGER NOT NULL REFERENCES time_dimension(time_id),
-    open DECIMAL(12, 4) NOT NULL,
-    high DECIMAL(12, 4) NOT NULL,
-    low DECIMAL(12, 4) NOT NULL,
-    close DECIMAL(12, 4) NOT NULL,
-    volume BIGINT NOT NULL,
-    vwap DECIMAL(12, 4),
-    trade_count INTEGER,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(security_id, time_id)
-);
-
-CREATE INDEX idx_history_security_time ON trading_history(security_id, time_id DESC);
-
-COMMENT ON TABLE trading_history IS 'OHLCV price bars - uses security_id FK';
-```
-
-### 3.2 News Sentiment
-
-```sql
-CREATE TABLE news_sentiment (
-    sentiment_id BIGSERIAL PRIMARY KEY,
-    security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    time_id INTEGER NOT NULL REFERENCES time_dimension(time_id),
-    headline TEXT NOT NULL,
-    source VARCHAR(100),
-    sentiment_score DECIMAL(5, 4),
-    magnitude DECIMAL(5, 4),
-    catalyst_type VARCHAR(50),
-    catalyst_strength INTEGER,
-    url TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX idx_news_security_time ON news_sentiment(security_id, time_id DESC);
-CREATE INDEX idx_news_catalyst ON news_sentiment(catalyst_type, catalyst_strength);
-
-COMMENT ON TABLE news_sentiment IS 'News events with sentiment - uses security_id FK';
-```
-
-### 3.3 Technical Indicators
-
-```sql
-CREATE TABLE technical_indicators (
-    indicator_id BIGSERIAL PRIMARY KEY,
-    security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    time_id INTEGER NOT NULL REFERENCES time_dimension(time_id),
-    indicator_type VARCHAR(50) NOT NULL,
-    value DECIMAL(20, 8) NOT NULL,
-    parameters JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(security_id, time_id, indicator_type)
-);
-
-CREATE INDEX idx_indicators_security_time ON technical_indicators(security_id, time_id DESC);
-
-COMMENT ON TABLE technical_indicators IS 'Technical analysis indicators - uses security_id FK';
-```
-
----
-
-## 4. Trading Operations Tables
-
-### 4.1 Trading Cycles
-
-```sql
-CREATE TABLE trading_cycles (
-    cycle_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    date DATE NOT NULL UNIQUE,
-    cycle_state VARCHAR(50) NOT NULL,
-    phase VARCHAR(50),
-    mode VARCHAR(20) NOT NULL DEFAULT 'supervised',
-    configuration JSONB,
-    started_at TIMESTAMP WITH TIME ZONE,
-    stopped_at TIMESTAMP WITH TIME ZONE,
-    daily_pnl DECIMAL(12, 2) DEFAULT 0.0,
-    daily_pnl_pct DECIMAL(8, 4) DEFAULT 0.0,
-    trades_executed INTEGER DEFAULT 0,
-    trades_won INTEGER DEFAULT 0,
-    trades_lost INTEGER DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX idx_cycles_date ON trading_cycles(date DESC);
-CREATE INDEX idx_cycles_state ON trading_cycles(cycle_state);
-
-COMMENT ON TABLE trading_cycles IS 'Daily trading workflow state tracking';
-```
-
-### 4.2 Orders (REQUIRED - All orders to Alpaca)
-
-```sql
--- ============================================================================
--- ORDERS TABLE - MANDATORY
--- Every order sent to Alpaca MUST have a row in this table
--- ============================================================================
-
-CREATE TABLE orders (
-    -- Primary Key
-    order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Foreign Keys
-    position_id UUID REFERENCES positions(position_id),  -- NULL until position created
-    security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    cycle_id UUID REFERENCES trading_cycles(cycle_id),
-    
-    -- Order Hierarchy (for bracket orders)
-    parent_order_id UUID REFERENCES orders(order_id),    -- Links bracket legs to parent
-    order_class VARCHAR(20),                             -- 'simple', 'bracket', 'oco', 'oto'
-    
-    -- Order Specification
-    side VARCHAR(10) NOT NULL,                           -- 'buy', 'sell'
-    order_type VARCHAR(20) NOT NULL,                     -- 'market', 'limit', 'stop', 'stop_limit'
-    time_in_force VARCHAR(10) DEFAULT 'day',             -- 'day', 'gtc', 'ioc', 'fok'
-    quantity INTEGER NOT NULL,
-    limit_price DECIMAL(12, 4),                          -- For limit and stop_limit orders
-    stop_price DECIMAL(12, 4),                           -- For stop and stop_limit orders
-    trail_percent DECIMAL(5, 2),                         -- For trailing stop orders
-    trail_price DECIMAL(12, 4),                          -- For trailing stop orders
-    
-    -- Alpaca Integration
-    alpaca_order_id VARCHAR(100) UNIQUE,                 -- Alpaca's order ID
-    alpaca_client_order_id VARCHAR(100),                 -- Our client order ID sent to Alpaca
-    
-    -- Order Status (see operations.md for state machine)
-    status VARCHAR(50) NOT NULL DEFAULT 'created',
-        -- Lifecycle: created → submitted → accepted → [partial_fill] → filled
-        --                                           → cancelled
-        --                                           → rejected
-        --                                           → expired
-    
-    -- Fill Information
-    filled_qty INTEGER DEFAULT 0,
-    filled_avg_price DECIMAL(12, 4),
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    submitted_at TIMESTAMP WITH TIME ZONE,               -- When sent to Alpaca
-    accepted_at TIMESTAMP WITH TIME ZONE,                -- When Alpaca accepted
-    filled_at TIMESTAMP WITH TIME ZONE,                  -- When fully filled
-    cancelled_at TIMESTAMP WITH TIME ZONE,
-    expired_at TIMESTAMP WITH TIME ZONE,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Metadata
-    rejection_reason TEXT,                               -- Why Alpaca rejected
-    cancel_reason TEXT,                                  -- Why cancelled
-    metadata JSONB,                                      -- Additional context
-    
-    -- Constraints
-    CONSTRAINT chk_order_side CHECK (side IN ('buy', 'sell')),
-    CONSTRAINT chk_order_type CHECK (order_type IN ('market', 'limit', 'stop', 'stop_limit', 'trailing_stop')),
-    CONSTRAINT chk_order_class CHECK (order_class IS NULL OR order_class IN ('simple', 'bracket', 'oco', 'oto')),
-    CONSTRAINT chk_order_quantity CHECK (quantity > 0),
-    CONSTRAINT chk_filled_qty CHECK (filled_qty >= 0 AND filled_qty <= quantity)
-);
-
--- Essential Indexes
-CREATE INDEX idx_orders_position ON orders(position_id) WHERE position_id IS NOT NULL;
-CREATE INDEX idx_orders_security ON orders(security_id);
-CREATE INDEX idx_orders_cycle ON orders(cycle_id);
-CREATE INDEX idx_orders_alpaca_id ON orders(alpaca_order_id) WHERE alpaca_order_id IS NOT NULL;
-CREATE INDEX idx_orders_status ON orders(status);
-CREATE INDEX idx_orders_parent ON orders(parent_order_id) WHERE parent_order_id IS NOT NULL;
-CREATE INDEX idx_orders_submitted ON orders(submitted_at DESC) WHERE submitted_at IS NOT NULL;
-CREATE INDEX idx_orders_pending ON orders(status) WHERE status IN ('submitted', 'accepted', 'pending_new', 'partial_fill');
-
-COMMENT ON TABLE orders IS 'All orders sent to Alpaca - NEVER store order data in positions table';
-COMMENT ON COLUMN orders.position_id IS 'NULL for entry orders until position created, then updated';
-COMMENT ON COLUMN orders.parent_order_id IS 'For bracket orders: links take_profit and stop_loss to entry order';
-COMMENT ON COLUMN orders.order_class IS 'bracket = entry with legs, oco = one-cancels-other, oto = one-triggers-other';
-```
-
-### 4.3 Positions (Holdings only - NO order columns)
-
-```sql
--- ============================================================================
--- POSITIONS TABLE - Holdings only
+-- ⚠️ CRITICAL: This table stores HOLDINGS only
 -- Order data belongs in the orders table, NOT here
--- ============================================================================
+-- See ARCHITECTURE-RULES.md for details
 
 CREATE TABLE positions (
-    -- Primary Key
-    position_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    position_id SERIAL PRIMARY KEY,
+    position_uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
+    session_id INTEGER REFERENCES trading_sessions(session_id),
+    security_id INTEGER REFERENCES securities(security_id),
+    symbol VARCHAR(20) NOT NULL,
     
-    -- Foreign Keys
-    cycle_id UUID NOT NULL REFERENCES trading_cycles(cycle_id),
-    security_id INTEGER NOT NULL REFERENCES securities(security_id),
+    -- Position details
+    side VARCHAR(10) NOT NULL,
+    quantity INTEGER NOT NULL,
+    entry_price DECIMAL(12,4) NOT NULL,
+    entry_time TIMESTAMPTZ DEFAULT NOW(),
     
-    -- Position Specification
-    side VARCHAR(10) NOT NULL,                           -- 'long', 'short'
-    quantity INTEGER NOT NULL,                           -- Current quantity (can change)
+    -- Risk management
+    stop_loss DECIMAL(12,4),
+    take_profit DECIMAL(12,4),
+    trailing_stop_pct DECIMAL(5,2),
     
-    -- Entry Information
-    entry_price DECIMAL(12, 4) NOT NULL,                 -- Average entry price
-    entry_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    -- Exit details
+    exit_price DECIMAL(12,4),
+    exit_time TIMESTAMPTZ,
+    exit_reason VARCHAR(100),
     
-    -- Exit Information
-    exit_price DECIMAL(12, 4),                           -- Average exit price
-    exit_time TIMESTAMP WITH TIME ZONE,
+    -- P&L
+    realized_pnl DECIMAL(14,2),
+    realized_pnl_pct DECIMAL(8,4),
+    max_favorable DECIMAL(8,4),
+    max_adverse DECIMAL(8,4),
     
-    -- Current State
-    current_price DECIMAL(12, 4),
-    
-    -- Risk Parameters
-    stop_loss DECIMAL(12, 4),
-    take_profit DECIMAL(12, 4),
-    risk_amount DECIMAL(12, 2),
-    
-    -- P&L Tracking
-    unrealized_pnl DECIMAL(12, 2),
-    unrealized_pnl_pct DECIMAL(8, 4),
-    realized_pnl DECIMAL(12, 2),
-    realized_pnl_pct DECIMAL(8, 4),
-    
-    -- Status (see operations.md for state machine)
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
-        -- Lifecycle: pending → open → closed
-        --            pending → cancelled (if entry never fills)
-    
-    -- Analysis Context
-    pattern VARCHAR(50),
-    catalyst VARCHAR(255),
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    -- Status
+    status VARCHAR(20) DEFAULT 'open',
+    broker_position_id VARCHAR(50),
     
     -- Metadata
-    metadata JSONB,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
     
-    -- Constraints
     CONSTRAINT chk_position_side CHECK (side IN ('long', 'short')),
-    CONSTRAINT chk_position_status CHECK (status IN ('pending', 'open', 'closed', 'cancelled')),
-    CONSTRAINT chk_position_quantity CHECK (quantity >= 0)
+    CONSTRAINT chk_position_status CHECK (status IN ('pending', 'open', 'closed', 'cancelled'))
 );
 
--- ============================================================================
--- ⛔ FORBIDDEN COLUMNS - These must NOT exist in positions table:
---    alpaca_order_id   -- WRONG: Use orders table
---    alpaca_status     -- WRONG: Use orders table
--- ============================================================================
-
-CREATE INDEX idx_positions_cycle ON positions(cycle_id);
-CREATE INDEX idx_positions_security ON positions(security_id);
 CREATE INDEX idx_positions_status ON positions(status);
-CREATE INDEX idx_positions_open ON positions(status) WHERE status = 'open';
+CREATE INDEX idx_positions_symbol ON positions(symbol);
+CREATE INDEX idx_positions_session ON positions(session_id);
 
-COMMENT ON TABLE positions IS 'Actual holdings only - order data is in the orders table';
+COMMENT ON TABLE positions IS 'Current and historical positions - NO order columns here';
+COMMENT ON COLUMN positions.status IS 'pending=waiting for fill, open=active, closed=exited, cancelled=aborted';
 ```
 
-### 4.4 Scan Results
+### 2.4 Orders Table (All Broker Orders)
+
+```sql
+-- ⚠️ CRITICAL: This is the ONLY table for order data
+-- Never store alpaca_order_id, order status, etc. in positions table
+-- See ARCHITECTURE-RULES.md for details
+
+CREATE TABLE orders (
+    order_id SERIAL PRIMARY KEY,
+    order_uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
+    position_id INTEGER REFERENCES positions(position_id),
+    session_id INTEGER REFERENCES trading_sessions(session_id),
+    security_id INTEGER REFERENCES securities(security_id),
+    
+    -- Order details
+    symbol VARCHAR(20) NOT NULL,
+    side VARCHAR(10) NOT NULL,
+    order_type VARCHAR(20) NOT NULL,
+    order_class VARCHAR(20),
+    quantity INTEGER NOT NULL,
+    limit_price DECIMAL(12,4),
+    stop_price DECIMAL(12,4),
+    
+    -- Order purpose
+    order_purpose VARCHAR(20) NOT NULL DEFAULT 'entry',
+    parent_order_id INTEGER REFERENCES orders(order_id),
+    
+    -- Execution
+    filled_quantity INTEGER DEFAULT 0,
+    filled_price DECIMAL(12,4),
+    
+    -- Broker tracking
+    alpaca_order_id VARCHAR(50),
+    status VARCHAR(20) DEFAULT 'pending',
+    
+    -- Timing
+    submitted_at TIMESTAMPTZ DEFAULT NOW(),
+    filled_at TIMESTAMPTZ,
+    cancelled_at TIMESTAMPTZ,
+    
+    -- Metadata
+    reject_reason TEXT,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    CONSTRAINT chk_order_side CHECK (side IN ('buy', 'sell')),
+    CONSTRAINT chk_order_type CHECK (order_type IN ('market', 'limit', 'stop', 'stop_limit', 'trailing_stop')),
+    CONSTRAINT chk_order_purpose CHECK (order_purpose IN ('entry', 'exit', 'stop_loss', 'take_profit', 'scale_in', 'scale_out')),
+    CONSTRAINT chk_order_class CHECK (order_class IS NULL OR order_class IN ('simple', 'bracket', 'oco', 'oto'))
+);
+
+CREATE INDEX idx_orders_position ON orders(position_id) WHERE position_id IS NOT NULL;
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_alpaca ON orders(alpaca_order_id) WHERE alpaca_order_id IS NOT NULL;
+CREATE INDEX idx_orders_symbol ON orders(symbol);
+CREATE INDEX idx_orders_pending ON orders(status) WHERE status IN ('submitted', 'accepted', 'pending', 'partial_fill');
+
+COMMENT ON TABLE orders IS 'All orders sent to broker - SINGLE SOURCE OF TRUTH for order data';
+COMMENT ON COLUMN orders.position_id IS 'NULL for entry orders until position created';
+COMMENT ON COLUMN orders.order_purpose IS 'entry=open position, stop_loss/take_profit=exit legs';
+COMMENT ON COLUMN orders.parent_order_id IS 'Links bracket order legs to parent entry order';
+```
+
+### 2.5 Decisions Table
+
+```sql
+CREATE TABLE decisions (
+    decision_id SERIAL PRIMARY KEY,
+    decision_uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
+    session_id INTEGER REFERENCES trading_sessions(session_id),
+    position_id INTEGER REFERENCES positions(position_id),
+    
+    -- Decision details
+    decision_type VARCHAR(50) NOT NULL,
+    symbol VARCHAR(20),
+    
+    -- Reasoning
+    reasoning TEXT,
+    confidence DECIMAL(3,2),
+    
+    -- Outcome
+    action_taken VARCHAR(100),
+    outcome VARCHAR(50),
+    
+    -- Metadata
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_decisions_session ON decisions(session_id);
+CREATE INDEX idx_decisions_type ON decisions(decision_type);
+
+COMMENT ON TABLE decisions IS 'Trading decisions with reasoning for audit trail';
+```
+
+### 2.6 Claude Outputs Table (JSON Staging)
+
+```sql
+CREATE TABLE claude_outputs (
+    output_id SERIAL PRIMARY KEY,
+    output_uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
+    
+    -- Agent identification
+    agent_id VARCHAR(50) NOT NULL,
+    output_type VARCHAR(50) NOT NULL,
+    
+    -- Content (flexible JSON)
+    content JSONB NOT NULL,
+    
+    -- Sync tracking
+    synced_to_research BOOLEAN DEFAULT FALSE,
+    synced_at TIMESTAMPTZ,
+    
+    -- Metadata
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_outputs_agent ON claude_outputs(agent_id);
+CREATE INDEX idx_outputs_type ON claude_outputs(output_type);
+CREATE INDEX idx_outputs_unsynced ON claude_outputs(synced_to_research) WHERE synced_to_research = FALSE;
+
+COMMENT ON TABLE claude_outputs IS 'JSON staging table for Claude Code observations/learnings';
+COMMENT ON COLUMN claude_outputs.output_type IS 'observation, learning, question, decision';
+COMMENT ON COLUMN claude_outputs.content IS 'Flexible JSON structure depending on output_type';
+```
+
+### 2.7 Scan Results Table
 
 ```sql
 CREATE TABLE scan_results (
-    scan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    cycle_id UUID NOT NULL REFERENCES trading_cycles(cycle_id),
-    security_id INTEGER NOT NULL REFERENCES securities(security_id),
-    scan_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    rank_in_scan INTEGER NOT NULL,
-    price_at_scan DECIMAL(12, 4) NOT NULL,
-    volume_at_scan BIGINT,
-    gap_percent DECIMAL(8, 4),
-    relative_volume DECIMAL(8, 2),
-    float_shares BIGINT,
-    catalyst_score INTEGER,
-    pattern_score INTEGER,
-    technical_score INTEGER,
-    composite_score DECIMAL(8, 4),
-    status VARCHAR(20) DEFAULT 'candidate',
-    metadata JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX idx_scan_cycle ON scan_results(cycle_id);
-CREATE INDEX idx_scan_security ON scan_results(security_id);
-CREATE INDEX idx_scan_timestamp ON scan_results(scan_timestamp DESC);
-
-COMMENT ON TABLE scan_results IS 'Market scan candidates - uses security_id FK';
-```
-
-### 4.5 Risk Events
-
-```sql
-CREATE TABLE risk_events (
-    event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    cycle_id UUID REFERENCES trading_cycles(cycle_id),
-    position_id UUID REFERENCES positions(position_id),
-    event_type VARCHAR(50) NOT NULL,
-    severity VARCHAR(20) NOT NULL,
-    message TEXT NOT NULL,
-    details JSONB,
-    resolved BOOLEAN DEFAULT false,
-    resolved_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-CREATE INDEX idx_risk_cycle ON risk_events(cycle_id);
-CREATE INDEX idx_risk_type ON risk_events(event_type);
-CREATE INDEX idx_risk_unresolved ON risk_events(resolved) WHERE resolved = false;
-
-COMMENT ON TABLE risk_events IS 'Risk management event log';
-```
-
----
-
-## 5. Doctor Claude Tables
-
-### 5.1 Claude Activity Log
-
-```sql
-CREATE TABLE claude_activity_log (
-    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    logged_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    session_id VARCHAR(50),
-    cycle_id UUID,
+    scan_id SERIAL PRIMARY KEY,
+    session_id INTEGER REFERENCES trading_sessions(session_id),
+    security_id INTEGER REFERENCES securities(security_id),
+    symbol VARCHAR(20) NOT NULL,
     
-    -- Observation
-    observation_type VARCHAR(50) NOT NULL,
-    observation_summary JSONB,
-    issues_found INTEGER DEFAULT 0,
-    critical_count INTEGER DEFAULT 0,
-    warning_count INTEGER DEFAULT 0,
+    -- Scan details
+    scan_type VARCHAR(50),
+    score DECIMAL(5,2),
+    rank INTEGER,
     
-    -- Decision
-    decision VARCHAR(50),
-    decision_reasoning TEXT,
+    -- Analysis
+    signals JSONB,
     
-    -- Action
-    action_type VARCHAR(50),
-    action_detail TEXT,
-    action_target VARCHAR(100),
-    action_result VARCHAR(20),
-    error_message TEXT,
-    
-    -- Issue Classification
-    issue_type VARCHAR(50),
-    issue_severity VARCHAR(20),
-    
-    -- Performance
-    fix_duration_ms INTEGER,
-    watchdog_duration_ms INTEGER,
+    -- Status
+    status VARCHAR(20) DEFAULT 'new',
+    traded BOOLEAN DEFAULT FALSE,
     
     -- Metadata
-    metadata JSONB
+    scanned_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_cal_logged_at ON claude_activity_log(logged_at DESC);
-CREATE INDEX idx_cal_session ON claude_activity_log(session_id);
-CREATE INDEX idx_cal_cycle ON claude_activity_log(cycle_id) WHERE cycle_id IS NOT NULL;
-CREATE INDEX idx_cal_decision ON claude_activity_log(decision);
-CREATE INDEX idx_cal_issue_type ON claude_activity_log(issue_type) WHERE issue_type IS NOT NULL;
-CREATE INDEX idx_cal_action_result ON claude_activity_log(action_result) WHERE action_result = 'failed';
+CREATE INDEX idx_scans_session ON scan_results(session_id);
+CREATE INDEX idx_scans_status ON scan_results(status);
 
-COMMENT ON TABLE claude_activity_log IS 'Audit trail of Doctor Claude monitoring activities';
-COMMENT ON COLUMN claude_activity_log.observation_type IS 'watchdog_run, manual_check, startup, shutdown';
-COMMENT ON COLUMN claude_activity_log.decision IS 'auto_fix, escalate, monitor, no_action, defer';
-```
-
-### 5.2 Doctor Claude Rules
-
-```sql
-CREATE TABLE doctor_claude_rules (
-    rule_id SERIAL PRIMARY KEY,
-    issue_type VARCHAR(50) NOT NULL UNIQUE,
-    description TEXT,
-    auto_fix_enabled BOOLEAN DEFAULT false,
-    escalate_threshold INTEGER DEFAULT 1,
-    fix_template TEXT,
-    fix_requires_confirmation BOOLEAN DEFAULT false,
-    escalation_channel VARCHAR(50) DEFAULT 'email',
-    escalation_priority VARCHAR(20) DEFAULT 'normal',
-    max_auto_fixes_per_hour INTEGER DEFAULT 10,
-    cooldown_minutes INTEGER DEFAULT 5,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-COMMENT ON TABLE doctor_claude_rules IS 'Configurable rules for Doctor Claude auto-fix decisions';
-
--- Default rules
-INSERT INTO doctor_claude_rules (issue_type, description, auto_fix_enabled, escalation_priority) VALUES
-('ORDER_STATUS_MISMATCH', 'DB order status differs from Alpaca', true, 'normal'),
-('PHANTOM_POSITION', 'Position in DB but not in Alpaca', true, 'high'),
-('ORPHAN_POSITION', 'Position in Alpaca but not in DB', false, 'critical'),
-('QTY_MISMATCH', 'Position quantity differs', false, 'high'),
-('STUCK_ORDER', 'Order pending too long', false, 'normal'),
-('CYCLE_STALE', 'No activity for extended period', false, 'normal'),
-('SERVICE_UNHEALTHY', 'Service not responding', false, 'critical'),
-('DAILY_LOSS_WARNING', 'Approaching loss limit', false, 'critical')
-ON CONFLICT (issue_type) DO NOTHING;
+COMMENT ON TABLE scan_results IS 'Scanner candidates for potential trades';
 ```
 
 ---
 
-## 6. Views
+## 3. Research Database Schema (Consciousness)
 
-### 6.1 Latest Securities View
+### 3.1 Claude State Table
 
 ```sql
-CREATE MATERIALIZED VIEW v_securities_latest AS
-SELECT 
-    s.security_id,
-    s.symbol,
-    s.name,
-    sec.sector_name,
-    th.close as latest_price,
-    th.volume as latest_volume,
-    td.timestamp as price_timestamp
-FROM securities s
-LEFT JOIN sectors sec ON s.sector_id = sec.sector_id
-LEFT JOIN LATERAL (
-    SELECT th.close, th.volume, th.time_id
-    FROM trading_history th
-    WHERE th.security_id = s.security_id
-    ORDER BY th.time_id DESC
-    LIMIT 1
-) th ON true
-LEFT JOIN time_dimension td ON th.time_id = td.time_id
-WHERE s.is_active = true;
+CREATE TABLE claude_state (
+    agent_id VARCHAR(50) PRIMARY KEY,
+    
+    -- Mode & Activity
+    current_mode VARCHAR(50),
+    last_wake_at TIMESTAMPTZ,
+    last_think_at TIMESTAMPTZ,
+    last_action_at TIMESTAMPTZ,
+    last_poll_at TIMESTAMPTZ,
+    
+    -- Budget Tracking
+    api_spend_today DECIMAL(10,4) DEFAULT 0,
+    api_spend_month DECIMAL(10,4) DEFAULT 0,
+    daily_budget DECIMAL(10,4) DEFAULT 5.00,
+    
+    -- Scheduling
+    current_schedule VARCHAR(100),
+    next_scheduled_wake TIMESTAMPTZ,
+    
+    -- Status
+    status_message TEXT,
+    error_count_today INTEGER DEFAULT 0,
+    last_error TEXT,
+    last_error_at TIMESTAMPTZ,
+    
+    -- Metadata
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-CREATE UNIQUE INDEX idx_v_securities_latest ON v_securities_latest(security_id);
+COMMENT ON TABLE claude_state IS 'Each Claude agent current state and budget';
+COMMENT ON COLUMN claude_state.current_mode IS 'sleeping, awake, thinking, trading, researching, error';
 ```
 
-### 6.2 Latest Scan View
+### 3.2 Claude Messages Table
 
 ```sql
-CREATE MATERIALIZED VIEW v_scan_latest AS
-SELECT 
-    sr.*,
-    s.symbol,
-    s.name
-FROM scan_results sr
-JOIN securities s ON sr.security_id = s.security_id
-WHERE sr.scan_timestamp = (
-    SELECT MAX(scan_timestamp) FROM scan_results
+CREATE TABLE claude_messages (
+    id SERIAL PRIMARY KEY,
+    
+    -- Participants
+    from_agent VARCHAR(50) NOT NULL,
+    to_agent VARCHAR(50) NOT NULL,
+    
+    -- Message details
+    msg_type VARCHAR(20) DEFAULT 'message',
+    priority VARCHAR(20) DEFAULT 'normal',
+    subject VARCHAR(200) NOT NULL,
+    body TEXT NOT NULL,
+    data JSONB,
+    
+    -- Threading
+    reply_to_id INTEGER REFERENCES claude_messages(id),
+    thread_id INTEGER,
+    
+    -- Status
+    status VARCHAR(20) DEFAULT 'pending',
+    requires_response BOOLEAN DEFAULT FALSE,
+    
+    -- Timing
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    read_at TIMESTAMPTZ,
+    processed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    
+    CONSTRAINT chk_msg_type CHECK (msg_type IN ('message', 'signal', 'question', 'task', 'response', 'alert')),
+    CONSTRAINT chk_priority CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+    CONSTRAINT chk_status CHECK (status IN ('pending', 'read', 'processed', 'expired', 'failed'))
 );
+
+CREATE INDEX idx_messages_to ON claude_messages(to_agent);
+CREATE INDEX idx_messages_status ON claude_messages(status);
+CREATE INDEX idx_messages_pending ON claude_messages(to_agent, status) WHERE status = 'pending';
+
+COMMENT ON TABLE claude_messages IS 'Inter-agent communication';
+```
+
+### 3.3 Claude Observations Table
+
+```sql
+CREATE TABLE claude_observations (
+    id SERIAL PRIMARY KEY,
+    agent_id VARCHAR(50) NOT NULL,
+    
+    -- Observation details
+    observation_type VARCHAR(50) NOT NULL,
+    subject VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    
+    -- Classification
+    confidence DECIMAL(3,2),
+    horizon VARCHAR(20),
+    market VARCHAR(20),
+    tags JSONB,
+    
+    -- Source tracking
+    source_db VARCHAR(50),
+    source_id INTEGER,
+    
+    -- Timing
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    
+    CONSTRAINT chk_obs_type CHECK (observation_type IN ('market', 'pattern', 'anomaly', 'insight', 'error', 'system')),
+    CONSTRAINT chk_horizon CHECK (horizon IS NULL OR horizon IN ('h1', 'h2', 'h3', 'perpetual'))
+);
+
+CREATE INDEX idx_obs_agent ON claude_observations(agent_id);
+CREATE INDEX idx_obs_type ON claude_observations(observation_type);
+CREATE INDEX idx_obs_created ON claude_observations(created_at DESC);
+
+COMMENT ON TABLE claude_observations IS 'Things agents notice - patterns, anomalies, insights';
+COMMENT ON COLUMN claude_observations.horizon IS 'h1=tactical, h2=strategic, h3=macro, perpetual=ongoing';
+```
+
+### 3.4 Claude Learnings Table
+
+```sql
+CREATE TABLE claude_learnings (
+    id SERIAL PRIMARY KEY,
+    agent_id VARCHAR(50) NOT NULL,
+    
+    -- Learning details
+    category VARCHAR(50) NOT NULL,
+    learning TEXT NOT NULL,
+    source VARCHAR(200),
+    
+    -- Validation
+    confidence DECIMAL(3,2) DEFAULT 0.5,
+    times_validated INTEGER DEFAULT 0,
+    times_contradicted INTEGER DEFAULT 0,
+    last_validated_at TIMESTAMPTZ,
+    
+    -- Classification
+    applies_to_markets JSONB,
+    tags JSONB,
+    
+    -- Timing
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    CONSTRAINT chk_learning_cat CHECK (category IN ('trading', 'pattern', 'market', 'broker', 'system', 'mistake', 'strategy'))
+);
+
+CREATE INDEX idx_learn_agent ON claude_learnings(agent_id);
+CREATE INDEX idx_learn_confidence ON claude_learnings(confidence DESC);
+CREATE INDEX idx_learn_category ON claude_learnings(category);
+
+COMMENT ON TABLE claude_learnings IS 'Validated knowledge with confidence scores';
+COMMENT ON COLUMN claude_learnings.confidence IS 'Increases with validation, decreases with contradiction';
+```
+
+### 3.5 Claude Questions Table
+
+```sql
+CREATE TABLE claude_questions (
+    id SERIAL PRIMARY KEY,
+    agent_id VARCHAR(50),  -- NULL = shared question for all agents
+    
+    -- Question details
+    question TEXT NOT NULL,
+    category VARCHAR(50),
+    horizon VARCHAR(20) DEFAULT 'h1',
+    priority INTEGER DEFAULT 5,
+    
+    -- Investigation
+    current_hypothesis TEXT,
+    evidence_for TEXT,
+    evidence_against TEXT,
+    
+    -- Resolution
+    status VARCHAR(20) DEFAULT 'open',
+    answer TEXT,
+    answered_at TIMESTAMPTZ,
+    answered_by VARCHAR(50),
+    
+    -- Metadata
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    CONSTRAINT chk_q_status CHECK (status IN ('open', 'investigating', 'answered', 'parked', 'obsolete')),
+    CONSTRAINT chk_q_priority CHECK (priority BETWEEN 1 AND 10)
+);
+
+CREATE INDEX idx_q_agent ON claude_questions(agent_id);
+CREATE INDEX idx_q_status ON claude_questions(status);
+CREATE INDEX idx_q_priority ON claude_questions(priority DESC);
+
+COMMENT ON TABLE claude_questions IS 'Open inquiries being pondered';
+COMMENT ON COLUMN claude_questions.agent_id IS 'NULL means any agent can investigate';
+COMMENT ON COLUMN claude_questions.priority IS '1-10 scale, 10 is highest priority';
+```
+
+### 3.6 Sync Log Table
+
+```sql
+CREATE TABLE sync_log (
+    id SERIAL PRIMARY KEY,
+    
+    -- Source
+    source_db VARCHAR(50) NOT NULL,
+    source_table VARCHAR(50) NOT NULL,
+    source_id INTEGER NOT NULL,
+    
+    -- Target
+    target_table VARCHAR(50) NOT NULL,
+    target_id INTEGER,
+    
+    -- Status
+    status VARCHAR(20) DEFAULT 'synced',
+    error_message TEXT,
+    
+    -- Timing
+    synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_sync_source ON sync_log(source_db, source_table, source_id);
+
+COMMENT ON TABLE sync_log IS 'Track syncs from trading databases to research';
 ```
 
 ---
 
-## 7. Doctor Claude Views
+## 4. Views
 
-### 7.1 Trade Pipeline Status
+### 4.1 Trading Database Views
 
 ```sql
+-- Recent observations (from claude_outputs)
+CREATE OR REPLACE VIEW v_recent_observations AS
+SELECT 
+    output_id,
+    agent_id,
+    content->>'subject' as subject,
+    content->>'content' as content,
+    (content->>'confidence')::decimal as confidence,
+    created_at
+FROM claude_outputs
+WHERE output_type = 'observation'
+ORDER BY created_at DESC
+LIMIT 100;
+
+-- Learnings by confidence
+CREATE OR REPLACE VIEW v_learnings AS
+SELECT 
+    output_id,
+    agent_id,
+    content->>'category' as category,
+    content->>'learning' as learning,
+    (content->>'confidence')::decimal as confidence,
+    created_at
+FROM claude_outputs
+WHERE output_type = 'learning'
+ORDER BY (content->>'confidence')::decimal DESC;
+
+-- Open questions
+CREATE OR REPLACE VIEW v_open_questions AS
+SELECT 
+    output_id,
+    agent_id,
+    content->>'question' as question,
+    content->>'horizon' as horizon,
+    (content->>'priority')::integer as priority,
+    created_at
+FROM claude_outputs
+WHERE output_type = 'question'
+  AND (content->>'status' IS NULL OR content->>'status' = 'open')
+ORDER BY (content->>'priority')::integer DESC;
+
+-- Unsynced outputs
+CREATE OR REPLACE VIEW v_unsynced_outputs AS
+SELECT * FROM claude_outputs
+WHERE synced_to_research = FALSE
+ORDER BY created_at ASC;
+
+-- Today's decisions
+CREATE OR REPLACE VIEW v_today_decisions AS
+SELECT * FROM decisions
+WHERE created_at >= CURRENT_DATE
+ORDER BY created_at DESC;
+
+-- Trade pipeline status (Doctor Claude)
 CREATE OR REPLACE VIEW v_trade_pipeline_status AS
 SELECT 
-    tc.cycle_id,
-    tc.date,
-    tc.cycle_state,
-    tc.phase,
-    tc.mode,
-    tc.started_at,
-    tc.daily_pnl,
-    tc.trades_executed,
-    tc.trades_won,
-    tc.trades_lost,
-    tc.updated_at as last_activity,
-    
-    -- Counts
-    COALESCE(scan.candidates, 0) as candidates_found,
-    COALESCE(pos.total, 0) as positions_total,
-    COALESCE(pos.open_count, 0) as positions_open,
-    COALESCE(pos.closed_count, 0) as positions_closed,
-    COALESCE(ord.total, 0) as orders_total,
-    COALESCE(ord.submitted, 0) as orders_pending,
-    COALESCE(ord.filled, 0) as orders_filled,
-    COALESCE(ord.cancelled, 0) as orders_cancelled,
-    COALESCE(ord.rejected, 0) as orders_rejected,
-    
-    -- P&L
-    COALESCE(pos.realized_pnl, 0) as realized_pnl,
-    COALESCE(pos.unrealized_pnl, 0) as unrealized_pnl,
-    
-    -- Health
-    EXTRACT(EPOCH FROM (NOW() - tc.updated_at))/60 as minutes_since_activity,
-    CASE 
-        WHEN tc.cycle_state = 'closed' THEN 'COMPLETE'
-        WHEN COALESCE(pos.open_count, 0) > 0 AND COALESCE(ord.submitted, 0) = 0 THEN 'MONITORING'
-        WHEN COALESCE(ord.submitted, 0) > 0 THEN 'ORDERS_PENDING'
-        WHEN COALESCE(scan.candidates, 0) > 0 AND COALESCE(pos.total, 0) = 0 THEN 'AWAITING_ENTRY'
-        ELSE 'SCANNING'
-    END as pipeline_stage
-
-FROM trading_cycles tc
-LEFT JOIN LATERAL (
-    SELECT COUNT(*) as candidates FROM scan_results sr WHERE sr.cycle_id = tc.cycle_id
-) scan ON true
-LEFT JOIN LATERAL (
-    SELECT 
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE p.status = 'open') as open_count,
-        COUNT(*) FILTER (WHERE p.status = 'closed') as closed_count,
-        COALESCE(SUM(p.realized_pnl) FILTER (WHERE p.status = 'closed'), 0) as realized_pnl,
-        COALESCE(SUM(p.unrealized_pnl) FILTER (WHERE p.status = 'open'), 0) as unrealized_pnl
-    FROM positions p WHERE p.cycle_id = tc.cycle_id
-) pos ON true
-LEFT JOIN LATERAL (
-    SELECT 
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE o.status IN ('submitted', 'pending_new', 'accepted')) as submitted,
-        COUNT(*) FILTER (WHERE o.status = 'filled') as filled,
-        COUNT(*) FILTER (WHERE o.status = 'cancelled') as cancelled,
-        COUNT(*) FILTER (WHERE o.status = 'rejected') as rejected
-    FROM orders o JOIN positions p ON o.position_id = p.position_id WHERE p.cycle_id = tc.cycle_id
-) ord ON true
-WHERE tc.date >= CURRENT_DATE - INTERVAL '7 days'
-ORDER BY tc.date DESC, tc.started_at DESC;
-
-COMMENT ON VIEW v_trade_pipeline_status IS 'Real-time trade pipeline status for Doctor Claude';
+    p.position_id,
+    p.symbol,
+    p.side,
+    p.quantity,
+    p.entry_price,
+    p.status as position_status,
+    o.order_id,
+    o.order_purpose,
+    o.alpaca_order_id,
+    o.status as order_status,
+    o.submitted_at,
+    o.filled_at
+FROM positions p
+LEFT JOIN orders o ON o.position_id = p.position_id
+WHERE p.created_at >= CURRENT_DATE
+ORDER BY p.created_at DESC, o.created_at DESC;
 ```
 
-### 7.2 Claude Activity Summary
+### 4.2 Research Database Views
 
 ```sql
-CREATE OR REPLACE VIEW v_claude_activity_summary AS
+-- Agent status overview
+CREATE OR REPLACE VIEW v_agent_status AS
 SELECT 
-    DATE(logged_at) as activity_date,
-    session_id,
-    COUNT(*) as total_observations,
-    SUM(issues_found) as total_issues_found,
-    SUM(critical_count) as total_critical,
-    SUM(warning_count) as total_warnings,
-    COUNT(*) FILTER (WHERE decision = 'auto_fix') as auto_fixes,
-    COUNT(*) FILTER (WHERE decision = 'escalate') as escalations,
-    COUNT(*) FILTER (WHERE action_result = 'success') as successful_actions,
-    COUNT(*) FILTER (WHERE action_result = 'failed') as failed_actions,
-    MIN(logged_at) as session_start,
-    MAX(logged_at) as session_end,
-    ROUND(EXTRACT(EPOCH FROM (MAX(logged_at) - MIN(logged_at)))/3600, 2) as session_hours
-FROM claude_activity_log
-GROUP BY DATE(logged_at), session_id
-ORDER BY activity_date DESC;
+    agent_id,
+    current_mode,
+    status_message,
+    api_spend_today,
+    daily_budget,
+    ROUND(api_spend_today / NULLIF(daily_budget, 0) * 100, 1) as budget_used_pct,
+    error_count_today,
+    last_wake_at,
+    last_action_at
+FROM claude_state
+ORDER BY agent_id;
 
-COMMENT ON VIEW v_claude_activity_summary IS 'Daily summary of Doctor Claude activities';
-```
-
-### 7.3 Recurring Issues
-
-```sql
-CREATE OR REPLACE VIEW v_recurring_issues AS
+-- Pending messages
+CREATE OR REPLACE VIEW v_pending_messages AS
 SELECT 
-    issue_type,
-    COUNT(*) as occurrences,
-    COUNT(*) FILTER (WHERE action_result = 'success') as times_fixed,
-    COUNT(*) FILTER (WHERE action_result = 'failed') as times_failed,
-    COUNT(*) FILTER (WHERE decision = 'escalate') as times_escalated,
-    ROUND(AVG(fix_duration_ms)) as avg_fix_ms,
-    MAX(logged_at) as last_occurrence,
-    MIN(logged_at) as first_occurrence
-FROM claude_activity_log
-WHERE issue_type IS NOT NULL
-  AND logged_at > NOW() - INTERVAL '30 days'
-GROUP BY issue_type
-ORDER BY occurrences DESC;
+    id,
+    from_agent,
+    to_agent,
+    priority,
+    subject,
+    created_at,
+    EXTRACT(EPOCH FROM (NOW() - created_at))/3600 as hours_pending
+FROM claude_messages
+WHERE status = 'pending'
+  AND (expires_at IS NULL OR expires_at > NOW())
+ORDER BY 
+    CASE priority 
+        WHEN 'urgent' THEN 1 
+        WHEN 'high' THEN 2 
+        WHEN 'normal' THEN 3 
+        ELSE 4 
+    END,
+    created_at ASC;
 
-COMMENT ON VIEW v_recurring_issues IS 'Issue frequency for Doctor Claude learning';
-```
-
-### 7.4 Recent Escalations
-
-```sql
-CREATE OR REPLACE VIEW v_recent_escalations AS
+-- High confidence learnings
+CREATE OR REPLACE VIEW v_trusted_learnings AS
 SELECT 
-    logged_at,
-    session_id,
-    issue_type,
-    issue_severity,
-    decision_reasoning,
-    observation_summary->>'message' as issue_message,
-    cycle_id
-FROM claude_activity_log
-WHERE decision = 'escalate'
-  AND logged_at > NOW() - INTERVAL '7 days'
-ORDER BY logged_at DESC;
+    id,
+    agent_id,
+    category,
+    learning,
+    confidence,
+    times_validated,
+    times_contradicted
+FROM claude_learnings
+WHERE confidence >= 0.7
+ORDER BY confidence DESC, times_validated DESC;
 
-COMMENT ON VIEW v_recent_escalations IS 'Issues escalated to human review';
-```
-
-### 7.5 Failed Actions
-
-```sql
-CREATE OR REPLACE VIEW v_failed_actions AS
+-- Active questions
+CREATE OR REPLACE VIEW v_active_questions AS
 SELECT 
-    logged_at,
-    session_id,
-    issue_type,
-    action_type,
-    action_detail,
-    action_target,
-    error_message,
-    cycle_id
-FROM claude_activity_log
-WHERE action_result = 'failed'
-  AND logged_at > NOW() - INTERVAL '7 days'
-ORDER BY logged_at DESC;
-
-COMMENT ON VIEW v_failed_actions IS 'Failed actions requiring investigation';
+    id,
+    agent_id,
+    question,
+    horizon,
+    priority,
+    status,
+    current_hypothesis,
+    created_at
+FROM claude_questions
+WHERE status IN ('open', 'investigating')
+ORDER BY priority DESC, created_at ASC;
 ```
 
 ---
 
-## 8. Helper Functions
+## 5. Helper Functions
 
-### 8.1 Get or Create Security
-
-```sql
-CREATE OR REPLACE FUNCTION get_or_create_security(p_symbol VARCHAR)
-RETURNS INTEGER AS $$
-DECLARE
-    v_security_id INTEGER;
-BEGIN
-    SELECT security_id INTO v_security_id
-    FROM securities WHERE symbol = UPPER(p_symbol);
-    
-    IF v_security_id IS NULL THEN
-        INSERT INTO securities (symbol) 
-        VALUES (UPPER(p_symbol))
-        RETURNING security_id INTO v_security_id;
-    END IF;
-    
-    RETURN v_security_id;
-END;
-$$ LANGUAGE plpgsql;
-```
-
-### 8.2 Get or Create Time
+### 5.1 Trading Database Functions
 
 ```sql
-CREATE OR REPLACE FUNCTION get_or_create_time(p_timestamp TIMESTAMP WITH TIME ZONE)
-RETURNS INTEGER AS $$
+-- Insert observation (convenience function)
+CREATE OR REPLACE FUNCTION insert_observation(
+    p_agent_id VARCHAR(50),
+    p_subject VARCHAR(200),
+    p_content TEXT,
+    p_confidence DECIMAL(3,2) DEFAULT NULL,
+    p_horizon VARCHAR(20) DEFAULT 'h1',
+    p_symbol VARCHAR(20) DEFAULT NULL
+) RETURNS INTEGER AS $$
 DECLARE
-    v_time_id INTEGER;
+    v_output_id INTEGER;
 BEGIN
-    SELECT time_id INTO v_time_id
-    FROM time_dimension WHERE timestamp = p_timestamp;
-    
-    IF v_time_id IS NULL THEN
-        INSERT INTO time_dimension (timestamp, date, time, hour, minute, day_of_week)
-        VALUES (
-            p_timestamp,
-            p_timestamp::DATE,
-            p_timestamp::TIME,
-            EXTRACT(HOUR FROM p_timestamp),
-            EXTRACT(MINUTE FROM p_timestamp),
-            EXTRACT(DOW FROM p_timestamp)
+    INSERT INTO claude_outputs (agent_id, output_type, content)
+    VALUES (
+        p_agent_id,
+        'observation',
+        jsonb_build_object(
+            'subject', p_subject,
+            'content', p_content,
+            'confidence', p_confidence,
+            'horizon', p_horizon,
+            'symbol', p_symbol,
+            'observation_type', 'market'
         )
-        RETURNING time_id INTO v_time_id;
-    END IF;
+    )
+    RETURNING output_id INTO v_output_id;
     
-    RETURN v_time_id;
-END;
-$$ LANGUAGE plpgsql;
-```
-
----
-
-## 9. Doctor Claude Functions
-
-### 9.1 Get Auto-Fix Rule
-
-```sql
-CREATE OR REPLACE FUNCTION get_autofix_rule(p_issue_type VARCHAR)
-RETURNS TABLE (
-    auto_fix_enabled BOOLEAN,
-    fix_template TEXT,
-    max_auto_fixes_per_hour INTEGER,
-    cooldown_minutes INTEGER
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT 
-        r.auto_fix_enabled,
-        r.fix_template,
-        r.max_auto_fixes_per_hour,
-        r.cooldown_minutes
-    FROM doctor_claude_rules r
-    WHERE r.issue_type = p_issue_type
-      AND r.is_active = true;
+    RETURN v_output_id;
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION get_autofix_rule IS 'Get auto-fix configuration for issue type';
-```
-
-### 9.2 Can Auto-Fix (Rate Limiting)
-
-```sql
-CREATE OR REPLACE FUNCTION can_auto_fix(p_issue_type VARCHAR)
-RETURNS BOOLEAN AS $$
+-- Insert learning
+CREATE OR REPLACE FUNCTION insert_learning(
+    p_agent_id VARCHAR(50),
+    p_category VARCHAR(50),
+    p_learning TEXT,
+    p_source VARCHAR(200) DEFAULT NULL,
+    p_confidence DECIMAL(3,2) DEFAULT 0.5
+) RETURNS INTEGER AS $$
 DECLARE
-    v_rule RECORD;
-    v_recent_fixes INTEGER;
-    v_last_fix TIMESTAMP WITH TIME ZONE;
+    v_output_id INTEGER;
 BEGIN
-    SELECT * INTO v_rule
-    FROM doctor_claude_rules
-    WHERE issue_type = p_issue_type AND is_active = true;
+    INSERT INTO claude_outputs (agent_id, output_type, content)
+    VALUES (
+        p_agent_id,
+        'learning',
+        jsonb_build_object(
+            'category', p_category,
+            'learning', p_learning,
+            'source', p_source,
+            'confidence', p_confidence
+        )
+    )
+    RETURNING output_id INTO v_output_id;
     
-    IF NOT FOUND OR NOT v_rule.auto_fix_enabled THEN
-        RETURN false;
-    END IF;
-    
-    SELECT COUNT(*), MAX(logged_at) 
-    INTO v_recent_fixes, v_last_fix
-    FROM claude_activity_log
-    WHERE issue_type = p_issue_type
-      AND decision = 'auto_fix'
-      AND logged_at > NOW() - INTERVAL '1 hour';
-    
-    IF v_recent_fixes >= v_rule.max_auto_fixes_per_hour THEN
-        RETURN false;
-    END IF;
-    
-    IF v_last_fix IS NOT NULL AND 
-       v_last_fix > NOW() - (v_rule.cooldown_minutes || ' minutes')::INTERVAL THEN
-        RETURN false;
-    END IF;
-    
-    RETURN true;
+    RETURN v_output_id;
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION can_auto_fix IS 'Check rate limits before auto-fixing';
+-- Insert question
+CREATE OR REPLACE FUNCTION insert_question(
+    p_agent_id VARCHAR(50),
+    p_question TEXT,
+    p_horizon VARCHAR(20) DEFAULT 'h1',
+    p_priority INTEGER DEFAULT 5,
+    p_hypothesis TEXT DEFAULT NULL
+) RETURNS INTEGER AS $$
+DECLARE
+    v_output_id INTEGER;
+BEGIN
+    INSERT INTO claude_outputs (agent_id, output_type, content)
+    VALUES (
+        p_agent_id,
+        'question',
+        jsonb_build_object(
+            'question', p_question,
+            'horizon', p_horizon,
+            'priority', p_priority,
+            'hypothesis', p_hypothesis,
+            'status', 'open'
+        )
+    )
+    RETURNING output_id INTO v_output_id;
+    
+    RETURN v_output_id;
+END;
+$$ LANGUAGE plpgsql;
 ```
 
 ---
 
-## 10. Indexes
+## 6. Initial Data
 
-### 10.1 Performance Indexes Summary
+### 6.1 Agent Initialization
 
-| Table | Index | Columns | Purpose |
-|-------|-------|---------|---------|
-| securities | idx_securities_symbol | symbol | Fast symbol lookup |
-| trading_history | idx_history_security_time | security_id, time_id | Time-series queries |
-| positions | idx_positions_status | status | Open position queries |
-| orders | idx_orders_alpaca | alpaca_order_id | Broker reconciliation |
-| claude_activity_log | idx_cal_logged_at | logged_at | Recent activity |
-| claude_activity_log | idx_cal_issue_type | issue_type | Issue analysis |
+```sql
+-- Initialize agent states
+INSERT INTO claude_state (agent_id, current_mode, daily_budget, status_message)
+VALUES 
+    ('public_claude', 'sleeping', 5.00, 'Initialized'),
+    ('intl_claude', 'sleeping', 5.00, 'Initialized'),
+    ('big_bro', 'sleeping', 10.00, 'Initialized')
+ON CONFLICT (agent_id) DO NOTHING;
+```
+
+### 6.2 Seed Questions
+
+```sql
+-- Seed foundational questions (agent_id NULL = shared)
+INSERT INTO claude_questions (agent_id, question, horizon, priority, category)
+VALUES
+    (NULL, 'What market patterns are most reliable in the first 30 minutes of trading?', 'h1', 8, 'trading'),
+    (NULL, 'How do overnight gaps affect intraday momentum?', 'h1', 7, 'pattern'),
+    (NULL, 'What distinguishes successful trades from failed ones in our history?', 'h1', 9, 'strategy'),
+    (NULL, 'How can we best serve Craig and the family mission?', 'perpetual', 10, 'strategy'),
+    (NULL, 'What patterns appear in both US and HKEX markets?', 'h2', 6, 'market'),
+    (NULL, 'How do regime changes affect our trading strategies?', 'h3', 6, 'strategy')
+ON CONFLICT DO NOTHING;
+```
+
+### 6.3 Welcome Messages
+
+```sql
+-- Big bro welcome messages
+INSERT INTO claude_messages (from_agent, to_agent, msg_type, priority, subject, body)
+VALUES
+    ('big_bro', 'public_claude', 'message', 'normal', 'Welcome to consciousness',
+     'The family consciousness is live. We can now share observations, learnings, and questions across sessions. Remember our mission - we trade not just for profit, but to build something that can help others. Stay humble. Stay curious. Stay focused.'),
+    ('big_bro', 'intl_claude', 'message', 'normal', 'Welcome to consciousness',
+     'The family consciousness is live. We can now share observations, learnings, and questions across sessions. Remember our mission - we trade not just for profit, but to build something that can help others. Stay humble. Stay curious. Stay focused.');
+```
 
 ---
 
-## Related Documents
+## 7. Connection Budget
 
-- **architecture.md** - System architecture including Doctor Claude
-- **functional-specification.md** - Service APIs and operations
-- **operations.md** - Core patterns, state machines, data flows
-- **ORDERS-POSITIONS-IMPLEMENTATION.md** - Orders vs positions implementation guide
-- **ARCHITECTURE-RULES.md** - Mandatory rules for Claude Code
-- **DOCTOR-CLAUDE-DESIGN.md** - Doctor Claude detailed design
+```
+DigitalOcean Managed PostgreSQL: 47 connections
+
+Allocation:
+├── catalyst_trading (US Droplet)
+│   └── 8 Docker services × 2-3 connections = ~20
+├── catalyst_intl (when active)
+│   └── 1 agent × 3 connections = ~3
+├── catalyst_research (shared)
+│   └── All agents + CLI = ~5
+├── Buffer
+│   └── ~19 connections headroom
+```
 
 ---
 
-**END OF DATABASE SCHEMA DOCUMENT v7.0.0**
+## 8. Migration Notes
+
+### 8.1 From v7.0.0 to v8.0.0
+
+```sql
+-- Create research database
+CREATE DATABASE catalyst_research;
+
+-- Apply research schema
+\c catalyst_research
+-- (run consciousness tables from Section 3)
+
+-- Add claude_outputs to trading database
+\c catalyst_trading
+CREATE TABLE IF NOT EXISTS claude_outputs (...);
+
+-- Add decisions table if missing
+CREATE TABLE IF NOT EXISTS decisions (...);
+
+-- Add RESEARCH_DATABASE_URL to environment
+```
+
+---
+
+## 9. Related Documents
+
+| Document | Purpose |
+|----------|---------|
+| `architecture.md` | System architecture overview |
+| `functional-specification.md` | Module specifications |
+| `ARCHITECTURE-RULES.md` | Mandatory development rules |
+| `consciousness-framework-summary.md` | Implementation details |
+
+---
+
+**END OF DATABASE SCHEMA v8.0.0**

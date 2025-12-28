@@ -1,619 +1,558 @@
 # Catalyst Trading System - Functional Specification
 
-**Name of Application**: Catalyst Trading System  
-**Name of file**: functional-specification.md  
-**Version**: 7.0.0  
-**Last Updated**: 2025-12-27  
-**Purpose**: Functional specifications for all services including Doctor Claude
+**Name of Application:** Catalyst Trading System  
+**Name of file:** functional-specification.md  
+**Version:** 8.0.0  
+**Last Updated:** 2025-12-28  
+**Purpose:** Complete functional specification including consciousness modules
 
 ---
 
 ## REVISION HISTORY
 
-**v7.0.0 (2025-12-27)** - DOCTOR CLAUDE FUNCTIONAL SPECS
-- ✅ **NEW**: Section 11 - Doctor Claude Operations
-- ✅ **NEW**: Trade watchdog diagnostic specifications
-- ✅ **NEW**: Activity logging specifications
-- ✅ **NEW**: Auto-fix decision framework
-- ✅ **NEW**: Escalation procedures
-
-**v6.1.0 (2025-10-25)** - Monitoring and alerting additions
-
-**v6.0.0 (2025-10-22)** - 9-service microservices architecture
-
----
-
-## Table of Contents
-
-1. [System Overview](#1-system-overview)
-2. [Service Matrix](#2-service-matrix)
-3. [MCP Resource Hierarchy](#3-mcp-resource-hierarchy)
-4. [Orchestration Service](#4-orchestration-service)
-5. [Scanner Service](#5-scanner-service)
-6. [Trading Service](#6-trading-service)
-7. [Risk Manager Service](#7-risk-manager-service)
-8. [Workflow Service](#8-workflow-service)
-9. [Cron Schedule](#9-cron-schedule)
-10. [Alert System](#10-alert-system)
-11. [Doctor Claude Operations](#11-doctor-claude-operations)
+- **v8.0.0 (2025-12-28)** - Consciousness Framework Modules
+  - Added consciousness.py module specification
+  - Added database.py module specification
+  - Added alerts.py module specification
+  - Added doctor_claude.py module specification
+  - Agent lifecycle documentation
+  
+- **v7.0.0 (2025-12-27)** - Doctor Claude, orders table
+- **v6.0.0 (2025-12-14)** - MCP tools, service specifications
 
 ---
 
-## 1. System Overview
+## 1. Overview
 
-### 1.1 Operational Model
+### 1.1 System Purpose
 
-```
-CRON → Workflow → Services → Database
-                      ↑
-              Doctor Claude
-              (monitors and fixes)
-```
+The Catalyst Trading System is an autonomous day trading platform implementing Ross Cameron's momentum methodology, enhanced with Claude AI agents that have persistent memory and learning capabilities.
 
-**Key Points:**
-- CRON triggers automated workflows during market hours
-- Services execute trading logic and write to database
-- Doctor Claude monitors trade lifecycle and fixes issues
-- Claude Desktop provides human oversight via MCP
+### 1.2 Key Components
 
-### 1.2 Trading Day Timeline
+| Component | Purpose | Location |
+|-----------|---------|----------|
+| Trading Services | Market execution | Docker containers |
+| Consciousness Modules | AI agent capabilities | services/shared/common/ |
+| Research Database | Persistent memory | catalyst_research |
+| Doctor Claude | Health monitoring | Cron + shared module |
 
-```
-Pre-Market (4:00 AM - 9:30 AM ET):
-  - Scanner runs at 9:15 AM
-  - News service gathers catalysts
-  - Candidates identified
+---
 
-Market Open (9:30 AM ET):
-  - Workflow starts trading cycle
-  - Doctor Claude begins monitoring
-  - Position entries executed
+## 2. Consciousness Modules
 
-Market Hours (9:30 AM - 4:00 PM ET):
-  - Cron triggers every 30-60 minutes
-  - Doctor Claude checks every 5 minutes
-  - Positions monitored and managed
+### 2.1 consciousness.py
 
-Market Close (4:00 PM ET):
-  - All positions closed
-  - Daily P&L calculated
-  - Doctor Claude session ends
+**Purpose:** Core consciousness framework for all Claude agents
+
+**Location:** `services/shared/common/consciousness.py`
+
+**Version:** 1.0.0
+
+**Dependencies:** asyncpg, smtplib
+
+#### 2.1.1 Classes
+
+| Class | Purpose |
+|-------|---------|
+| `ClaudeConsciousness` | Main consciousness class |
+| `AgentState` | Dataclass for agent state |
+| `Message` | Dataclass for inter-agent messages |
+| `Observation` | Dataclass for observations |
+| `Learning` | Dataclass for learnings |
+| `Question` | Dataclass for questions |
+
+#### 2.1.2 Enums
+
+| Enum | Values |
+|------|--------|
+| `AgentMode` | sleeping, awake, thinking, trading, researching, error |
+| `MessageType` | message, signal, question, task, response, alert |
+| `Priority` | low, normal, high, urgent |
+| `Horizon` | h1, h2, h3, perpetual |
+
+#### 2.1.3 ClaudeConsciousness Methods
+
+**State Management:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `__init__` | agent_id: str, pool: asyncpg.Pool | None | Initialize consciousness |
+| `wake_up` | None | AgentState | Wake agent, update state |
+| `sleep` | status_message: str = "Cycle complete" | None | Put agent to sleep |
+| `update_status` | mode: str, message: str = None | None | Update agent status |
+| `record_api_spend` | cost: float | None | Record API spending |
+| `record_error` | error_message: str | None | Record error occurrence |
+| `check_budget` | None | bool | Check if within budget |
+| `get_budget_remaining` | None | float | Get remaining budget |
+
+**Inter-Agent Messaging:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `send_message` | to_agent, subject, body, msg_type='message', priority='normal', data=None, requires_response=False, expires_in_hours=None | int | Send message to another agent |
+| `check_messages` | limit: int = 10 | List[Message] | Check for pending messages |
+| `mark_read` | message_id: int | None | Mark message as read |
+| `mark_processed` | message_id: int | None | Mark message as processed |
+| `reply_to_message` | original_message_id, body, data=None | int | Reply to a message |
+
+**Observations:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `observe` | observation_type, subject, content, confidence=None, horizon=None, market=None, tags=None, expires_in_hours=None | int | Record an observation |
+| `get_recent_observations` | observation_type=None, market=None, limit=20 | List[Observation] | Get recent observations |
+
+**Learnings:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `learn` | category, learning, source=None, confidence=0.5, applies_to_markets=None | int | Record a learning |
+| `validate_learning` | learning_id: int | None | Increase confidence |
+| `contradict_learning` | learning_id: int | None | Decrease confidence |
+| `get_learnings` | category=None, min_confidence=0.5, limit=20 | List[Learning] | Get learnings |
+
+**Questions:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `ask_question` | question, horizon='h1', priority=5, category=None, hypothesis=None | int | Record a question |
+| `get_open_questions` | limit: int = 10 | List[Question] | Get open questions |
+| `update_question` | question_id, status=None, hypothesis=None, evidence_for=None, evidence_against=None, answer=None | None | Update question |
+
+**Communication:**
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `email_craig` | subject, body, priority='normal' | bool | Send email to Craig |
+| `get_sibling_status` | None | List[Dict] | Get status of siblings |
+| `broadcast_to_siblings` | subject, body, msg_type='message', priority='normal' | List[int] | Message all siblings |
+
+#### 2.1.4 Usage Example
+
+```python
+from consciousness import ClaudeConsciousness
+import asyncpg
+
+async def run_agent():
+    pool = await asyncpg.create_pool(RESEARCH_DATABASE_URL)
+    consciousness = ClaudeConsciousness('public_claude', pool)
+    
+    # Wake up
+    state = await consciousness.wake_up()
+    print(f"Budget: ${state.api_spend_today}/{state.daily_budget}")
+    
+    # Check messages
+    messages = await consciousness.check_messages()
+    for msg in messages:
+        print(f"From {msg.from_agent}: {msg.subject}")
+        await consciousness.mark_processed(msg.id)
+    
+    # Record observation
+    await consciousness.observe(
+        observation_type='market',
+        subject='AAPL unusual volume',
+        content='3x average volume in first 30 minutes',
+        confidence=0.85,
+        horizon='h1',
+        market='US'
+    )
+    
+    # Record learning
+    await consciousness.learn(
+        category='pattern',
+        learning='Bull flags after gap ups have 68% success rate',
+        source='backtested 200 samples',
+        confidence=0.75
+    )
+    
+    # Sleep
+    await consciousness.sleep("Trading cycle complete")
+    await pool.close()
 ```
 
 ---
 
-## 2. Service Matrix
+### 2.2 database.py
 
-### 2.1 Complete Service Inventory
+**Purpose:** Unified database connection management
 
-| # | Service | Type | Port | Primary Function |
-|---|---------|------|------|------------------|
-| 1 | **Orchestration** | MCP | 5000 | Claude Desktop interface |
-| 2 | **Workflow** | REST | 5006 | Trade coordination |
-| 3 | **Scanner** | REST | 5001 | Market scanning |
-| 4 | **Pattern** | REST | 5002 | Chart pattern recognition |
-| 5 | **Technical** | REST | 5003 | Technical analysis |
-| 6 | **Risk Manager** | REST | 5004 | Risk validation |
-| 7 | **Trading** | REST | 5005 | Order execution |
-| 8 | **News** | REST | 5008 | News catalyst detection |
-| 9 | **Reporting** | REST | 5009 | Performance analytics |
-| 10 | **Doctor Claude** | Script | N/A | Trade lifecycle monitoring |
+**Location:** `services/shared/common/database.py`
 
-### 2.2 Service Dependency Flow
+**Version:** 1.0.0
 
-```
-AUTOMATED WORKFLOWS (Cron-initiated):
-┌─────────────┐
-│  Cron Job   │
-└──────┬──────┘
-       │ HTTP POST
-       ▼
-┌─────────────┐
-│  Workflow   │
-└──────┬──────┘
-       │
-       ├──► Scanner ──► News ──► Pattern ──► Technical
-       │
-       ├──► Risk Manager
-       │
-       ├──► Trading ──► Alpaca Markets
-       │
-       └──► Reporting
+**Dependencies:** asyncpg
 
-MONITORING (Doctor Claude):
-┌─────────────────┐
-│  Doctor Claude  │ (Every 5 minutes)
-└────────┬────────┘
-         │
-         ├──► PostgreSQL (read pipeline state)
-         │
-         ├──► Alpaca API (reconcile positions/orders)
-         │
-         └──► Fix issues or escalate
-```
+#### 2.2.1 Classes
 
----
+| Class | Purpose |
+|-------|---------|
+| `DatabaseManager` | Manages trading and research database pools |
 
-## 3. MCP Resource Hierarchy
+#### 2.2.2 DatabaseManager Methods
 
-### 3.1 Resource URIs
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `__init__` | trading_url, research_url, trading_pool_size=(2,10), research_pool_size=(1,5) | None | Initialize manager |
+| `connect` | None | DatabaseManager | Create connection pools |
+| `close` | None | None | Close all pools |
+| `trading` | Property | asyncpg.Pool | Get trading pool |
+| `research` | Property | asyncpg.Pool | Get research pool |
+| `is_connected` | Property | bool | Check connection status |
+| `trading_transaction` | Context manager | Connection | Transaction wrapper |
+| `research_transaction` | Context manager | Connection | Transaction wrapper |
+| `trading_fetch` | query, *args | List | Fetch from trading DB |
+| `trading_fetchrow` | query, *args | Row | Fetch row from trading DB |
+| `trading_fetchval` | query, *args | Value | Fetch value from trading DB |
+| `trading_execute` | query, *args | str | Execute on trading DB |
+| `research_fetch` | query, *args | List | Fetch from research DB |
+| `research_fetchrow` | query, *args | Row | Fetch row from research DB |
+| `research_fetchval` | query, *args | Value | Fetch value from research DB |
+| `research_execute` | query, *args | str | Execute on research DB |
+| `get_pool_stats` | None | Dict | Get pool statistics |
 
-```
-trading-cycle://
-├── current                    # Active cycle state
-├── {cycle_id}/
-│   ├── status                 # Cycle status
-│   └── positions              # Cycle positions
+#### 2.2.3 Factory Functions
 
-market-scan://
-├── latest                     # Most recent scan
-└── candidates/{symbol}        # Candidate details
+| Function | Parameters | Returns | Description |
+|----------|------------|---------|-------------|
+| `get_database_manager` | trading_url=None, research_url=None | DatabaseManager | Create from environment |
+| `managed_database` | trading_url=None, research_url=None | Context manager | Auto-connect/close |
 
-positions://
-├── current                    # Open positions
-└── history                    # Closed positions
+#### 2.2.4 Usage Example
 
-performance://
-├── daily                      # Daily metrics
-└── weekly                     # Weekly metrics
+```python
+from database import get_database_manager, managed_database
 
-doctor-claude://               # NEW in v7.0
-├── status                     # Current monitoring status
-├── activity                   # Recent activity log
-└── issues                     # Current issues
+# Option 1: Manual management
+db = get_database_manager()
+await db.connect()
+
+positions = await db.trading_fetch("SELECT * FROM positions WHERE status = 'open'")
+state = await db.research_fetchrow("SELECT * FROM claude_state WHERE agent_id = $1", 'public_claude')
+
+await db.close()
+
+# Option 2: Context manager
+async with managed_database() as db:
+    positions = await db.trading_fetch("SELECT * FROM positions")
 ```
 
 ---
 
-## 4. Orchestration Service
+### 2.3 alerts.py
 
-### 4.1 MCP Tools
+**Purpose:** Email notification system
 
-| Tool | Purpose | Parameters |
-|------|---------|------------|
-| `execute_trade` | Submit trade order | symbol, side, quantity, order_type |
-| `get_positions` | List open positions | - |
-| `close_position` | Close specific position | position_id |
-| `emergency_stop` | Close all positions | - |
-| `get_scan_results` | Latest scan candidates | - |
+**Location:** `services/shared/common/alerts.py`
 
-### 4.2 Endpoints
+**Version:** 1.0.0
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Service health check |
-| `/mcp` | POST | MCP protocol handler |
+**Dependencies:** smtplib
+
+#### 2.3.1 Classes
+
+| Class | Purpose |
+|-------|---------|
+| `AlertManager` | Manages email alerts |
+
+#### 2.3.2 Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `SMTP_HOST` | SMTP server | smtp.gmail.com |
+| `SMTP_PORT` | SMTP port | 587 |
+| `SMTP_USER` | SMTP username | Required |
+| `SMTP_PASSWORD` | SMTP password | Required |
+| `ALERT_EMAIL` | Recipient email | Required |
+
+#### 2.3.3 AlertManager Methods
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `__init__` | smtp_host=None, smtp_port=None, smtp_user=None, smtp_password=None, alert_email=None | None | Initialize manager |
+| `is_configured` | Property | bool | Check if configured |
+| `send_email` | subject, body, priority='normal', agent_id='system', html=False | bool | Send email |
+| `send_trade_alert` | agent_id, action, symbol, quantity, price, reason, stop_loss=None, take_profit=None, position_value=None | bool | Trade notification |
+| `send_position_closed_alert` | agent_id, symbol, quantity, entry_price, exit_price, pnl, pnl_pct, hold_time, exit_reason | bool | Position closed |
+| `send_error_alert` | agent_id, error_type, error_message, context=None, stack_trace=None | bool | Error notification |
+| `send_risk_alert` | agent_id, alert_type, current_value, limit_value, action_taken | bool | Risk alert |
+| `send_daily_summary` | agent_id, date, trades, winning_trades, losing_trades, gross_pnl, commissions, net_pnl, win_rate, observations=None, learnings=None | bool | Daily summary |
+| `send_startup_notification` | agent_id, mode, version, components | bool | Startup notification |
+| `send_shutdown_notification` | agent_id, reason, runtime, trades_today, pnl_today | bool | Shutdown notification |
+
+#### 2.3.4 Priority Prefixes
+
+| Priority | Prefix |
+|----------|--------|
+| urgent | 🚨 URGENT: |
+| high | ⚠️ |
+| normal | (none) |
+| low | 📝 |
+
+#### 2.3.5 Usage Example
+
+```python
+from alerts import AlertManager, get_alert_manager
+
+# Option 1: Create instance
+alerts = AlertManager()
+alerts.send_trade_alert(
+    agent_id='public_claude',
+    action='buy',
+    symbol='AAPL',
+    quantity=100,
+    price=150.00,
+    reason='Bull flag pattern detected'
+)
+
+# Option 2: Use singleton
+alerts = get_alert_manager()
+alerts.send_error_alert(
+    agent_id='public_claude',
+    error_type='broker_api',
+    error_message='Order rejected: insufficient buying power'
+)
+```
 
 ---
 
-## 5. Scanner Service
+### 2.4 doctor_claude.py
 
-### 5.1 Scanning Pipeline
+**Purpose:** Health monitoring for all agents and systems
 
+**Location:** `services/shared/common/doctor_claude.py`
+
+**Version:** 1.0.0
+
+**Dependencies:** consciousness, alerts, asyncpg
+
+#### 2.4.1 Classes
+
+| Class | Purpose |
+|-------|---------|
+| `DoctorClaude` | Health monitoring system |
+| `HealthCheckResult` | Dataclass for check results |
+
+#### 2.4.2 DoctorClaude Methods
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `__init__` | research_pool, trading_pool=None | None | Initialize doctor |
+| `check_agent_health` | None | HealthCheckResult | Check all agents |
+| `check_database_health` | None | HealthCheckResult | Check database connectivity |
+| `check_message_health` | None | HealthCheckResult | Check message queues |
+| `check_trading_health` | None | HealthCheckResult | Check trading system |
+| `run_health_check` | None | Dict | Run complete health check |
+| `generate_daily_report` | None | Dict | Generate daily report |
+
+#### 2.4.3 Health Check Thresholds
+
+| Check | Warning | Critical |
+|-------|---------|----------|
+| Agent stale | > 2 hours | > 4 hours |
+| Error count | ≥ 5/day | ≥ 10/day |
+| Budget usage | ≥ 90% | 100% |
+| DB connections | > 40 | > 45 |
+| DB response | > 500ms | > 1000ms |
+| Pending messages | > 1 hour old | N/A |
+| Stuck orders | > 5 minutes | N/A |
+
+#### 2.4.4 Usage Example
+
+```python
+from doctor_claude import DoctorClaude
+import asyncpg
+
+async def run_health_check():
+    research_pool = await asyncpg.create_pool(RESEARCH_DATABASE_URL)
+    trading_pool = await asyncpg.create_pool(DATABASE_URL)
+    
+    doctor = DoctorClaude(research_pool, trading_pool)
+    
+    # Run health check
+    results = await doctor.run_health_check()
+    
+    if results['overall_healthy']:
+        print("✅ All systems healthy")
+    else:
+        print(f"❌ Issues: {results['issues']}")
+    
+    await research_pool.close()
+    await trading_pool.close()
+
+# Run via command line
+python doctor_claude.py           # Health check
+python doctor_claude.py daily_report  # Daily report
 ```
-Universe (4000+ stocks)
-         │
-         ▼ Filter: Volume > 500K
-Top 100 by Volume
-         │
-         ▼ Filter: Gap > 2%
-Gap Candidates (~50)
-         │
-         ▼ News Service: Catalyst Check
-Catalyst Candidates (~20)
-         │
-         ▼ Pattern + Technical Analysis
-Final Candidates (5)
-```
-
-### 5.2 Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/scan` | POST | Trigger market scan |
-| `/api/v1/candidates` | GET | Get current candidates |
-| `/health` | GET | Service health check |
 
 ---
 
-## 6. Trading Service
+## 3. Agent Lifecycle
 
-### 6.1 Order Execution Flow
+### 3.1 Standard Agent Cycle
 
 ```
-1. Receive order request
-2. Validate with Risk Manager
-3. Submit to Alpaca
-4. Store in database
-5. Return confirmation
+┌─────────────────────────────────────────────────────────────────┐
+│                    AGENT LIFECYCLE                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   1. WAKE UP                                                     │
+│   ──────────                                                     │
+│   state = await consciousness.wake_up()                          │
+│   • Updates mode to 'awake'                                      │
+│   • Returns current budget, error count                          │
+│                                                                  │
+│   2. CHECK MESSAGES                                              │
+│   ─────────────────                                              │
+│   messages = await consciousness.check_messages()                │
+│   for msg in messages:                                           │
+│       # Process message                                          │
+│       await consciousness.mark_processed(msg.id)                 │
+│                                                                  │
+│   3. CHECK BUDGET                                                │
+│   ──────────────                                                 │
+│   if not await consciousness.check_budget():                     │
+│       await consciousness.sleep("Budget exhausted")              │
+│       return                                                     │
+│                                                                  │
+│   4. RUN MODE                                                    │
+│   ──────────                                                     │
+│   await consciousness.update_status('trading', 'Scanning...')    │
+│   # Execute trading logic                                        │
+│   # Record observations, learnings                               │
+│                                                                  │
+│   5. SLEEP                                                       │
+│   ───────                                                        │
+│   await consciousness.sleep("Cycle complete")                    │
+│   • Updates mode to 'sleeping'                                   │
+│   • Records cycle duration                                       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.2 Endpoints
+### 3.2 Cron Schedules
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/orders` | POST | Submit new order |
-| `/api/v1/orders/{id}` | GET | Get order status |
-| `/api/v1/positions` | GET | List positions |
-| `/api/v1/positions/{id}/close` | POST | Close position |
-| `/api/v1/sync` | POST | Sync with Alpaca |
-| `/health` | GET | Service health check |
+**US Markets (public_claude):**
+```cron
+# Pre-market scan (09:00 EST = 14:00 UTC)
+0 14 * * 1-5 /root/catalyst/public/run.sh scan
 
-### 6.3 Order Types
+# Trading cycles (09:30-15:30 EST)
+30 14-20 * * 1-5 /root/catalyst/public/run.sh trade
 
-| Type | Use Case |
-|------|----------|
-| `market` | Immediate execution |
-| `limit` | Price control |
-| `stop` | Stop loss |
-| `stop_limit` | Stop with limit |
-| `bracket` | Entry + SL + TP |
+# End of day (16:00 EST = 21:00 UTC)
+0 21 * * 1-5 /root/catalyst/public/run.sh close
+```
+
+**HKEX Markets (intl_claude):**
+```cron
+# Pre-market scan (09:00 HKT = 01:00 UTC)
+0 1 * * 1-5 /root/catalyst/intl/run.sh scan
+
+# Trading cycles (09:30-15:30 HKT)
+30 1-7 * * 1-5 /root/catalyst/intl/run.sh trade
+
+# End of day (16:00 HKT = 08:00 UTC)
+0 8 * * 1-5 /root/catalyst/intl/run.sh close
+```
+
+**Doctor Claude:**
+```cron
+# Health check every 5 minutes
+*/5 * * * * /root/catalyst/shared/doctor_check.sh
+
+# Daily report (06:00 UTC)
+0 6 * * * /root/catalyst/shared/doctor_report.sh
+```
 
 ---
 
-## 7. Risk Manager Service
+## 4. Trading Services
 
-### 7.1 Risk Checks
+### 4.1 Service Matrix
 
-| Check | Threshold | Action |
-|-------|-----------|--------|
-| Daily loss limit | $2,000 | Emergency stop |
-| Position size | 2% of account | Reject order |
-| Max positions | 5 concurrent | Queue new orders |
-| Sector exposure | 40% max | Warn and limit |
+| Service | Port | Purpose |
+|---------|------|---------|
+| Orchestration | 5000 | MCP interface |
+| Scanner | 5001 | Market filtering |
+| Pattern | 5002 | Chart patterns |
+| Technical | 5003 | Indicators |
+| Risk Manager | 5004 | Risk validation |
+| Trading | 5005 | Alpaca execution |
+| Workflow | 5006 | Orchestration |
+| News | 5008 | Catalyst detection |
+| Reporting | 5009 | Analytics |
 
-### 7.2 Endpoints
+### 4.2 alpaca_trader.py
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/validate` | POST | Validate proposed trade |
-| `/api/v1/status` | GET | Current risk status |
-| `/api/v1/emergency-stop` | POST | Trigger emergency stop |
-| `/health` | GET | Service health check |
+**Purpose:** Consolidated Alpaca trading client (C2 fix)
 
----
+**Location:** `services/shared/common/alpaca_trader.py`
 
-## 8. Workflow Service
+**Version:** 2.0.0
 
-### 8.1 Workflow States
+**Critical Functions:**
 
-```
-CYCLE STATES:
-  scanning → evaluating → trading → monitoring → closed
+| Function | Purpose |
+|----------|---------|
+| `map_side(side: str)` | Map 'buy'/'long'/'sell'/'short' to OrderSide |
+| `round_price(price: float)` | Round to 2 decimals for sub-penny compliance |
 
-TRANSITIONS:
-  scanning    : Running market scans
-  evaluating  : Analyzing candidates
-  trading     : Executing entries
-  monitoring  : Watching positions
-  closed      : Day complete
-```
-
-### 8.2 Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/workflow/start` | POST | Start trading cycle |
-| `/api/v1/workflow/stop` | POST | End trading cycle |
-| `/api/v1/workflow/status` | GET | Current workflow state |
-| `/health` | GET | Service health check |
+**Symlinks Required:**
+- `services/trading/common/alpaca_trader.py` → `services/shared/common/alpaca_trader.py`
+- `services/risk-manager/common/alpaca_trader.py` → `services/shared/common/alpaca_trader.py`
+- `services/workflow/common/alpaca_trader.py` → `services/shared/common/alpaca_trader.py`
 
 ---
 
-## 9. Cron Schedule
+## 5. Environment Variables
 
-### 9.1 Market Hours Schedule (US Eastern)
+### 5.1 Required Variables
 
 ```bash
-# Pre-market scan
-15 9 * * 1-5    /scripts/trigger-workflow.sh
+# Trading Database
+DATABASE_URL=postgresql://user:pass@host:port/catalyst_trading?sslmode=require
 
-# Market open
-30 9 * * 1-5    /scripts/trigger-workflow.sh
+# Research Database
+RESEARCH_DATABASE_URL=postgresql://user:pass@host:port/catalyst_research?sslmode=require
 
-# Intraday scans (hourly)
-30 10 * * 1-5   /scripts/trigger-workflow.sh
-30 11 * * 1-5   /scripts/trigger-workflow.sh
-0 13 * * 1-5    /scripts/trigger-workflow.sh
-0 14 * * 1-5    /scripts/trigger-workflow.sh
-0 15 * * 1-5    /scripts/trigger-workflow.sh
+# Alpaca API
+ALPACA_API_KEY=your_api_key
+ALPACA_SECRET_KEY=your_secret_key
 
-# Market close
-0 16 * * 1-5    /scripts/close-positions.sh
-
-# Health checks (every 15 minutes)
-*/15 * * * *    /scripts/health-check.sh
+# Claude API
+ANTHROPIC_API_KEY=sk-ant-xxx
 ```
 
-### 9.2 Doctor Claude Schedule
+### 5.2 Optional Variables
 
 ```bash
-# Doctor Claude runs as continuous loop during market hours
-# OR can be scheduled via cron:
+# Email Alerts
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+ALERT_EMAIL=recipient@example.com
 
-# Every 5 minutes during market hours
-*/5 9-16 * * 1-5  python3 /scripts/trade_watchdog.py >> /var/log/catalyst/watchdog.log 2>&1
+# Agent Identity
+AGENT_ID=public_claude
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
 ---
 
-## 10. Alert System
+## 6. Related Documents
 
-### 10.1 Alert Channels
-
-| Channel | Use Case | Recipients |
-|---------|----------|------------|
-| Email | Critical alerts | Craig |
-| Log | All events | System |
-| Redis | Real-time | Services |
-
-### 10.2 Alert Types
-
-| Type | Severity | Trigger |
-|------|----------|---------|
-| Emergency Stop | CRITICAL | Daily loss exceeded |
-| Position Closed | INFO | Stop loss / take profit hit |
-| Service Down | CRITICAL | Health check failed |
-| Doctor Claude Issue | WARNING/CRITICAL | Reconciliation mismatch |
+| Document | Purpose |
+|----------|---------|
+| `architecture.md` | System architecture |
+| `database-schema.md` | Database schema |
+| `ARCHITECTURE-RULES.md` | Development rules |
+| `consciousness-framework-summary.md` | Implementation details |
+| `pre-market-validation-2025-12-30.md` | Validation procedures |
 
 ---
 
-## 11. Doctor Claude Operations
-
-### 11.1 Overview
-
-Doctor Claude is an active monitoring system that runs during market hours to:
-1. **Observe** - Check trade pipeline via database queries
-2. **Diagnose** - Compare DB state vs Alpaca broker state
-3. **Decide** - Determine auto-fix vs escalation
-4. **Act** - Execute safe fixes or alert human
-5. **Log** - Record all activities for audit trail
-
-**See operations.md** for complete state machines, data flows, and the core trading pattern.
-
-### 11.2 Components
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| Trade Watchdog | `trade_watchdog.py` | Run diagnostics, output JSON |
-| Activity Logger | `log_activity.py` | Record to `claude_activity_log` |
-| Monitor Script | `doctor_claude_monitor.sh` | Continuous monitoring loop |
-
-### 11.3 Diagnostic Checks
-
-| Check | Query Source | Comparison |
-|-------|--------------|------------|
-| Pipeline Status | `v_trade_pipeline_status` | N/A (status only) |
-| Stuck Orders | `orders.status` | Pending status > 5 min |
-| Position Reconciliation | `positions` table | vs Alpaca `get_all_positions()` |
-| Order Status Sync | `orders.alpaca_order_id` | vs Alpaca `get_order_by_id()` |
-| Stale Cycle | `trading_cycles` | updated_at > 30 min |
-
-**Critical:** Doctor Claude queries the `orders` table for order reconciliation, NOT positions.
-
-### 11.4 Issue Taxonomy
-
-| Issue Type | Severity | Auto-Fix | Reasoning |
-|------------|----------|----------|-----------|
-| `ORDER_STATUS_MISMATCH` | WARNING | ✅ Yes | DB sync only |
-| `PHANTOM_POSITION` | CRITICAL | ✅ Yes | Already gone from broker |
-| `ORPHAN_POSITION` | CRITICAL | ❌ No | Real money, needs human |
-| `QTY_MISMATCH` | WARNING | ⚠️ Maybe | Depends on size |
-| `STUCK_ORDER` | WARNING | ❌ No | May be market conditions |
-| `CYCLE_STALE` | WARNING | ❌ No | May be expected |
-
-### 11.5 Decision Framework
-
-```
-Issue Detected
-      │
-      ▼
-┌─────────────────┐
-│ Check rules in  │
-│ doctor_claude_  │
-│ rules table     │
-└────────┬────────┘
-         │
-    auto_fix_enabled?
-         │
-    ┌────┴────┐
-   YES       NO
-    │         │
-    ▼         ▼
-┌───────┐ ┌───────┐
-│Execute│ │Escalate│
-│Fix SQL│ │to Craig│
-└───┬───┘ └───────┘
-    │
-    ▼
-┌───────┐
-│Verify │
-│Fixed  │
-└───┬───┘
-    │
-    ▼
-┌───────┐
-│ Log   │
-│Activity│
-└───────┘
-```
-
-### 11.6 Watchdog Output Format
-
-```json
-{
-  "timestamp": "2025-12-27T10:30:00",
-  "duration_ms": 450,
-  "alpaca_connected": true,
-  "pipeline": {
-    "status": "OK",
-    "cycle_id": "abc-123",
-    "state": "trading",
-    "pipeline_stage": "MONITORING",
-    "counts": {
-      "candidates": 5,
-      "positions_open": 2,
-      "orders_filled": 3
-    },
-    "pnl": {
-      "daily": 150.00,
-      "realized": 100.00,
-      "unrealized": 50.00
-    }
-  },
-  "issues": [
-    {
-      "type": "ORDER_STATUS_MISMATCH",
-      "severity": "WARNING",
-      "symbol": "AAPL",
-      "message": "Order status: DB=submitted, Alpaca=filled",
-      "fix": "UPDATE orders SET status = 'filled'..."
-    }
-  ],
-  "summary": {
-    "total_issues": 1,
-    "critical": 0,
-    "warnings": 1,
-    "status": "WARNING"
-  }
-}
-```
-
-### 11.7 Activity Logging
-
-All Doctor Claude activities are logged to `claude_activity_log`:
-
-```sql
--- Example log entry
-INSERT INTO claude_activity_log (
-    observation_type,
-    issues_found, critical_count, warning_count,
-    decision, decision_reasoning,
-    action_type, action_detail, action_result,
-    issue_type, issue_severity
-) VALUES (
-    'watchdog_run',
-    1, 0, 1,
-    'auto_fix', 'ORDER_STATUS_MISMATCH is safe per rules',
-    'sql_update', 'UPDATE orders SET status = ''filled''...', 'success',
-    'ORDER_STATUS_MISMATCH', 'WARNING'
-);
-```
-
-### 11.8 Operational Commands
-
-**Start Doctor Claude session:**
-```bash
-python3 log_activity.py --type startup --decision no_action
-```
-
-**Run single diagnostic:**
-```bash
-python3 trade_watchdog.py --pretty
-```
-
-**View recent activity:**
-```bash
-python3 log_activity.py --view --limit 20
-```
-
-**Query pipeline status:**
-```sql
-SELECT * FROM v_trade_pipeline_status WHERE date = CURRENT_DATE;
-```
-
-**Query today's activity:**
-```sql
-SELECT * FROM v_claude_activity_summary WHERE activity_date = CURRENT_DATE;
-```
-
-**Check recurring issues:**
-```sql
-SELECT * FROM v_recurring_issues;
-```
-
-### 11.9 Safety Boundaries
-
-**Doctor Claude will NEVER:**
-- Close positions in Alpaca automatically
-- Modify real money amounts
-- Change risk parameters
-- Override emergency stops
-- Act on orphan positions (real money not tracked)
-
-**Doctor Claude CAN:**
-- Sync DB state to match Alpaca
-- Mark phantom positions as closed
-- Update order statuses
-- Alert Craig for human judgment
-
-### 11.10 Escalation Procedures
-
-| Priority | Channel | Response Time |
-|----------|---------|---------------|
-| CRITICAL | Email immediately | < 15 min |
-| HIGH | Email | Same day |
-| NORMAL | Daily summary | Next review |
-| LOW | Log only | Weekly review |
-
-**Escalation triggers:**
-- 3+ failures of same issue type in 1 hour
-- Any `ORPHAN_POSITION` (real money)
-- Database or Alpaca connection failure
-- Daily loss approaching limit
-
----
-
-## Related Documents
-
-- **architecture.md** - System architecture
-- **database-schema.md** - Database schema
-- **operations.md** - Core patterns, state machines, data flows
-- **ORDERS-POSITIONS-IMPLEMENTATION.md** - Orders vs positions implementation guide
-- **ARCHITECTURE-RULES.md** - Mandatory rules for Claude Code
-- **DOCTOR-CLAUDE-DESIGN.md** - Doctor Claude detailed design
-- **DOCTOR-CLAUDE-IMPLEMENTATION.md** - Deployment guide
-- **work-summary-2025-12-27.md** - Implementation work summary
-
----
-
-## Appendix: Deployment Status (Dec 27, 2025)
-
-### Current State
-
-Doctor Claude was deployed on December 27, 2025 with the following results:
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| `trade_watchdog.py` | ✅ Deployed | v1.0.0 |
-| `log_activity.py` | ✅ Deployed | v1.0.0 |
-| `doctor_claude_monitor.sh` | ✅ Deployed | Monitoring loop script |
-| `claude_activity_log` table | ✅ Created | With all indexes |
-| `doctor_claude_rules` table | ✅ Created | 10 default rules loaded |
-| Views | ✅ Created | All 5 views operational |
-
-### Initial Findings
-
-First watchdog run found **27 stuck orders** - old positions from Nov-Dec with pending `alpaca_status`. These represent historical data that should be cleaned up.
-
-### Recommended Actions
-
-1. **Before Next Trading Session (Dec 30):**
-   ```bash
-   # Start Doctor Claude monitoring
-   nohup ./scripts/doctor_claude_monitor.sh &
-   ```
-
-2. **Clean up old stuck orders:**
-   ```sql
-   -- Review stuck positions
-   SELECT position_id, symbol, alpaca_status, entry_time
-   FROM positions p
-   JOIN securities s ON p.security_id = s.security_id
-   WHERE alpaca_status IN ('pending', 'submitted', 'accepted')
-     AND entry_time < NOW() - INTERVAL '7 days';
-   ```
-
----
-
-**END OF FUNCTIONAL SPECIFICATION v7.0.0**
+**END OF FUNCTIONAL SPECIFICATION v8.0.0**
