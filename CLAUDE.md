@@ -2,8 +2,8 @@
 
 **Name of Application**: Catalyst Trading System
 **Name of file**: CLAUDE.md
-**Version**: 1.1.1
-**Last Updated**: 2025-12-06
+**Version**: 1.2.0
+**Last Updated**: 2025-12-11
 **Purpose**: Guidelines for Claude Code operating on production droplet
 
 ---
@@ -466,6 +466,193 @@ psql $DATABASE_URL
 ```bash
 # From VSCode terminal (local machine)
 scp -i ~/.ssh/id_rsa root@<DROPLET_IP>:/root/catalyst-trading-mcp/services/*/*.py ./local-backup/
+```
+
+---
+
+## 📈 Trading Analysis Queries
+
+These queries provide quick access to trading performance data. All queries use the `.env` file for database connection.
+
+### Setup
+```bash
+# Load environment (run once per session or add to each command)
+source /root/catalyst-trading-system/.env
+```
+
+### Quick Status Check
+```bash
+# Current US market time
+TZ=America/New_York date
+
+# Recent trading cycles
+psql "$DATABASE_URL" -c "
+SELECT cycle_id, mode, status,
+       started_at AT TIME ZONE 'America/New_York' as started_et
+FROM trading_cycles
+ORDER BY started_at DESC LIMIT 5;"
+```
+
+### Position Summary (Last 7 Days)
+```bash
+# Daily position counts by status
+psql "$DATABASE_URL" -c "
+SELECT
+    DATE(opened_at AT TIME ZONE 'America/New_York') as trade_date,
+    COUNT(*) as total,
+    COUNT(CASE WHEN alpaca_status = 'accepted' THEN 1 END) as accepted,
+    COUNT(CASE WHEN alpaca_status = 'filled' THEN 1 END) as filled,
+    COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
+    COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed
+FROM positions
+WHERE opened_at >= NOW() - INTERVAL '7 days'
+GROUP BY DATE(opened_at AT TIME ZONE 'America/New_York')
+ORDER BY trade_date DESC;"
+```
+
+### Recent Positions Detail
+```bash
+# Last 20 positions with key details
+psql "$DATABASE_URL" -c "
+SELECT
+    s.symbol, p.side, p.quantity, p.entry_price,
+    p.exit_price, p.realized_pnl, p.pnl_percent,
+    p.status, p.alpaca_status,
+    p.opened_at AT TIME ZONE 'America/New_York' as opened_et
+FROM positions p
+JOIN securities s ON s.security_id = p.security_id
+WHERE p.opened_at >= NOW() - INTERVAL '7 days'
+ORDER BY p.opened_at DESC LIMIT 20;"
+```
+
+### P&L Summary
+```bash
+# Aggregate P&L for recent positions
+psql "$DATABASE_URL" -c "
+SELECT
+    COUNT(*) as total_positions,
+    COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
+    COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed,
+    COALESCE(SUM(realized_pnl), 0) as total_realized_pnl,
+    COALESCE(SUM(unrealized_pnl), 0) as total_unrealized_pnl,
+    ROUND(AVG(pnl_percent), 2) as avg_pnl_percent
+FROM positions
+WHERE opened_at >= NOW() - INTERVAL '7 days';"
+```
+
+### Closed Positions with P&L
+```bash
+# Closed positions showing profit/loss
+psql "$DATABASE_URL" -c "
+SELECT
+    s.symbol, p.side, p.quantity,
+    p.entry_price, p.exit_price,
+    p.realized_pnl, p.pnl_percent,
+    p.close_reason,
+    p.closed_at AT TIME ZONE 'America/New_York' as closed_et
+FROM positions p
+JOIN securities s ON s.security_id = p.security_id
+WHERE p.status = 'closed'
+  AND p.closed_at >= NOW() - INTERVAL '7 days'
+ORDER BY p.closed_at DESC LIMIT 20;"
+```
+
+### Scan Results
+```bash
+# Recent scan candidates per cycle
+psql "$DATABASE_URL" -c "
+SELECT
+    tc.cycle_id,
+    tc.started_at AT TIME ZONE 'America/New_York' as scan_time,
+    COUNT(sr.*) as candidates_found
+FROM trading_cycles tc
+LEFT JOIN scan_results sr ON sr.cycle_id = tc.cycle_id
+WHERE tc.started_at >= NOW() - INTERVAL '3 days'
+GROUP BY tc.cycle_id, tc.started_at
+ORDER BY tc.started_at DESC LIMIT 10;"
+
+# Detailed scan results for specific cycle
+psql "$DATABASE_URL" -c "
+SELECT s.symbol, sr.price, sr.volume, sr.score, sr.selected_for_trading
+FROM scan_results sr
+JOIN securities s ON s.security_id = sr.security_id
+WHERE sr.cycle_id = '20251209-004'
+ORDER BY sr.score DESC;"
+```
+
+### Alpaca Order Status Check
+```bash
+# Check if orders are actually filling
+psql "$DATABASE_URL" -c "
+SELECT
+    alpaca_status,
+    COUNT(*) as count
+FROM positions
+WHERE opened_at >= NOW() - INTERVAL '7 days'
+GROUP BY alpaca_status
+ORDER BY count DESC;"
+
+# Positions with Alpaca errors
+psql "$DATABASE_URL" -c "
+SELECT s.symbol, p.alpaca_order_id, p.alpaca_status, p.alpaca_error
+FROM positions p
+JOIN securities s ON s.security_id = p.security_id
+WHERE p.alpaca_error IS NOT NULL
+  AND p.opened_at >= NOW() - INTERVAL '7 days';"
+```
+
+### Symbol Performance
+```bash
+# Performance by symbol (last 30 days)
+psql "$DATABASE_URL" -c "
+SELECT
+    s.symbol,
+    COUNT(*) as trades,
+    SUM(CASE WHEN p.realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+    SUM(CASE WHEN p.realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+    COALESCE(SUM(p.realized_pnl), 0) as total_pnl,
+    ROUND(AVG(p.pnl_percent), 2) as avg_pnl_pct
+FROM positions p
+JOIN securities s ON s.security_id = p.security_id
+WHERE p.status = 'closed'
+  AND p.closed_at >= NOW() - INTERVAL '30 days'
+GROUP BY s.symbol
+ORDER BY total_pnl DESC LIMIT 15;"
+```
+
+### Full Trading Report Query
+```bash
+# Comprehensive 7-day summary (use for "how did trading go" questions)
+psql "$DATABASE_URL" -c "
+-- Trading cycles
+SELECT 'TRADING CYCLES' as section;
+SELECT cycle_id, mode, status,
+       started_at AT TIME ZONE 'America/New_York' as started_et
+FROM trading_cycles
+WHERE started_at >= NOW() - INTERVAL '7 days'
+ORDER BY started_at DESC;
+
+-- Daily summary
+SELECT 'DAILY SUMMARY' as section;
+SELECT
+    DATE(opened_at AT TIME ZONE 'America/New_York') as date,
+    COUNT(*) as positions,
+    COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
+    COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed,
+    COALESCE(SUM(realized_pnl), 0) as realized_pnl
+FROM positions
+WHERE opened_at >= NOW() - INTERVAL '7 days'
+GROUP BY DATE(opened_at AT TIME ZONE 'America/New_York')
+ORDER BY date DESC;
+
+-- Recent positions
+SELECT 'RECENT POSITIONS' as section;
+SELECT s.symbol, p.side, p.quantity, p.entry_price, p.status, p.alpaca_status,
+       p.opened_at AT TIME ZONE 'America/New_York' as opened_et
+FROM positions p
+JOIN securities s ON s.security_id = p.security_id
+WHERE p.opened_at >= NOW() - INTERVAL '3 days'
+ORDER BY p.opened_at DESC LIMIT 15;"
 ```
 
 ---
