@@ -1,0 +1,64 @@
+# ============================================================================
+# Name of Application: Catalyst Trading System
+# Name of file: doctor-claude.service
+# Version: 1.0.0
+# Last Updated: 2025-12-27
+# Purpose: Systemd service for Doctor Claude trade monitoring
+#
+# INSTALLATION:
+#   1. Copy to: /etc/systemd/system/doctor-claude.service
+#   2. Run: systemctl daemon-reload
+#   3. Run: systemctl enable doctor-claude
+#   4. Run: systemctl start doctor-claude
+#
+# MANAGEMENT:
+#   systemctl start doctor-claude    # Start the service
+#   systemctl stop doctor-claude     # Stop the service
+#   systemctl restart doctor-claude  # Restart the service
+#   systemctl status doctor-claude   # Check status
+#   journalctl -u doctor-claude -f   # View live logs
+# ============================================================================
+
+[Unit]
+Description=Doctor Claude Trade Lifecycle Monitor
+Documentation=https://github.com/your-repo/catalyst-trading-system
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Working directory
+WorkingDirectory=/root/catalyst-trading-system/scripts
+
+# Load environment from file
+EnvironmentFile=/root/catalyst-trading-system/.env
+
+# Main execution
+ExecStart=/root/catalyst-trading-system/scripts/doctor_claude_service.py
+
+# Restart policy
+Restart=always
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=doctor-claude
+
+# Security hardening (optional but recommended)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/catalyst /root/catalyst-trading-system/logs
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
