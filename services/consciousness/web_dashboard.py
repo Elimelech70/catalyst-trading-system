@@ -13,14 +13,22 @@ v1.0.0 (2025-12-31) - Initial creation
 - View agents, messages, observations, questions
 - Send messages and add questions
 
+v1.1.0 (2025-12-31) - Added approval system
+- Escalation approvals for agent permission requests
+- Approve/deny buttons on dashboard
+- Response messages sent back to requesting agent
+
 ENDPOINTS:
-GET  /                     → Dashboard home
+GET  /                     → Dashboard home (with pending approvals)
 GET  /agents               → All agent states
 GET  /messages             → Recent messages
 GET  /observations         → Recent observations
 GET  /questions            → Open questions
+GET  /approvals            → Pending approvals page
 POST /message              → Send message
 POST /question             → Add question
+POST /approve/{id}         → Approve an escalation
+POST /deny/{id}            → Deny an escalation
 
 USAGE:
 uvicorn web_dashboard:app --host 0.0.0.0 --port 8080
@@ -151,22 +159,35 @@ STYLES = """
     .priority { font-size: 0.8em; padding: 2px 6px; border-radius: 3px; background: #333; }
     .priority-high { background: #a50; }
     .priority-critical { background: #a00; }
+    .card.escalation { border-left: 3px solid #ff0; background: #2a2a1e; }
+    .approval-buttons { display: flex; gap: 8px; margin-top: 12px; }
+    .approval-buttons form { margin: 0; flex: 1; }
+    .approval-buttons button { padding: 10px; }
+    .btn-approve { background: #0a3; }
+    .btn-approve:hover { background: #0c4; }
+    .btn-deny { background: #a00; }
+    .btn-deny:hover { background: #c00; }
+    .badge { display: inline-block; background: #ff0; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; margin-left: 8px; }
 </style>
 """
 
-def nav_html(active: str, token: str) -> str:
+def nav_html(active: str, token: str, approval_count: int = 0) -> str:
     """Generate navigation HTML."""
     links = [
         ("Home", "/"),
+        ("Approvals", "/approvals"),
         ("Agents", "/agents"),
         ("Messages", "/messages"),
         ("Observations", "/observations"),
         ("Questions", "/questions"),
     ]
-    return '<div class="nav">' + ''.join([
-        f'<a href="{url}?token={token}" class="{"active" if name.lower() == active.lower() else ""}">{name}</a>'
-        for name, url in links
-    ]) + '</div>'
+    nav = '<div class="nav">'
+    for name, url in links:
+        is_active = "active" if name.lower() == active.lower() else ""
+        badge = f'<span class="badge">{approval_count}</span>' if name == "Approvals" and approval_count > 0 else ""
+        nav += f'<a href="{url}?token={token}" class="{is_active}">{name}{badge}</a>'
+    nav += '</div>'
+    return nav
 
 def format_time(dt) -> str:
     """Format datetime for display."""
@@ -198,8 +219,17 @@ async def dashboard(request: Request, token: str = Depends(verify_token)):
                 FROM claude_observations
                 ORDER BY created_at DESC LIMIT 5
             """)
+            # Get pending approvals (escalations)
+            approvals = await conn.fetch("""
+                SELECT id, from_agent, subject, body, created_at
+                FROM claude_messages
+                WHERE msg_type = 'escalation' AND status = 'pending'
+                ORDER BY created_at DESC
+            """)
     finally:
         await pool.close()
+
+    approval_count = len(approvals)
 
     agents_html = ""
     for a in agents:
@@ -237,6 +267,29 @@ async def dashboard(request: Request, token: str = Depends(verify_token)):
         </div>
         '''
 
+    # Build approvals HTML
+    approvals_html = ""
+    for a in approvals:
+        body_preview = (a["body"] or "")[:150] + ("..." if len(a["body"] or "") > 150 else "")
+        approvals_html += f'''
+        <div class="card escalation">
+            <div class="msg-header">
+                <span class="msg-from">{a["from_agent"]}</span>
+                <span class="msg-time">{format_time(a["created_at"])}</span>
+            </div>
+            <div class="msg-subject">{a["subject"]}</div>
+            <div class="msg-body">{body_preview}</div>
+            <div class="approval-buttons">
+                <form action="/approve/{a["id"]}?token={token}" method="post">
+                    <button class="btn-approve">Approve</button>
+                </form>
+                <form action="/deny/{a["id"]}?token={token}" method="post">
+                    <button class="btn-deny">Deny</button>
+                </form>
+            </div>
+        </div>
+        '''
+
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -250,7 +303,9 @@ async def dashboard(request: Request, token: str = Depends(verify_token)):
         <h1>Catalyst Consciousness</h1>
         <div class="subtitle">Mobile Dashboard</div>
 
-        {nav_html("home", token)}
+        {nav_html("home", token, approval_count)}
+
+        {f'<h2>Pending Approvals ({approval_count})</h2>' + approvals_html if approvals_html else ''}
 
         <h2>Agents</h2>
         {agents_html or '<div class="empty">No agents</div>'}
@@ -555,6 +610,128 @@ async def add_question(
         await pool.close()
 
     return RedirectResponse(url=f"/questions?token={token}&success=1", status_code=303)
+
+
+@app.get("/approvals", response_class=HTMLResponse)
+async def approvals_page(request: Request, token: str = Depends(verify_token)):
+    """Pending approvals page."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            approvals = await conn.fetch("""
+                SELECT id, from_agent, subject, body, created_at
+                FROM claude_messages
+                WHERE msg_type = 'escalation' AND status = 'pending'
+                ORDER BY created_at DESC
+            """)
+    finally:
+        await pool.close()
+
+    approval_count = len(approvals)
+
+    approvals_html = ""
+    for a in approvals:
+        body_text = a["body"] or ""
+        approvals_html += f'''
+        <div class="card escalation">
+            <div class="msg-header">
+                <span class="msg-from">{a["from_agent"]}</span>
+                <span class="msg-time">{format_time(a["created_at"])}</span>
+            </div>
+            <div class="msg-subject">{a["subject"]}</div>
+            <div class="msg-body">{body_text}</div>
+            <div class="approval-buttons">
+                <form action="/approve/{a["id"]}?token={token}" method="post">
+                    <button class="btn-approve">Approve</button>
+                </form>
+                <form action="/deny/{a["id"]}?token={token}" method="post">
+                    <button class="btn-deny">Deny</button>
+                </form>
+            </div>
+        </div>
+        '''
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Approvals - Catalyst</title>
+        {STYLES}
+    </head>
+    <body>
+        <h1>Pending Approvals</h1>
+        {nav_html("approvals", token, approval_count)}
+        {approvals_html or '<div class="empty">No pending approvals</div>'}
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/approve/{message_id}")
+async def approve_escalation(message_id: int, request: Request, token: str = Depends(verify_token)):
+    """Approve an escalation request."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            # Get original message
+            msg = await conn.fetchrow(
+                "SELECT from_agent, subject FROM claude_messages WHERE id = $1",
+                message_id
+            )
+            if not msg:
+                raise HTTPException(status_code=404, detail="Message not found")
+
+            # Mark as approved
+            await conn.execute("""
+                UPDATE claude_messages
+                SET status = 'approved', read_at = NOW()
+                WHERE id = $1
+            """, message_id)
+
+            # Send approval response back to agent
+            await conn.execute("""
+                INSERT INTO claude_messages (from_agent, to_agent, msg_type, subject, body, status)
+                VALUES ('craig_mobile', $1, 'response', $2, 'APPROVED', 'pending')
+            """, msg['from_agent'], f"Approved: {msg['subject']}")
+    finally:
+        await pool.close()
+
+    return RedirectResponse(url=f"/?token={token}", status_code=303)
+
+
+@app.post("/deny/{message_id}")
+async def deny_escalation(message_id: int, request: Request, reason: str = Form(""), token: str = Depends(verify_token)):
+    """Deny an escalation request."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            # Get original message
+            msg = await conn.fetchrow(
+                "SELECT from_agent, subject FROM claude_messages WHERE id = $1",
+                message_id
+            )
+            if not msg:
+                raise HTTPException(status_code=404, detail="Message not found")
+
+            # Mark as denied
+            await conn.execute("""
+                UPDATE claude_messages
+                SET status = 'denied', read_at = NOW()
+                WHERE id = $1
+            """, message_id)
+
+            # Send denial response back to agent
+            await conn.execute("""
+                INSERT INTO claude_messages (from_agent, to_agent, msg_type, subject, body, status)
+                VALUES ('craig_mobile', $1, 'response', $2, $3, 'pending')
+            """, msg['from_agent'], f"Denied: {msg['subject']}", reason or 'DENIED')
+    finally:
+        await pool.close()
+
+    return RedirectResponse(url=f"/?token={token}", status_code=303)
 
 
 @app.get("/health")
