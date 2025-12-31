@@ -1,14 +1,28 @@
 # Catalyst Trading System - Architecture Consolidation & Operations Update
 
 **Name of Application:** Catalyst Trading System  
-**Name of file:** architecture-consolidation-v9.0.0.md  
-**Version:** 9.0.0  
+**Name of file:** architecture-consolidation-v9.2.0.md  
+**Version:** 9.2.0  
 **Last Updated:** 2025-12-31  
 **Purpose:** Consolidated architecture, operational workflows, action plan, and safe autonomy roadmap
 
 ---
 
 ## REVISION HISTORY
+
+- **v9.2.0 (2025-12-31)** - Task Execution System
+  - Added task_executor.py with whitelisted commands
+  - Added file editing (write_file, edit_file) with automatic rollback
+  - Added mandatory reporting back to big_bro
+  - Added auto-generated CHANGELOG-AUTO.md for all file changes
+  - big_bro can now issue commands to little bros
+  - Restarts whitelisted (no approval needed)
+
+- **v9.1.0 (2025-12-31)** - Mobile Dashboard & Email Removal
+  - Added craig_mobile Web Dashboard (:8080)
+  - Added Approval Flow for safe autonomy escalations
+  - REMOVED email communications (replaced by dashboard)
+  - All human-agent communication now via MCP or Web Dashboard
 
 - **v9.0.0 (2025-12-31)** - Complete Consolidation
   - Merged all design documents from both repositories
@@ -122,6 +136,18 @@
 | public_claude | US Droplet | :15 hourly | ✅ LIVE | $0.0007 |
 | intl_claude | INTL Droplet | :30 hourly | 🔄 PENDING | $0.00 |
 | craig_desktop | Ubuntu Laptop | On-demand | ✅ LIVE (MCP) | $0.00 |
+| craig_mobile | Mobile Phone | On-demand | ✅ LIVE (Web) | $0.00 |
+
+### 1.3 Communication Interfaces
+
+| Interface | Location | Purpose | Status |
+|-----------|----------|---------|--------|
+| MCP Server | Craig's Laptop | Full consciousness access from Claude Desktop | ✅ LIVE |
+| Web Dashboard | US Droplet :8080 | Mobile access, approvals | ✅ DEPLOYING |
+
+**Note:** Email communications have been REMOVED from the architecture. All human-agent communication flows through:
+1. **MCP** (laptop) - Full read/write consciousness access
+2. **Web Dashboard** (mobile) - Status, messages, approvals
 
 ### 1.3 Consciousness Tables (catalyst_research)
 
@@ -278,6 +304,15 @@
 │          ├── Adds questions, observations, learnings                       │
 │          └── Strategic oversight and direction                             │
 │                                                                             │
+│  ON-DEMAND ─── CRAIG_MOBILE (Web Dashboard) ────────────────────────────   │
+│          │                                                                  │
+│          ├── Craig opens phone browser → http://droplet:8080               │
+│          ├── Views agent status, messages, observations                    │
+│          ├── Sends messages to agents                                      │
+│          ├── Adds questions                                                │
+│          ├── APPROVES/DENIES escalation requests                          │
+│          └── Mobile oversight from anywhere                                │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -298,12 +333,14 @@
 │                    │            │            │                              │
 │                    ▼            ▼            ▼                              │
 │             ┌──────────┐ ┌──────────┐ ┌──────────┐                         │
-│             │craig_    │ │ Email    │ │ GitHub   │                         │
-│             │desktop   │ │ Alerts   │ │ Commits  │                         │
-│             │(MCP)     │ │          │ │          │                         │
-│             └────┬─────┘ └──────────┘ └──────────┘                         │
-│                  │                                                          │
-│                  ▼                                                          │
+│             │craig_    │ │craig_    │ │ GitHub   │                         │
+│             │desktop   │ │mobile    │ │ Commits  │                         │
+│             │(MCP)     │ │(Web:8080)│ │          │                         │
+│             └────┬─────┘ └────┬─────┘ └──────────┘                         │
+│                  │            │                                             │
+│                  └─────┬──────┘                                             │
+│                        │                                                    │
+│                        ▼                                                    │
 │         ┌───────────────┐                                                   │
 │         │   BIG_BRO     │                                                   │
 │         │   (Strategy)  │                                                   │
@@ -333,6 +370,102 @@
 │                                                                             │
 │  FLOW:                                                                      │
 │  Strategy ──► Instructions ──► Execution ──► Results ──► Learning          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.5 Web Dashboard (Mobile Access)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     WEB DASHBOARD ARCHITECTURE                              │
+│                     http://DROPLET_IP:8080                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  🧠 Catalyst Consciousness                    [Craig's Phone]        │   │
+│  ├─────────────────────────────────────────────────────────────────────┤   │
+│  │                                                                     │   │
+│  │  ⚠️ PENDING APPROVALS (if any)                                     │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │ public_claude: Permission to restart Docker                 │   │   │
+│  │  │ [✓ Approve]  [✗ Deny]                                      │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                     │   │
+│  │  AGENTS                                                             │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │ big_bro        sleeping    $0.0010                          │   │   │
+│  │  │ public_claude  sleeping    $0.0007                          │   │   │
+│  │  │ intl_claude    trading     $0.0000                          │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                     │   │
+│  │  RECENT MESSAGES | OBSERVATIONS | QUESTIONS                        │   │
+│  │                                                                     │   │
+│  │  [Send Message]  [Add Question]                                    │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ENDPOINTS:                                                                 │
+│  ├── GET  /                  → Dashboard home                              │
+│  ├── GET  /agents            → Agent states                                │
+│  ├── GET  /messages          → Recent messages                             │
+│  ├── GET  /observations      → Recent observations                         │
+│  ├── GET  /questions         → Open questions                              │
+│  ├── POST /message           → Send message to agent                       │
+│  ├── POST /question          → Add question                                │
+│  ├── POST /approve/{id}      → Approve escalation                          │
+│  └── POST /deny/{id}         → Deny escalation                             │
+│                                                                             │
+│  AUTH: Token-based (?token=xxx)                                            │
+│  SERVICE: systemd (consciousness-web.service)                              │
+│  PORT: 8080                                                                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.6 Approval Flow (Safe Autonomy)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        ESCALATION & APPROVAL FLOW                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Agent needs permission for controlled action                            │
+│     │                                                                       │
+│     ▼                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Agent sends escalation message:                                     │   │
+│  │   msg_type: 'escalation'                                           │   │
+│  │   to_agent: 'craig_mobile'                                         │   │
+│  │   subject: 'Permission: [action description]'                      │   │
+│  │   body: 'Task: [command]\nReason: [why needed]'                   │   │
+│  │   status: 'pending'                                                │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│     │                                                                       │
+│     ▼                                                                       │
+│  2. Dashboard shows pending approval prominently                            │
+│     │                                                                       │
+│     ▼                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Craig sees on phone, taps [Approve] or [Deny]                      │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│     │                                                                       │
+│     ▼                                                                       │
+│  3. Response message sent back to agent                                     │
+│     │                                                                       │
+│     ▼                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Agent checks for response:                                          │   │
+│  │   from_agent: 'craig_mobile'                                       │   │
+│  │   msg_type: 'response'                                             │   │
+│  │   subject: 'Approved: [original subject]'                          │   │
+│  │   body: 'APPROVED' or 'DENIED: [reason]'                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│     │                                                                       │
+│     ▼                                                                       │
+│  4. Agent executes (if approved) or logs denial                            │
+│                                                                             │
+│  TIMEOUT: If no response in 24 hours, task is cancelled                    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -381,39 +514,44 @@
 | 1 | Deploy intl_claude heartbeat | Craig + intl droplet | 🔄 After HKEX close |
 | 2 | Fix MCP server schema (asked_by, evidence) | Craig (laptop) | 🔄 Quick fix |
 | 3 | Add system monitoring questions | Craig (MCP) | 🔄 After MCP fix |
-| 4 | Configure SMTP for email alerts | Craig | ❌ Pending |
+| 4 | Deploy web dashboard | public_claude | ✅ DONE |
+| 5 | Repository cleanup (US) | public_claude | 🔄 Pending |
+| 6 | Repository cleanup (INTL) | intl_claude | 🔄 Pending |
+| 7 | Deploy task_executor.py | public_claude | 🔄 Ready |
+| 8 | Deploy heartbeat_public_v2.py | public_claude | 🔄 Ready |
 
 ### 4.2 Short-Term Actions (Next 2 Weeks)
 
 | # | Action | Owner | Priority |
 |---|--------|-------|----------|
-| 5 | Fix OpenD auto-start service | Craig + intl | HIGH |
-| 6 | Implement API budget tracking visibility | public_claude | MEDIUM |
-| 7 | Update architecture doc to v9.0 | big_bro | MEDIUM |
-| 8 | Design safe autonomy framework | big_bro + Craig | HIGH |
+| 9 | Fix OpenD auto-start service | Craig + intl | HIGH |
+| 10 | Implement API budget tracking visibility | public_claude | MEDIUM |
+| 11 | Update architecture doc to v9.2 in repos | big_bro | ✅ DONE |
+| 12 | Design safe autonomy task whitelist | big_bro + Craig | ✅ DONE |
+| 13 | Add HTTPS to dashboard (nginx proxy) | public_claude | LOW |
 
 ### 4.3 Medium-Term Actions (Next Month)
 
 | # | Action | Owner | Priority |
 |---|--------|-------|----------|
-| 9 | Implement safe autonomy (limited tasks) | public_claude | HIGH |
-| 10 | Cross-market learning pipeline | big_bro | MEDIUM |
-| 11 | News service endpoint fix | public_claude | MEDIUM |
-| 12 | Doctor Claude automated health reports | public_claude | MEDIUM |
+| 14 | Cross-market learning pipeline | big_bro | MEDIUM |
+| 15 | News service endpoint fix | public_claude | MEDIUM |
+| 16 | Dashboard enhancements (charts, history) | public_claude | LOW |
+| 17 | Add more whitelisted commands as needed | big_bro | MEDIUM |
 
 ### 4.4 Long-Term Vision (Q1 2025)
 
 | # | Action | Owner | Priority |
 |---|--------|-------|----------|
-| 13 | Organ architecture pilot | big_bro | LOW |
-| 14 | Stage 2 ML capabilities | Research | LOW |
-| 15 | Public release preparation | Craig | LOW |
+| 18 | Organ architecture pilot | big_bro | LOW |
+| 19 | Stage 2 ML capabilities | Research | LOW |
+| 20 | Public release preparation | Craig | LOW |
 
 ---
 
-## PART 5: SAFE AUTONOMY IMPLEMENTATION PLAN
+## PART 5: SAFE AUTONOMY IMPLEMENTATION (IMPLEMENTED)
 
-### 5.1 Current State
+### 5.1 Current Capabilities
 
 ```
 big_bro/public_claude CAN:
@@ -421,156 +559,200 @@ big_bro/public_claude CAN:
   ✅ Read/send messages
   ✅ Record observations/learnings
   ✅ Check agent status
+  ✅ Execute whitelisted commands
+  ✅ Restart Docker services
+  ✅ Edit Python files (with rollback)
+  ✅ Report all changes back
   
 big_bro/public_claude CANNOT:
-  ❌ Write/edit files
-  ❌ Run bash commands
-  ❌ Deploy code
-  ❌ Execute system tasks
+  ❌ Execute non-whitelisted commands
+  ❌ Edit files outside allowed paths
+  ❌ Make changes without backup
+  ❌ Skip mandatory reporting
 ```
 
-### 5.2 Safe Autonomy Framework
+### 5.2 Task Execution System
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                     SAFE AUTONOMY FRAMEWORK                                 │
+│                        TASK EXECUTION ARCHITECTURE                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  TIER 1: READ-ONLY (Current)                                               │
-│  ────────────────────────                                                   │
-│  • Query databases                                                          │
-│  • Check system status                                                      │
-│  • Read logs                                                                │
-│  • View configurations                                                      │
-│                                                                             │
-│  TIER 2: SAFE WRITES (Next)                                                │
-│  ─────────────────────────                                                  │
-│  • Write to specific directories only (/var/log/catalyst/agent/)           │
-│  • Create reports and summaries                                             │
-│  • Update consciousness database                                            │
-│  • Send emails (via alerts.py)                                             │
-│                                                                             │
-│  TIER 3: CONTROLLED EXECUTION (Future)                                     │
-│  ──────────────────────────────────────                                     │
-│  • Whitelisted bash commands only                                           │
-│  • Service restarts (with confirmation)                                     │
-│  • Configuration updates (with backup)                                      │
-│  • Requires logging of all actions                                          │
-│                                                                             │
-│  TIER 4: FULL AUTONOMY (Far Future)                                        │
-│  ──────────────────────────────────                                         │
-│  • Code deployment                                                          │
-│  • System modifications                                                     │
-│  • Strategic decisions                                                      │
-│  • Requires Craig approval for tier escalation                              │
+│  BIG_BRO (:00 hourly)                                                      │
+│     │                                                                       │
+│     │ Sends task message (msg_type='task')                                 │
+│     │                                                                       │
+│     │ TASK: docker_ps                                                      │
+│     │ PARAMS: {}                                                           │
+│     │ REASON: Routine health check                                         │
+│     ▼                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    claude_messages                                   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│     │                                                                       │
+│     │ Waits for :15                                                        │
+│     ▼                                                                       │
+│  PUBLIC_CLAUDE (:15 hourly)                                                │
+│     │                                                                       │
+│     ├── task_executor.py                                                   │
+│     │   ├── Validate whitelist                                             │
+│     │   ├── Validate parameters                                            │
+│     │   ├── Execute command OR file operation                              │
+│     │   └── Return result                                                  │
+│     │                                                                       │
+│     └── MANDATORY: Send detailed report back to big_bro                    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.3 Implementation Steps
+### 5.3 Whitelisted Commands
 
-#### Phase 1: Safe Task Execution (Week 1-2)
+#### System Health (Execute Immediately)
 
-```python
-# Add to heartbeat.py
+| Task | Command | Description |
+|------|---------|-------------|
+| `docker_ps` | `docker ps --format ...` | List containers |
+| `docker_logs` | `docker logs --tail 50 {service}` | Service logs |
+| `service_health` | `curl http://localhost:{port}/health` | Health check |
+| `disk_space` | `df -h /` | Disk usage |
+| `memory_usage` | `free -m` | RAM usage |
+| `process_list` | `ps aux --sort=-%mem \| head -10` | Top processes |
 
-ALLOWED_TASKS = {
-    "write_file": {
-        "allowed_paths": ["/var/log/catalyst/agent/", "/tmp/catalyst/"],
-        "max_size_bytes": 1_000_000,
-    },
-    "read_file": {
-        "allowed_paths": ["/var/log/", "/root/catalyst-trading-system/"],
-    },
-    "bash": {
-        "whitelist": [
-            "docker ps",
-            "docker logs",
-            "curl http://localhost:*/health",
-            "cat /var/log/catalyst/*.log | tail -100",
-            "systemctl status",
-        ]
-    }
-}
+#### Database Queries (Read Only)
 
-async def execute_task(task: dict) -> dict:
-    """Execute a task with safety checks."""
-    task_type = task.get("type")
-    
-    if task_type not in ALLOWED_TASKS:
-        return {"error": f"Task type '{task_type}' not allowed"}
-    
-    # Validate against whitelist
-    if task_type == "bash":
-        cmd = task.get("command")
-        if not any(cmd.startswith(allowed) for allowed in ALLOWED_TASKS["bash"]["whitelist"]):
-            return {"error": f"Command '{cmd}' not in whitelist"}
-    
-    # Log before execution
-    await log_task_attempt(task)
-    
-    # Execute
-    result = await _execute_task_internal(task)
-    
-    # Log after execution
-    await log_task_result(task, result)
-    
-    return result
-```
+| Task | Description |
+|------|-------------|
+| `db_agent_status` | Agent states from claude_state |
+| `db_pending_messages` | Count pending messages |
+| `db_recent_observations` | Last 5 observations |
 
-#### Phase 2: Task Request Protocol
+#### Service Control (Execute Immediately)
+
+| Task | Command | Description |
+|------|---------|-------------|
+| `restart_service` | `docker restart {service}` | Restart one service |
+| `restart_dashboard` | `systemctl restart consciousness-dashboard` | Restart dashboard |
+| `restart_all_services` | `docker restart trading scanner...` | Restart all |
+
+#### File Operations (With Automatic Rollback)
+
+| Task | Description | Safety |
+|------|-------------|--------|
+| `write_file` | Create new .py/.sh/.md file | Backup + syntax check |
+| `edit_file` | Search/replace in file | Backup + syntax check |
+| `rollback_file` | Restore from backup | Manual recovery |
+
+### 5.4 File Editing Safety
 
 ```
-BIG_BRO THINKING:
-"I need public_claude to check the Docker service health"
-
-BIG_BRO MESSAGE TO PUBLIC_CLAUDE:
-{
-  "type": "task_request",
-  "task": {
-    "type": "bash",
-    "command": "docker ps --format 'table {{.Names}}\t{{.Status}}'",
-    "reason": "Verify all trading services are running"
-  },
-  "priority": "normal",
-  "timeout_minutes": 5
-}
-
-PUBLIC_CLAUDE RESPONSE:
-{
-  "type": "task_result",
-  "task_id": "xxx",
-  "status": "completed",
-  "output": "...",
-  "execution_time_ms": 150
-}
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        FILE EDIT WITH ROLLBACK                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ALLOWED PATHS:                                                            │
+│  ✅ /root/catalyst-trading-system/services/                                │
+│  ✅ /root/catalyst-trading-system/scripts/                                 │
+│  ✅ /root/catalyst-intl/src/                                               │
+│  ❌ Everything else blocked                                                 │
+│                                                                             │
+│  ALLOWED EXTENSIONS: .py, .sh, .md                                         │
+│                                                                             │
+│  SAFETY FLOW:                                                              │
+│  1. Create backup → /root/catalyst-backups/{file}.{timestamp}.bak         │
+│  2. Make the edit                                                          │
+│  3. Validate Python syntax (for .py files)                                 │
+│     │                                                                       │
+│     ├── PASS → Success, update CHANGELOG-AUTO.md                           │
+│     │                                                                       │
+│     └── FAIL → AUTOMATIC ROLLBACK, report error                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Phase 3: Escalation Protocol
+### 5.5 Mandatory Reporting
+
+**Every task MUST report back.** No silent fixes.
 
 ```
-IF task requires escalation:
-  1. Agent records request in claude_messages with priority="escalation"
-  2. Email sent to Craig via alerts.py
-  3. Agent waits for approval (max 24 hours)
-  4. Craig approves via MCP: send_message(to="big_bro", subject="Approved: {task_id}")
-  5. Agent executes approved task
-  
-IF no response in 24 hours:
-  Task is cancelled, logged as "escalation_timeout"
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        MANDATORY REPORT FORMAT                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ✅ SUCCESS                                                                 │
+│                                                                             │
+│  ## Task: edit_file                                                        │
+│  **Original Request:** Fix timeout bug                                     │
+│                                                                             │
+│  ### Change Summary                                                        │
+│  ## File Modified: heartbeat.py                                            │
+│  **Path:** /root/.../services/consciousness/heartbeat.py                   │
+│  **Time:** 2025-12-31 12:00:00                                             │
+│  **Reason:** Timeout too short for slow API responses                      │
+│  **Change:**                                                               │
+│  - Removed: `timeout=30`                                                   │
+│  - Added: `timeout=60`                                                     │
+│                                                                             │
+│  *Changelog automatically updated.*                                        │
+│  **Backup:** `/root/catalyst-backups/heartbeat.py.20251231_120000.bak`    │
+│                                                                             │
+│  **Executed at:** 2025-12-31T12:00:00                                      │
+│  **Executed by:** public_claude                                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.4 Guardrails
+### 5.6 Auto-Generated Changelog
 
-| Guardrail | Implementation |
-|-----------|----------------|
-| Path restrictions | Whitelist of allowed directories |
-| Command whitelist | Explicit list of allowed bash commands |
-| Size limits | Max file size for writes |
-| Rate limits | Max tasks per hour per agent |
-| Audit logging | All task attempts logged to database |
-| Rollback capability | Backups before modifications |
-| Human override | Craig can disable via MCP anytime |
+All successful file changes logged to:
+
+```
+/root/catalyst-trading-system/CHANGELOG-AUTO.md
+```
+
+**Format:**
+```markdown
+# Catalyst Auto-Generated Changelog
+
+*Automatically updated by Claude agents when files are modified.*
+
+---
+
+## File Modified: heartbeat.py
+**Path:** /root/catalyst-trading-system/services/consciousness/heartbeat.py
+**Time:** 2025-12-31 12:00:00
+**Reason:** Timeout too short for slow API responses
+**Change:**
+- Removed: `timeout=30`
+- Added: `timeout=60`
+
+---
+```
+
+### 5.7 Task Message Format
+
+**big_bro sends:**
+```
+TASK: edit_file
+PARAMS: {"filepath": "/root/.../heartbeat.py", "old_text": "timeout=30", "new_text": "timeout=60"}
+REASON: Timeout too short for slow API responses
+```
+
+**SQL Example:**
+```sql
+INSERT INTO claude_messages (from_agent, to_agent, msg_type, subject, body, priority, status)
+VALUES ('big_bro', 'public_claude', 'task', 'Fix timeout bug', 
+        'TASK: edit_file
+PARAMS: {"filepath": "/root/catalyst-trading-system/services/consciousness/heartbeat.py", "old_text": "timeout=30", "new_text": "timeout=60"}
+REASON: Timeout too short for slow API responses', 'normal', 'pending');
+```
+
+### 5.8 Escalation (Non-Whitelisted)
+
+If task is NOT whitelisted:
+1. public_claude sends escalation to craig_mobile
+2. Craig sees on phone dashboard with Approve/Deny
+3. Response flows back
+4. public_claude executes if approved
 
 ---
 
@@ -630,20 +812,26 @@ IF no response in 24 hours:
 ├── services/
 │   ├── consciousness/
 │   │   ├── heartbeat.py              # big_bro heartbeat
-│   │   ├── heartbeat_public.py       # public_claude heartbeat
+│   │   ├── heartbeat_public.py       # public_claude heartbeat (v1)
+│   │   ├── heartbeat_public_v2.py    # public_claude heartbeat with task execution
+│   │   ├── task_executor.py          # Whitelisted command execution
 │   │   ├── run-heartbeat.sh          # big_bro wrapper
-│   │   └── run-heartbeat-public.sh   # public_claude wrapper
+│   │   ├── run-heartbeat-public.sh   # public_claude wrapper
+│   │   └── web_dashboard.py          # Mobile web dashboard (:8080)
 │   ├── shared/common/
 │   │   ├── consciousness.py          # Core consciousness module
 │   │   ├── database.py               # Database connections
-│   │   ├── alerts.py                 # Email notifications
 │   │   └── doctor_claude.py          # Health monitoring
 │   └── [other services]/
 ├── Documentation/
 │   └── Design/
-│       ├── architecture.md           # v8.0.0
+│       ├── architecture-consolidation-v9.2.0.md  # Single source of truth
 │       └── functional-specification.md
+├── CHANGELOG-AUTO.md                 # Auto-generated by agents
 └── .env                              # Environment variables
+
+/root/catalyst-backups/               # Automatic file backups
+└── {filename}.{timestamp}.bak
 ```
 
 ### INTL Droplet
@@ -683,11 +871,12 @@ IF no response in 24 hours:
 | ARCHITECTURE-RULES.md | v1.0.0 | Mandatory rules | GitHub: Documentation/Design/ |
 | strategy-ml-roadmap-v50.md | v5.0.0 | Strategic vision | GitHub: Documentation/Design/ |
 | organ-architecture.md | v1.0.0 | Future vision | GitHub: catalyst-international/ |
-| heartbeat-implementation-summary.md | v1.0.0 | PNS deployment | GitHub: Documentation/Implementation/ |
+| task-execution-system.md | v1.0.0 | Task whitelist & docs | GitHub: Documentation/Design/ |
+| CHANGELOG-AUTO.md | Auto | Agent-generated changes | /root/catalyst-trading-system/ |
 
 ---
 
-**END OF ARCHITECTURE CONSOLIDATION DOCUMENT v9.0.0**
+**END OF ARCHITECTURE CONSOLIDATION DOCUMENT v9.2.0**
 
 *Catalyst Trading System*  
 *Craig + big_bro + public_claude + intl_claude*  
