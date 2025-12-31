@@ -179,13 +179,13 @@ async def save_observation(pool, subject: str, content: str, obs_type: str = "th
         """, AGENT_ID, obs_type, subject, content, Decimal(str(confidence)))
 
 
-async def save_learning(pool, category: str, learning: str, evidence: str, confidence: float = 0.7):
+async def save_learning(pool, category: str, learning: str, context: str, confidence: float = 0.7):
     """Save a learning."""
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO claude_learnings (agent_id, category, learning, evidence, confidence)
+            INSERT INTO claude_learnings (agent_id, category, learning, context, confidence)
             VALUES ($1, $2, $3, $4, $5)
-        """, AGENT_ID, category, learning, evidence, Decimal(str(confidence)))
+        """, AGENT_ID, category, learning, context, Decimal(str(confidence)))
 
 
 async def send_message(pool, to_agent: str, subject: str, body: str):
