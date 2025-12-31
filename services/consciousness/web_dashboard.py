@@ -63,6 +63,15 @@ async def get_pool():
     """Create database connection pool."""
     return await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
 
+async def get_approval_count(pool) -> int:
+    """Get count of pending approvals for nav badge."""
+    async with pool.acquire() as conn:
+        count = await conn.fetchval("""
+            SELECT COUNT(*) FROM claude_messages
+            WHERE msg_type = 'escalation' AND status = 'pending'
+        """)
+        return count or 0
+
 # ============================================================================
 # AUTH
 # ============================================================================
@@ -345,6 +354,7 @@ async def agents_page(request: Request, token: str = Depends(verify_token)):
     """All agent states."""
     pool = await get_pool()
     try:
+        approval_count = await get_approval_count(pool)
         async with pool.acquire() as conn:
             agents = await conn.fetch("""
                 SELECT agent_id, current_mode, status_message, api_spend_today,
@@ -388,7 +398,7 @@ async def agents_page(request: Request, token: str = Depends(verify_token)):
     </head>
     <body>
         <h1>Agents</h1>
-        {nav_html("agents", token)}
+        {nav_html("agents", token, approval_count)}
         {agents_html or '<div class="empty">No agents</div>'}
     </body>
     </html>
@@ -401,6 +411,7 @@ async def messages_page(request: Request, token: str = Depends(verify_token)):
     """Recent messages."""
     pool = await get_pool()
     try:
+        approval_count = await get_approval_count(pool)
         async with pool.acquire() as conn:
             messages = await conn.fetch("""
                 SELECT from_agent, to_agent, subject, body, status, created_at
@@ -437,7 +448,7 @@ async def messages_page(request: Request, token: str = Depends(verify_token)):
     </head>
     <body>
         <h1>Messages</h1>
-        {nav_html("messages", token)}
+        {nav_html("messages", token, approval_count)}
         {msgs_html or '<div class="empty">No messages</div>'}
 
         <h2>Send Message</h2>
@@ -465,6 +476,7 @@ async def observations_page(request: Request, token: str = Depends(verify_token)
     """Recent observations."""
     pool = await get_pool()
     try:
+        approval_count = await get_approval_count(pool)
         async with pool.acquire() as conn:
             observations = await conn.fetch("""
                 SELECT agent_id, observation_type, subject, content, confidence, market, created_at
@@ -501,7 +513,7 @@ async def observations_page(request: Request, token: str = Depends(verify_token)
     </head>
     <body>
         <h1>Observations</h1>
-        {nav_html("observations", token)}
+        {nav_html("observations", token, approval_count)}
         {obs_html or '<div class="empty">No observations</div>'}
     </body>
     </html>
@@ -514,6 +526,7 @@ async def questions_page(request: Request, token: str = Depends(verify_token)):
     """Open questions."""
     pool = await get_pool()
     try:
+        approval_count = await get_approval_count(pool)
         async with pool.acquire() as conn:
             questions = await conn.fetch("""
                 SELECT id, question, horizon, priority, category, status, created_at
@@ -552,7 +565,7 @@ async def questions_page(request: Request, token: str = Depends(verify_token)):
     </head>
     <body>
         <h1>Open Questions</h1>
-        {nav_html("questions", token)}
+        {nav_html("questions", token, approval_count)}
         {q_html or '<div class="empty">No open questions</div>'}
 
         <h2>Add Question</h2>
@@ -773,6 +786,7 @@ async def reports_page(
     """Trading reports list with filtering."""
     pool = await get_pool()
     try:
+        approval_count = await get_approval_count(pool)
         async with pool.acquire() as conn:
             # Build query with optional filters
             query = """
@@ -859,7 +873,7 @@ async def reports_page(
     </head>
     <body>
         <h1>📊 Reports</h1>
-        {nav_html("reports", token)}
+        {nav_html("reports", token, approval_count)}
         {filter_tabs}
         {reports_html or '<div class="empty">No reports yet</div>'}
     </body>
