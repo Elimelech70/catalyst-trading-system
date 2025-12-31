@@ -55,6 +55,22 @@ app = FastAPI(title="Catalyst Consciousness")
 DATABASE_URL = os.environ.get("RESEARCH_DATABASE_URL")
 AUTH_TOKEN = os.environ.get("CONSCIOUSNESS_TOKEN", "catalyst2025")
 
+# Quick commands for command center
+QUICK_COMMANDS = [
+    {"id": 1, "icon": "📊", "label": "Report HKEX", "to_agent": "intl_claude",
+     "subject": "Request: Daily Report", "body": "Please generate today's trading report and store in consciousness.", "priority": "high"},
+    {"id": 2, "icon": "📊", "label": "Report US", "to_agent": "public_claude",
+     "subject": "Request: Daily Report", "body": "Please generate today's trading report.", "priority": "high"},
+    {"id": 3, "icon": "🔍", "label": "Status", "to_agent": "big_bro",
+     "subject": "Request: System Status", "body": "Please provide status on all agents and systems.", "priority": "normal"},
+    {"id": 4, "icon": "🛑", "label": "STOP", "to_agent": "broadcast",
+     "subject": "URGENT: Stop Trading", "body": "Human override - stop all trading activity immediately.", "priority": "urgent", "urgent": True},
+    {"id": 5, "icon": "🔄", "label": "Health", "to_agent": "big_bro",
+     "subject": "Request: Health Check", "body": "Run health check on all agents and report findings.", "priority": "normal"},
+    {"id": 6, "icon": "💰", "label": "P&L", "to_agent": "big_bro",
+     "subject": "Request: P&L Summary", "body": "What is our current P&L across all markets?", "priority": "normal"},
+]
+
 # ============================================================================
 # DATABASE
 # ============================================================================
@@ -189,6 +205,23 @@ STYLES = """
     .badge { display: inline-block; background: #ff0; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; margin-left: 8px; }
     .alert-heading { color: #ff4444 !important; font-weight: bold; animation: pulse 2s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    /* Command Center */
+    .command-center { margin: 16px 0; padding: 16px; background: #12122a; border-radius: 8px; border: 1px solid #333; }
+    .command-center h2 { margin-top: 0; border-bottom: none; padding-bottom: 0; }
+    .quick-commands { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+    .quick-cmd { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px 4px; background: #1a1a2e; border: 1px solid #333; border-radius: 8px; color: #fff; cursor: pointer; min-height: 60px; font-family: inherit; }
+    .quick-cmd:hover { background: #252545; border-color: #00d4ff; }
+    .quick-cmd:active { background: #00d4ff; color: #000; }
+    .quick-cmd.urgent { border-color: #f44; background: #2a1a1a; }
+    .quick-cmd.urgent:hover { background: #f44; border-color: #f66; }
+    .cmd-icon { font-size: 1.4em; margin-bottom: 2px; }
+    .cmd-label { font-size: 0.75em; color: #aaa; text-align: center; }
+    .quick-cmd:hover .cmd-label, .quick-cmd.urgent:hover .cmd-label { color: #fff; }
+    .message-form-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid #333; }
+    .message-form-section summary { cursor: pointer; color: #00d4ff; font-size: 0.9em; }
+    .message-form-section[open] summary { margin-bottom: 12px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .form-row label { margin-top: 0; }
 </style>
 """
 
@@ -223,6 +256,58 @@ def format_time(dt) -> str:
         perth_time = dt.replace(tzinfo=timezone.utc).astimezone(PERTH_TZ)
     return perth_time.strftime("%m/%d %H:%M AWST")
 
+def command_center_html(token: str) -> str:
+    """Generate command center HTML."""
+    buttons = ""
+    for cmd in QUICK_COMMANDS:
+        urgent_class = "urgent" if cmd.get("urgent") else ""
+        buttons += f'''
+        <form method="POST" action="/command/{cmd['id']}?token={token}" style="margin:0;">
+            <button type="submit" class="quick-cmd {urgent_class}">
+                <span class="cmd-icon">{cmd['icon']}</span>
+                <span class="cmd-label">{cmd['label']}</span>
+            </button>
+        </form>
+        '''
+
+    html = f'''
+    <div class="command-center">
+        <h2>📡 COMMAND CENTER</h2>
+        <div class="quick-commands">
+            {buttons}
+        </div>
+        <details class="message-form-section">
+            <summary>✉️ Custom Message</summary>
+            <form method="POST" action="/message?token={token}">
+                <div class="form-row">
+                    <div>
+                        <label>To:</label>
+                        <select name="to_agent">
+                            <option value="intl_claude">intl_claude (HKEX)</option>
+                            <option value="public_claude">public_claude (US)</option>
+                            <option value="big_bro">big_bro (Strategy)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Priority:</label>
+                        <select name="priority">
+                            <option value="normal">Normal</option>
+                            <option value="high">High</option>
+                            <option value="urgent">🚨 Urgent</option>
+                        </select>
+                    </div>
+                </div>
+                <label>Subject:</label>
+                <input type="text" name="subject" placeholder="Brief subject..." required>
+                <label>Message:</label>
+                <textarea name="body" rows="2" placeholder="Your message..." required></textarea>
+                <button type="submit">📤 Send Message</button>
+            </form>
+        </details>
+    </div>
+    '''
+    return html
+
 # ============================================================================
 # ROUTES
 # ============================================================================
@@ -230,6 +315,10 @@ def format_time(dt) -> str:
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, token: str = Depends(verify_token)):
     """Dashboard home - overview of everything."""
+    # Check for success message
+    sent = request.query_params.get("sent")
+    success_msg = '<div class="success">✅ Command sent!</div>' if sent else ""
+
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
@@ -318,6 +407,8 @@ async def dashboard(request: Request, token: str = Depends(verify_token)):
         </div>
         '''
 
+    command_html = command_center_html(token)
+
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -328,20 +419,24 @@ async def dashboard(request: Request, token: str = Depends(verify_token)):
         {STYLES}
     </head>
     <body>
-        <h1>Catalyst Consciousness</h1>
-        <div class="subtitle">Mobile Dashboard</div>
+        <h1>🧠 Catalyst Consciousness</h1>
+        <div class="subtitle">All times AWST (UTC+8)</div>
 
         {nav_html("home", token, approval_count)}
 
+        {success_msg}
+
         {f'<h2 class="alert-heading">⚠️ PENDING APPROVALS ({approval_count})</h2>' + approvals_html if approvals_html else ''}
 
-        <h2>Agents</h2>
+        {command_html}
+
+        <h2>👥 Agents</h2>
         {agents_html or '<div class="empty">No agents</div>'}
 
-        <h2>Recent Messages</h2>
+        <h2>💬 Recent Messages</h2>
         {msgs_html or '<div class="empty">No messages</div>'}
 
-        <h2>Recent Observations</h2>
+        <h2>👁️ Recent Observations</h2>
         {obs_html or '<div class="empty">No observations</div>'}
     </body>
     </html>
@@ -619,6 +714,39 @@ async def send_message(
         await pool.close()
 
     return RedirectResponse(url=f"/messages?token={token}&success=1", status_code=303)
+
+
+@app.post("/command/{command_id}")
+async def execute_command(
+    command_id: int,
+    request: Request,
+    token: str = Depends(verify_token)
+):
+    """Execute a quick command."""
+    cmd = next((c for c in QUICK_COMMANDS if c['id'] == command_id), None)
+    if not cmd:
+        raise HTTPException(status_code=404, detail="Command not found")
+
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            # Handle broadcast
+            if cmd['to_agent'] == 'broadcast':
+                agents = ['intl_claude', 'public_claude', 'big_bro']
+            else:
+                agents = [cmd['to_agent']]
+
+            # Send message to each agent
+            for agent in agents:
+                await conn.execute("""
+                    INSERT INTO claude_messages
+                    (from_agent, to_agent, subject, body, priority, msg_type, status)
+                    VALUES ('craig_mobile', $1, $2, $3, $4, 'task', 'pending')
+                """, agent, cmd['subject'], cmd['body'], cmd['priority'])
+    finally:
+        await pool.close()
+
+    return RedirectResponse(url=f"/?token={token}&sent=1", status_code=303)
 
 
 @app.post("/question")
