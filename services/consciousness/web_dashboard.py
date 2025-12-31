@@ -178,6 +178,8 @@ STYLES = """
     .btn-deny { background: #a00; }
     .btn-deny:hover { background: #c00; }
     .badge { display: inline-block; background: #ff0; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; margin-left: 8px; }
+    .alert-heading { color: #ff4444 !important; font-weight: bold; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 </style>
 """
 
@@ -322,7 +324,7 @@ async def dashboard(request: Request, token: str = Depends(verify_token)):
 
         {nav_html("home", token, approval_count)}
 
-        {f'<h2>Pending Approvals ({approval_count})</h2>' + approvals_html if approvals_html else ''}
+        {f'<h2 class="alert-heading">⚠️ PENDING APPROVALS ({approval_count})</h2>' + approvals_html if approvals_html else ''}
 
         <h2>Agents</h2>
         {agents_html or '<div class="empty">No agents</div>'}
