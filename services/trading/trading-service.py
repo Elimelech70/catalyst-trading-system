@@ -730,15 +730,15 @@ async def test_order_mapping(request: OrderTestRequest):
     Returns:
         Mapping result showing input_side -> mapped_side
     """
-    from common.alpaca_trader import _normalize_side, _validate_order_side_mapping
+    from common.alpaca_trader import map_side, validate_side_mapping
     from alpaca.trading.enums import OrderSide
 
     try:
         # Normalize the side (this is the function we're testing)
-        mapped_side = _normalize_side(request.side)
+        mapped_side = map_side(request.side)
 
         # Validate the mapping (defense in depth)
-        _validate_order_side_mapping(request.side, mapped_side)
+        validate_side_mapping(request.side, mapped_side)
 
         result = {
             "test": "order_side_mapping",

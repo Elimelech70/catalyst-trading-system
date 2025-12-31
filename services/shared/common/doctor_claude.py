@@ -2,11 +2,14 @@
 Catalyst Trading System - Doctor Claude
 Name of Application: Catalyst Trading System
 Name of file: doctor_claude.py
-Version: 1.0.0
+Version: 1.0.1
 Last Updated: 2025-12-28
 Purpose: Health monitoring and self-healing for all agents
 
 REVISION HISTORY:
+v1.0.1 (2025-12-28) - Schema fix
+  - Fixed exit_time → closed_at column name in trading health check
+
 v1.0.0 (2025-12-28) - Initial implementation
   - Agent health monitoring
   - Database health checks
@@ -413,12 +416,12 @@ class DoctorClaude:
                 
                 # Today's P&L
                 pnl = await conn.fetchrow("""
-                    SELECT 
+                    SELECT
                         COALESCE(SUM(realized_pnl), 0) as total_pnl,
                         COUNT(*) as closed_positions
                     FROM positions
                     WHERE status = 'closed'
-                      AND exit_time >= CURRENT_DATE
+                      AND closed_at >= CURRENT_DATE
                 """)
                 
                 if pnl:
