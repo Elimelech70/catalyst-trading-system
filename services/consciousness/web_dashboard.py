@@ -18,6 +18,11 @@ v1.1.0 (2025-12-31) - Added approval system
 - Approve/deny buttons on dashboard
 - Response messages sent back to requesting agent
 
+v1.2.0 (2025-12-31) - Added reports section
+- Reports list with filtering by market/type
+- Individual report view with metrics
+- Mobile-friendly report cards
+
 ENDPOINTS:
 GET  /                     → Dashboard home (with pending approvals)
 GET  /agents               → All agent states
@@ -25,6 +30,8 @@ GET  /messages             → Recent messages
 GET  /observations         → Recent observations
 GET  /questions            → Open questions
 GET  /approvals            → Pending approvals page
+GET  /reports              → Trading reports list
+GET  /reports/{id}         → View single report
 POST /message              → Send message
 POST /question             → Add question
 POST /approve/{id}         → Approve an escalation
@@ -176,6 +183,7 @@ def nav_html(active: str, token: str, approval_count: int = 0) -> str:
     links = [
         ("Home", "/"),
         ("Approvals", "/approvals"),
+        ("Reports", "/reports"),
         ("Agents", "/agents"),
         ("Messages", "/messages"),
         ("Observations", "/observations"),
@@ -738,6 +746,211 @@ async def deny_escalation(message_id: int, request: Request, reason: str = Form(
 async def health():
     """Health check endpoint."""
     return {"status": "ok", "service": "consciousness-dashboard"}
+
+
+# ============================================================================
+# REPORTS
+# ============================================================================
+
+@app.get("/reports", response_class=HTMLResponse)
+async def reports_page(
+    request: Request,
+    market: str = None,
+    report_type: str = None,
+    token: str = Depends(verify_token)
+):
+    """Trading reports list with filtering."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            # Build query with optional filters
+            query = """
+                SELECT id, agent_id, market, report_type, report_date, title, summary, metrics, created_at
+                FROM claude_reports
+                WHERE 1=1
+            """
+            params = []
+            param_idx = 1
+
+            if market:
+                query += f" AND market = ${param_idx}"
+                params.append(market)
+                param_idx += 1
+
+            if report_type:
+                query += f" AND report_type = ${param_idx}"
+                params.append(report_type)
+                param_idx += 1
+
+            query += " ORDER BY report_date DESC, created_at DESC LIMIT 50"
+
+            reports = await conn.fetch(query, *params)
+    finally:
+        await pool.close()
+
+    # Filter tabs
+    filter_tabs = f'''
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+        <a href="/reports?token={token}" class="nav {'active' if not market and not report_type else ''}" style="padding: 6px 12px;">All</a>
+        <a href="/reports?token={token}&report_type=daily" class="nav {'active' if report_type == 'daily' else ''}" style="padding: 6px 12px;">Daily</a>
+        <a href="/reports?token={token}&report_type=weekly" class="nav {'active' if report_type == 'weekly' else ''}" style="padding: 6px 12px;">Weekly</a>
+        <a href="/reports?token={token}&market=US" class="nav {'active' if market == 'US' else ''}" style="padding: 6px 12px;">US</a>
+        <a href="/reports?token={token}&market=HKEX" class="nav {'active' if market == 'HKEX' else ''}" style="padding: 6px 12px;">HKEX</a>
+    </div>
+    '''
+
+    reports_html = ""
+    for r in reports:
+        metrics = r["metrics"] or {}
+        if isinstance(metrics, str):
+            import json as json_lib
+            metrics = json_lib.loads(metrics)
+        pnl = metrics.get("total_pnl", 0)
+        positions = metrics.get("positions_open", 0)
+
+        # Format P&L with color
+        pnl_color = "#0f0" if pnl >= 0 else "#f00"
+        pnl_str = f"+{pnl:,.2f}" if pnl >= 0 else f"{pnl:,.2f}"
+
+        # Market badge color
+        market_color = "#00d4ff" if r["market"] == "US" else "#ff0" if r["market"] == "HKEX" else "#888"
+
+        # Report type icon
+        type_icon = "📈" if r["report_type"] == "daily" else "📊" if r["report_type"] == "weekly" else "⚠️" if r["report_type"] == "alert" else "📋"
+
+        reports_html += f'''
+        <div class="card">
+            <div class="msg-header">
+                <span style="color: {market_color}; font-weight: bold;">{r["market"]}</span>
+                <span class="msg-time">{r["report_date"]}</span>
+            </div>
+            <div class="msg-subject">{type_icon} {r["title"]}</div>
+            <div style="margin-top: 8px; font-size: 0.85em;">
+                <span class="obs-agent">{r["agent_id"]}</span>
+                {f'<span style="color: {pnl_color}; margin-left: 8px;">{pnl_str}</span>' if pnl else ''}
+                {f'<span style="color: #888; margin-left: 8px;">{positions} positions</span>' if positions else ''}
+            </div>
+            {f'<div class="msg-body">{r["summary"]}</div>' if r["summary"] else ''}
+            <div style="margin-top: 12px;">
+                <a href="/reports/{r["id"]}?token={token}" style="color: #00d4ff; text-decoration: none;">View Full Report →</a>
+            </div>
+        </div>
+        '''
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Reports - Catalyst</title>
+        {STYLES}
+    </head>
+    <body>
+        <h1>📊 Reports</h1>
+        {nav_html("reports", token)}
+        {filter_tabs}
+        {reports_html or '<div class="empty">No reports yet</div>'}
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.get("/reports/{report_id}", response_class=HTMLResponse)
+async def view_report(report_id: int, request: Request, token: str = Depends(verify_token)):
+    """View a single report."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            report = await conn.fetchrow("""
+                SELECT id, agent_id, market, report_type, report_date, title, summary, content, metrics, created_at
+                FROM claude_reports
+                WHERE id = $1
+            """, report_id)
+    finally:
+        await pool.close()
+
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    metrics = report["metrics"] or {}
+    if isinstance(metrics, str):
+        import json as json_lib
+        metrics = json_lib.loads(metrics)
+
+    # Build metrics cards
+    metrics_html = ""
+    if metrics:
+        metrics_items = []
+        if "total_pnl" in metrics:
+            pnl = metrics["total_pnl"]
+            pnl_color = "#0f0" if pnl >= 0 else "#f00"
+            pnl_str = f"+{pnl:,.2f}" if pnl >= 0 else f"{pnl:,.2f}"
+            metrics_items.append(f'<span style="color: {pnl_color};">P&L: {pnl_str}</span>')
+        if "positions_open" in metrics:
+            metrics_items.append(f'Positions: {metrics["positions_open"]}')
+        if "account_value" in metrics:
+            metrics_items.append(f'Account: {metrics["account_value"]:,.2f}')
+        if "win_rate" in metrics:
+            metrics_items.append(f'Win Rate: {metrics["win_rate"]*100:.0f}%')
+
+        if metrics_items:
+            metrics_html = f'''
+            <div class="card" style="border-left-color: #00d4ff;">
+                <div style="display: flex; flex-wrap: wrap; gap: 16px;">
+                    {"  |  ".join(metrics_items)}
+                </div>
+            </div>
+            '''
+
+    # Convert markdown content to simple HTML (basic conversion)
+    content = report["content"] or ""
+    # Simple markdown-like formatting
+    content = content.replace("\n## ", "\n<h3>").replace("\n# ", "\n<h2>")
+    content = content.replace("\n", "<br>")
+    content = content.replace("<h2>", "</p><h2>").replace("<h3>", "</p><h3>")
+    content = content.replace("</h2>", "</h2><p>").replace("</h3>", "</h3><p>")
+    content = f"<p>{content}</p>"
+
+    # Market badge color
+    market_color = "#00d4ff" if report["market"] == "US" else "#ff0" if report["market"] == "HKEX" else "#888"
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{report["title"]} - Catalyst</title>
+        {STYLES}
+        <style>
+            .report-content {{ line-height: 1.6; }}
+            .report-content h2 {{ color: #00d4ff; font-size: 1.1em; margin-top: 20px; }}
+            .report-content h3 {{ color: #aaa; font-size: 1em; margin-top: 16px; }}
+            .report-content p {{ margin: 8px 0; }}
+        </style>
+    </head>
+    <body>
+        <a href="/reports?token={token}" class="back">← Back to Reports</a>
+
+        <h1>{report["title"]}</h1>
+        <div class="subtitle">
+            <span style="color: {market_color};">{report["market"]}</span> ·
+            {report["agent_id"]} ·
+            {report["report_date"]} ·
+            {report["report_type"]}
+        </div>
+
+        {metrics_html}
+
+        <div class="card report-content" style="margin-top: 16px;">
+            {content}
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 
 # ============================================================================
