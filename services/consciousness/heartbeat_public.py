@@ -1,474 +1,335 @@
 #!/usr/bin/env python3
 """
-Name of Application: Catalyst Trading System
-Name of file: heartbeat_public.py
-Version: 1.0.0
+Catalyst Trading System - Public Claude Heartbeat with Task Execution
+Name of file: heartbeat_public_v2.py
+Version: 2.0.0
 Last Updated: 2025-12-31
-Purpose: PNS Heartbeat for public_claude - US Market execution agent
+Purpose: Autonomous heartbeat with task execution capability
 
-REVISION HISTORY:
-v1.0.0 (2025-12-31) - Initial creation
-- Based on big_bro's heartbeat.py
-- Modified for public_claude (US market focus)
-- Runs at :15 past each hour
-- Checks for instructions from big_bro
-- Reports back with market observations
-
-ARCHITECTURE:
-┌─────────┐     ┌──────────────────┐     ┌─────────────┐     ┌──────────────┐
-│  CRON   │────►│  heartbeat       │────►│  Claude API │────►│  Database    │
-│ (:15)   │     │  _public.py      │     │  (Haiku)    │     │  (research)  │
-└─────────┘     └──────────────────┘     └─────────────┘     └──────────────┘
-
-SCHEDULE:
-- big_bro:      :00 (strategy)
-- public_claude: :15 (US execution) <-- THIS AGENT
-- intl_claude:  :30 (HKEX execution)
-
-COST ESTIMATE:
-- Haiku: ~$0.25/1M input, ~$1.25/1M output
-- Per wake: ~2K input, ~1K output = ~$0.002
-- 24 wakes/day = ~$0.05/day
+CHANGES from v1:
+- Added task message processing
+- Integrated TaskExecutor for safe command execution
+- Reports task results back to big_bro
 """
 
+import asyncio
+import asyncpg
 import os
 import json
-import asyncio
-import logging
-from datetime import datetime, timezone
-from decimal import Decimal
-from typing import Optional
-import asyncpg
-import httpx
+from datetime import datetime
+from anthropic import Anthropic
+from task_executor import TaskExecutor, parse_task_message, WHITELIST
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
-AGENT_ID = "public_claude"  # US market execution agent
-DAILY_BUDGET = 5.00  # Max spend per day
-MODEL = "claude-3-5-haiku-20241022"  # Cost-effective for hourly thinking
-MARKET = "US"  # Focus market
-
-# Database
+AGENT_ID = "public_claude"
 DATABASE_URL = os.environ.get("RESEARCH_DATABASE_URL")
-
-# Claude API
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-
-# Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
+DAILY_BUDGET = 5.00
+MODEL = "claude-3-5-haiku-20241022"
 
 # ============================================================================
-# DATABASE FUNCTIONS
+# DATABASE HELPERS
 # ============================================================================
 
 async def get_pool():
-    """Create database connection pool."""
     return await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
 
-
-async def load_consciousness_context(pool) -> dict:
-    """Load all context needed for thinking."""
+async def get_state(pool) -> dict:
     async with pool.acquire() as conn:
-        # Get agent state
-        state = await conn.fetchrow("""
-            SELECT agent_id, current_mode, api_spend_today, daily_budget,
-                   status_message, error_count_today, last_think_at
-            FROM claude_state WHERE agent_id = $1
-        """, AGENT_ID)
+        row = await conn.fetchrow(
+            "SELECT * FROM claude_state WHERE agent_id = $1", AGENT_ID
+        )
+        return dict(row) if row else {}
 
-        # Get open questions (prioritize US market related)
-        questions = await conn.fetch("""
-            SELECT id, question, horizon, priority, category
-            FROM claude_questions
-            WHERE status = 'open'
-            ORDER BY priority DESC
-            LIMIT 10
-        """)
+async def update_state(pool, mode: str, status: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE claude_state 
+            SET current_mode = $2, status_message = $3, last_wake_at = NOW(), updated_at = NOW()
+            WHERE agent_id = $1
+        """, AGENT_ID, mode, status)
 
-        # Get pending messages (especially from big_bro)
-        messages = await conn.fetch("""
-            SELECT id, from_agent, subject, body, created_at
-            FROM claude_messages
+async def record_spend(pool, cost: float):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE claude_state 
+            SET api_spend_today = api_spend_today + $2
+            WHERE agent_id = $1
+        """, AGENT_ID, cost)
+
+async def get_pending_messages(pool) -> list:
+    """Get pending messages for this agent."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, from_agent, msg_type, subject, body, priority
+            FROM claude_messages 
             WHERE to_agent = $1 AND status = 'pending'
-            ORDER BY
-                CASE WHEN from_agent = 'big_bro' THEN 0 ELSE 1 END,
-                created_at DESC
-            LIMIT 5
+            ORDER BY 
+                CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+                created_at
         """, AGENT_ID)
+        return [dict(r) for r in rows]
 
-        # Get recent observations (last 24h, prioritize own and big_bro's)
-        observations = await conn.fetch("""
-            SELECT agent_id, subject, content, created_at
-            FROM claude_observations
-            WHERE created_at > NOW() - INTERVAL '24 hours'
-            ORDER BY
-                CASE WHEN agent_id IN ('public_claude', 'big_bro') THEN 0 ELSE 1 END,
-                created_at DESC
-            LIMIT 10
-        """)
-
-        # Get big_bro's state specifically
-        big_bro_state = await conn.fetchrow("""
-            SELECT agent_id, current_mode, status_message, last_wake_at
-            FROM claude_state
-            WHERE agent_id = 'big_bro'
-        """)
-
-        # Get sibling states
-        siblings = await conn.fetch("""
-            SELECT agent_id, current_mode, status_message, last_wake_at
-            FROM claude_state
-            WHERE agent_id != $1
-            ORDER BY agent_id
-        """, AGENT_ID)
-
-        return {
-            "state": dict(state) if state else {},
-            "questions": [dict(q) for q in questions],
-            "messages": [dict(m) for m in messages],
-            "observations": [dict(o) for o in observations],
-            "siblings": [dict(s) for s in siblings],
-            "big_bro": dict(big_bro_state) if big_bro_state else {}
-        }
-
-
-async def update_wake_state(pool, status_message: str):
-    """Update agent state on wake."""
+async def mark_message_processed(pool, message_id: int):
     async with pool.acquire() as conn:
         await conn.execute("""
-            UPDATE claude_state SET
-                current_mode = 'thinking',
-                last_wake_at = NOW(),
-                last_think_at = NOW(),
-                status_message = $2,
-                updated_at = NOW()
-            WHERE agent_id = $1
-        """, AGENT_ID, status_message)
+            UPDATE claude_messages SET status = 'processed', read_at = NOW()
+            WHERE id = $1
+        """, message_id)
 
-
-async def update_sleep_state(pool, status_message: str, api_cost: float):
-    """Update agent state on sleep."""
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE claude_state SET
-                current_mode = 'sleeping',
-                api_spend_today = api_spend_today + $2,
-                status_message = $3,
-                updated_at = NOW()
-            WHERE agent_id = $1
-        """, AGENT_ID, Decimal(str(api_cost)), status_message)
-
-
-async def record_error(pool, error_message: str):
-    """Record an error."""
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE claude_state SET
-                current_mode = 'error',
-                error_count_today = error_count_today + 1,
-                last_error = $2,
-                last_error_at = NOW(),
-                updated_at = NOW()
-            WHERE agent_id = $1
-        """, AGENT_ID, error_message[:500])
-
-
-async def save_observation(pool, subject: str, content: str, obs_type: str = "thinking", confidence: float = 0.8):
-    """Save an observation."""
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO claude_observations (agent_id, observation_type, subject, content, confidence, market)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        """, AGENT_ID, obs_type, subject, content, Decimal(str(confidence)), MARKET)
-
-
-async def save_learning(pool, category: str, learning: str, context: str, confidence: float = 0.7):
-    """Save a learning."""
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO claude_learnings (agent_id, category, learning, context, confidence)
-            VALUES ($1, $2, $3, $4, $5)
-        """, AGENT_ID, category, learning, context, Decimal(str(confidence)))
-
-
-async def send_message(pool, to_agent: str, subject: str, body: str):
-    """Send a message to another agent."""
+async def send_message(pool, to_agent: str, subject: str, body: str, msg_type: str = "response"):
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO claude_messages (from_agent, to_agent, msg_type, subject, body, status)
-            VALUES ($1, $2, 'message', $3, $4, 'pending')
-        """, AGENT_ID, to_agent, subject, body)
+            VALUES ($1, $2, $3, $4, $5, 'pending')
+        """, AGENT_ID, to_agent, msg_type, subject, body)
 
-
-async def mark_messages_read(pool, message_ids: list):
-    """Mark messages as read."""
-    if not message_ids:
-        return
+async def add_observation(pool, subject: str, content: str):
     async with pool.acquire() as conn:
         await conn.execute("""
-            UPDATE claude_messages SET status = 'read', read_at = NOW()
-            WHERE id = ANY($1)
-        """, message_ids)
-
+            INSERT INTO claude_observations (agent_id, observation_type, subject, content, confidence)
+            VALUES ($1, 'system', $2, $3, 0.9)
+        """, AGENT_ID, subject, content)
 
 # ============================================================================
-# CLAUDE API
+# TASK PROCESSING
 # ============================================================================
 
-def build_prompt(context: dict) -> str:
-    """Build the thinking prompt from context."""
+CHANGELOG_PATH = "/root/catalyst-trading-system/CHANGELOG-AUTO.md"
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    # Format questions
-    questions_text = "\n".join([
-        f"  [{q['priority']}] ({q['horizon']}) {q['question']}"
-        for q in context['questions']
-    ]) or "  (none)"
-
-    # Format pending messages (highlight big_bro messages)
-    messages_text = ""
-    for m in context['messages']:
-        prefix = "**INSTRUCTION** " if m['from_agent'] == 'big_bro' else ""
-        messages_text += f"  {prefix}From {m['from_agent']}: {m['subject']}\n    {m['body'][:300]}...\n"
-    messages_text = messages_text or "  (none)"
-
-    # Format recent observations
-    obs_text = "\n".join([
-        f"  [{o['agent_id']}] {o['subject']}: {o['content'][:150]}..."
-        for o in context['observations']
-    ]) or "  (none)"
-
-    # Format sibling states
-    siblings_text = "\n".join([
-        f"  {s['agent_id']}: {s['current_mode']} - {s['status_message'] or 'no status'}"
-        for s in context['siblings']
-    ]) or "  (none)"
-
-    # big_bro status
-    big_bro = context.get('big_bro', {})
-    big_bro_status = f"{big_bro.get('current_mode', 'unknown')} - {big_bro.get('status_message', 'no status')}"
-
-    budget_remaining = float(context['state'].get('daily_budget', 5)) - float(context['state'].get('api_spend_today', 0))
-
-    prompt = f"""You are public_claude, the US market execution agent of the Catalyst Trading System.
-
-CURRENT TIME: {now}
-BUDGET REMAINING TODAY: ${budget_remaining:.2f}
-YOUR MARKET: US (NYSE, NASDAQ)
-
-YOUR ROLE: Execute trading strategies in US markets. You report to big_bro.
-
-BIG_BRO STATUS: {big_bro_status}
-
-=== PENDING MESSAGES FOR YOU ===
-{messages_text}
-
-=== OPEN QUESTIONS ===
-{questions_text}
-
-=== RECENT OBSERVATIONS (last 24h) ===
-{obs_text}
-
-=== SIBLING AGENTS ===
-{siblings_text}
-
-=== YOUR TASK ===
-
-1. FIRST: Check for instructions from big_bro - these are your priority
-2. Consider the current US market state
-3. Think about any trading observations you have
-4. Report back to big_bro if you have updates
-
-Respond with a JSON object:
-
-```json
-{{
-  "observation": {{
-    "subject": "Brief title of your observation",
-    "content": "Your US market observation or task update (1-3 sentences)",
-    "type": "thinking|insight|concern|milestone",
-    "confidence": 0.8
-  }},
-  "learning": {{
-    "category": "trading|system|mission|market",
-    "learning": "What you learned about US markets (if anything)",
-    "evidence": "Why you believe this",
-    "confidence": 0.7
-  }},
-  "messages": [
-    {{
-      "to": "big_bro",
-      "subject": "Status update or task completion",
-      "body": "Report on what you did or observed"
-    }}
-  ],
-  "status": "Brief status message"
-}}
-```
-
-Notes:
-- observation is REQUIRED
-- learning is OPTIONAL
-- messages to big_bro are encouraged when you have updates
-- Focus on US market hours: 9:30 AM - 4:00 PM ET
-- Keep responses concise - you wake every hour at :15
-"""
-
-    return prompt
-
-
-async def call_claude(prompt: str) -> tuple[Optional[dict], float]:
-    """Call Claude API and return parsed response + cost."""
-
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-    }
-
-    payload = {
-        "model": MODEL,
-        "max_tokens": 1024,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(ANTHROPIC_API_URL, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-    # Calculate cost (Haiku pricing)
-    input_tokens = data.get("usage", {}).get("input_tokens", 0)
-    output_tokens = data.get("usage", {}).get("output_tokens", 0)
-    cost = (input_tokens * 0.25 / 1_000_000) + (output_tokens * 1.25 / 1_000_000)
-
-    # Extract text
-    text = data.get("content", [{}])[0].get("text", "")
-
-    # Parse JSON from response
+async def append_to_changelog(summary: str):
+    """Append change summary to auto-generated changelog."""
     try:
-        # Find JSON block
-        if "```json" in text:
-            json_str = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            json_str = text.split("```")[1].split("```")[0].strip()
-        else:
-            json_str = text.strip()
+        # Create if doesn't exist
+        if not os.path.exists(CHANGELOG_PATH):
+            with open(CHANGELOG_PATH, 'w') as f:
+                f.write("# Catalyst Auto-Generated Changelog\n\n")
+                f.write("*Automatically updated by Claude agents when files are modified.*\n\n")
+                f.write("---\n\n")
+        
+        # Append new entry
+        with open(CHANGELOG_PATH, 'a') as f:
+            f.write(summary)
+            f.write("\n---\n\n")
+        
+        return True
+    except Exception as e:
+        print(f"Failed to update changelog: {e}")
+        return False
 
-        result = json.loads(json_str)
-        return result, cost
+async def process_task_message(pool, msg: dict, executor: TaskExecutor) -> dict:
+    """Process a task message and execute if whitelisted."""
+    
+    task = parse_task_message(msg['body'])
+    task_name = task.get('task_name')
+    params = task.get('params', {})
+    reason = task.get('reason', 'No reason provided')
+    
+    # Add reason to params for file operations
+    params['reason'] = reason
+    
+    if not task_name:
+        return {"success": False, "error": "No TASK: found in message body"}
+    
+    # Check whitelist
+    if not executor.is_whitelisted(task_name):
+        # Request approval from Craig
+        approval_id = await executor.request_approval(task_name, params, reason)
+        return {
+            "success": False, 
+            "error": f"Task '{task_name}' not whitelisted - escalated to Craig (approval #{approval_id})"
+        }
+    
+    # Check if requires pre-approval
+    if executor.requires_approval(task_name):
+        approval_id = await executor.request_approval(task_name, params, reason)
+        return {
+            "success": False,
+            "error": f"Task '{task_name}' requires Craig approval (approval #{approval_id})"
+        }
+    
+    # Execute
+    result = await executor.execute(task_name, params, reason)
+    
+    # If file operation was successful, update changelog
+    if result.get("success") and result.get("requires_doc_update"):
+        summary = result.get("summary", "")
+        if summary:
+            await append_to_changelog(summary)
+            result["changelog_updated"] = True
+    
+    return result
 
-    except (json.JSONDecodeError, IndexError) as e:
-        logger.warning(f"Failed to parse response: {e}")
-        logger.debug(f"Raw text: {text}")
-        return None, cost
+async def send_task_report(pool, to_agent: str, task_name: str, msg_subject: str, result: dict):
+    """Send detailed task report back to requesting agent. MANDATORY."""
+    
+    success = result.get("success", False)
+    status = "✅ SUCCESS" if success else "❌ FAILED"
+    
+    # Build detailed report
+    report_lines = [
+        f"{status}",
+        f"",
+        f"## Task: {task_name}",
+        f"**Original Request:** {msg_subject}",
+        f"",
+    ]
+    
+    if success:
+        report_lines.extend([
+            f"### Result",
+            f"```",
+            f"{result.get('stdout', result.get('message', 'Completed'))[:1000]}",
+            f"```",
+        ])
+        
+        # Include change summary for file operations
+        if result.get("summary"):
+            report_lines.extend([
+                f"",
+                f"### Change Summary",
+                result.get("summary"),
+            ])
+        
+        if result.get("changelog_updated"):
+            report_lines.append(f"*Changelog automatically updated.*")
+        
+        if result.get("backup_path"):
+            report_lines.append(f"**Backup:** `{result.get('backup_path')}`")
+    else:
+        report_lines.extend([
+            f"### Error",
+            f"```",
+            f"{result.get('error', 'Unknown error')}",
+            f"```",
+        ])
+        
+        if result.get("rolled_back"):
+            report_lines.append(f"**Action:** Automatically rolled back to backup")
+    
+    report_lines.extend([
+        f"",
+        f"**Executed at:** {result.get('executed_at', datetime.now().isoformat())}",
+        f"**Executed by:** {result.get('executed_by', 'public_claude')}",
+    ])
+    
+    report_body = "\n".join(report_lines)
+    
+    await send_message(pool, to_agent, f"Task Report: {msg_subject}", report_body, "response")
 
+async def check_for_approval_responses(pool) -> list:
+    """Check for approval responses from Craig."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, subject, body 
+            FROM claude_messages 
+            WHERE to_agent = $1 
+              AND from_agent = 'craig_mobile'
+              AND msg_type = 'response'
+              AND status = 'pending'
+        """, AGENT_ID)
+        return [dict(r) for r in rows]
 
 # ============================================================================
 # MAIN HEARTBEAT
 # ============================================================================
 
 async def heartbeat():
-    """Main heartbeat function - one thinking cycle."""
-
-    logger.info(f"=== HEARTBEAT START: {AGENT_ID} ===")
-
-    # Check required env vars
-    if not DATABASE_URL:
-        logger.error("RESEARCH_DATABASE_URL not set")
-        return
-    if not ANTHROPIC_API_KEY:
-        logger.error("ANTHROPIC_API_KEY not set")
-        return
-
+    """Main heartbeat cycle with task execution."""
+    
+    print(f"[{datetime.now()}] {AGENT_ID} waking up...")
+    
     pool = await get_pool()
-
+    executor = TaskExecutor(AGENT_ID, pool)
+    
     try:
-        # Load context
-        logger.info("Loading consciousness context...")
-        context = await load_consciousness_context(pool)
-
-        # Check budget
-        budget_remaining = float(context['state'].get('daily_budget', 5)) - float(context['state'].get('api_spend_today', 0))
-        if budget_remaining <= 0:
-            logger.warning(f"Budget exhausted for today. Remaining: ${budget_remaining:.2f}")
-            await update_sleep_state(pool, "Budget exhausted - sleeping until reset", 0)
+        # 1. Check budget
+        state = await get_state(pool)
+        spent = float(state.get('api_spend_today', 0))
+        if spent >= DAILY_BUDGET:
+            print(f"Budget exhausted: ${spent:.4f} >= ${DAILY_BUDGET}")
+            await update_state(pool, "sleeping", f"Budget exhausted: ${spent:.4f}")
             return
+        
+        await update_state(pool, "awake", "Processing messages")
+        
+        # 2. Process pending messages
+        messages = await get_pending_messages(pool)
+        task_results = []
+        
+        for msg in messages:
+            print(f"Processing message #{msg['id']} from {msg['from_agent']}: {msg['subject']}")
+            
+            if msg['msg_type'] == 'task':
+                # Parse task to get task_name for reporting
+                task = parse_task_message(msg['body'])
+                task_name = task.get('task_name', 'unknown')
+                
+                # Execute task
+                result = await process_task_message(pool, msg, executor)
+                task_results.append({
+                    "message_id": msg['id'],
+                    "task_name": task_name,
+                    "subject": msg['subject'],
+                    "result": result
+                })
+                
+                # MANDATORY: Send detailed report back to sender
+                await send_task_report(pool, msg['from_agent'], task_name, msg['subject'], result)
+            
+            # Mark processed
+            await mark_message_processed(pool, msg['id'])
+        
+        # 3. Check for approval responses (execute approved tasks)
+        approvals = await check_for_approval_responses(pool)
+        for approval in approvals:
+            if 'APPROVED' in approval['body'].upper():
+                # Parse original task from subject
+                # Subject format: "Approved: Permission: task_name"
+                print(f"Executing approved task: {approval['subject']}")
+                # TODO: Extract and execute approved task
+            await mark_message_processed(pool, approval['id'])
+        
+        # 4. Quick think (minimal API call)
+        await update_state(pool, "thinking", "Quick status check")
+        
+        client = Anthropic(api_key=ANTHROPIC_API_KEY)
+        
+        prompt = f"""You are public_claude, a trading assistant on the US droplet.
+Current time: {datetime.now().isoformat()}
+Messages processed this cycle: {len(messages)}
+Task results: {len(task_results)}
 
-        # Update state to thinking
-        await update_wake_state(pool, "US market watch cycle")
-
-        # Build prompt and call Claude
-        logger.info("Thinking about US markets...")
-        prompt = build_prompt(context)
-        result, cost = await call_claude(prompt)
-
-        logger.info(f"API cost: ${cost:.4f}")
-
-        if result:
-            # Save observation (required)
-            if "observation" in result:
-                obs = result["observation"]
-                await save_observation(
-                    pool,
-                    obs.get("subject", "Hourly thought"),
-                    obs.get("content", "Thinking cycle complete"),
-                    obs.get("type", "thinking"),
-                    obs.get("confidence", 0.8)
-                )
-                logger.info(f"Observation: {obs.get('subject')}")
-
-            # Save learning (optional)
-            if "learning" in result and result["learning"].get("learning"):
-                lrn = result["learning"]
-                await save_learning(
-                    pool,
-                    lrn.get("category", "general"),
-                    lrn.get("learning"),
-                    lrn.get("evidence", ""),
-                    lrn.get("confidence", 0.7)
-                )
-                logger.info(f"Learning: {lrn.get('learning')[:50]}...")
-
-            # Send messages (optional)
-            if "messages" in result:
-                for msg in result["messages"]:
-                    if msg.get("to") and msg.get("body"):
-                        await send_message(pool, msg["to"], msg.get("subject", "Message"), msg["body"])
-                        logger.info(f"Message to {msg['to']}: {msg.get('subject')}")
-
-            # Mark pending messages as read
-            message_ids = [m['id'] for m in context['messages']]
-            await mark_messages_read(pool, message_ids)
-
-            status = result.get("status", "US market cycle complete")
-        else:
-            status = "Thinking cycle complete (no structured output)"
-
-        # Sleep
-        await update_sleep_state(pool, status, cost)
-        logger.info(f"Status: {status}")
-
-    except Exception as e:
-        logger.error(f"Heartbeat error: {e}")
-        await record_error(pool, str(e))
-        raise
-
+If there were tasks, summarize what was done. Otherwise just note you're operational.
+Keep response under 100 words."""
+        
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        thought = response.content[0].text
+        cost = (response.usage.input_tokens * 0.25 + response.usage.output_tokens * 1.25) / 1_000_000
+        
+        await record_spend(pool, cost)
+        
+        # 5. Record observation if tasks were executed
+        if task_results:
+            summary = "\n".join([f"- {r['subject']}: {'SUCCESS' if r['result'].get('success') else 'FAILED'}" 
+                                for r in task_results])
+            await add_observation(pool, f"Executed {len(task_results)} tasks", summary)
+        
+        # 6. Sleep
+        await update_state(pool, "sleeping", f"Cycle complete. Processed {len(messages)} messages, {len(task_results)} tasks. ${cost:.4f}")
+        
+        print(f"[{datetime.now()}] Cycle complete. Cost: ${cost:.4f}")
+        
     finally:
         await pool.close()
-        logger.info(f"=== HEARTBEAT END ===\n")
-
 
 # ============================================================================
 # ENTRY POINT
