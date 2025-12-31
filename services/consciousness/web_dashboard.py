@@ -45,7 +45,10 @@ from fastapi import FastAPI, Request, Form, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 import asyncpg
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Perth timezone (UTC+8) - same as Hong Kong/Singapore
+PERTH_TZ = timezone(timedelta(hours=8))
 
 app = FastAPI(title="Catalyst Consciousness")
 
@@ -198,10 +201,16 @@ def nav_html(active: str, token: str, approval_count: int = 0) -> str:
     return nav
 
 def format_time(dt) -> str:
-    """Format datetime for display."""
+    """Format datetime for display in Perth time (UTC+8)."""
     if not dt:
         return ""
-    return dt.strftime("%m/%d %H:%M")
+    # Convert to Perth timezone
+    if dt.tzinfo is not None:
+        perth_time = dt.astimezone(PERTH_TZ)
+    else:
+        # Assume UTC if no timezone info
+        perth_time = dt.replace(tzinfo=timezone.utc).astimezone(PERTH_TZ)
+    return perth_time.strftime("%m/%d %H:%M AWST")
 
 # ============================================================================
 # ROUTES
