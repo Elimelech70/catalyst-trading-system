@@ -127,6 +127,25 @@ Reports now appears in the main nav:
 
 ---
 
+## 3.5 Dashboard Enhancements
+
+### Timezone Fix
+- All times now display in **Perth time (AWST/UTC+8)**
+- Format: `MM/DD HH:MM AWST`
+
+### Approval Alert System
+- Pending approvals heading shows **⚠️ PENDING APPROVALS** in pulsing red
+- CSS animation draws attention when action needed
+- Approval count badge now visible on **ALL pages** (not just Home)
+
+### Updated `web_dashboard.py` to v1.3.0
+- Added `PERTH_TZ` timezone constant
+- Added `get_approval_count()` helper function
+- Added `.alert-heading` CSS with pulse animation
+- All pages now query and display approval count in nav
+
+---
+
 ## 4. Git Commits
 
 | Commit | Description |
@@ -135,6 +154,10 @@ Reports now appears in the main nav:
 | `54719e8` | refactor(consciousness): Replace heartbeat_public with v2 |
 | `0fb86e5` | docs: Add task execution deployment summary |
 | `244382d` | feat(dashboard): Add Reports section to dashboard |
+| `0668490` | docs: Add comprehensive deployment summary |
+| `e343ee2` | fix(dashboard): Apply timezone fix - all times now Perth (AWST) |
+| `39019f3` | feat(dashboard): Add pulsing red alert for pending approvals |
+| `54d0ae0` | fix(dashboard): Show approval count badge on ALL pages |
 
 ---
 
