@@ -2,11 +2,16 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca_trader.py
-Version: 2.0.0
-Last Updated: 2025-12-27
+Version: 2.1.0
+Last Updated: 2026-01-01
 Purpose: Consolidated Alpaca trading client - SINGLE SOURCE OF TRUTH
 
 REVISION HISTORY:
+v2.1.0 (2026-01-01) - FIX: Bracket orders now use GTC instead of DAY
+  - Changed TimeInForce.DAY to TimeInForce.GTC for bracket orders
+  - Stop-loss and take-profit orders now persist across trading days
+  - Fixes issue where all brackets expired at market close
+
 v2.0.0 (2025-12-27) - C2 Fix: Consolidated from 5 duplicate files
   - services/trading/common/alpaca_trader.py
   - services/risk-manager/common/alpaca_trader.py
@@ -16,7 +21,7 @@ v2.0.0 (2025-12-27) - C2 Fix: Consolidated from 5 duplicate files
   - Added order_class=OrderClass.BRACKET for bracket orders
   - Sub-penny price rounding enforced
   - Critical side mapping validation
-  
+
 v1.5.0 - Order side mapping bug fix
 v1.4.0 - Sub-penny price handling
 v1.3.0 - Bracket order support
@@ -349,7 +354,7 @@ class AlpacaTrader:
                     symbol=symbol,
                     qty=quantity,
                     side=order_side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=TimeInForce.GTC,  # GTC so stops/targets persist across days
                     limit_price=rounded_entry,
                     order_class=OrderClass.BRACKET,  # CRITICAL: Must be BRACKET
                     stop_loss=stop_loss_req,
@@ -362,7 +367,7 @@ class AlpacaTrader:
                     symbol=symbol,
                     qty=quantity,
                     side=order_side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=TimeInForce.GTC,  # GTC so stops/targets persist across days
                     order_class=OrderClass.BRACKET,  # CRITICAL: Must be BRACKET
                     stop_loss=stop_loss_req,
                     take_profit=take_profit_req

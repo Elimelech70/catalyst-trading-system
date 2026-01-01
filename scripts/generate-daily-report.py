@@ -96,7 +96,6 @@ async def get_positions_opened(conn, report_date: date):
             p.status,
             p.realized_pnl,
             p.unrealized_pnl,
-            p.alpaca_status,
             p.opened_at AT TIME ZONE 'America/New_York' as opened_et
         FROM positions p
         JOIN securities s ON s.security_id = p.security_id
@@ -139,7 +138,6 @@ async def get_all_open_positions(conn):
             p.entry_price,
             p.status,
             p.unrealized_pnl,
-            p.alpaca_status,
             p.opened_at AT TIME ZONE 'America/New_York' as opened_et
         FROM positions p
         JOIN securities s ON s.security_id = p.security_id
@@ -271,11 +269,11 @@ def generate_markdown_report(report_date: date, cycles: list, positions_opened: 
         total_capital = sum(p['quantity'] * float(p['entry_price']) for p in positions_opened)
         report_lines.append(f"**Total Positions:** {len(positions_opened)} | **Capital Deployed:** ${total_capital:,.2f}")
         report_lines.append("")
-        report_lines.append("| Cycle | Symbol | Side | Qty | Entry Price | Capital | Alpaca Status |")
-        report_lines.append("|-------|--------|------|-----|-------------|---------|---------------|")
+        report_lines.append("| Cycle | Symbol | Side | Qty | Entry Price | Capital | Status |")
+        report_lines.append("|-------|--------|------|-----|-------------|---------|--------|")
         for p in positions_opened:
             capital = p['quantity'] * float(p['entry_price'])
-            report_lines.append(f"| {p['cycle_id']} | {p['symbol']} | {p['side']} | {p['quantity']} | ${float(p['entry_price']):,.2f} | ${capital:,.2f} | {p['alpaca_status'] or '-'} |")
+            report_lines.append(f"| {p['cycle_id']} | {p['symbol']} | {p['side']} | {p['quantity']} | ${float(p['entry_price']):,.2f} | ${capital:,.2f} | {p['status']} |")
     else:
         report_lines.append("*No positions opened on this date*")
 
