@@ -142,31 +142,49 @@ dev_claude (Experiment) → big_bro (Validate) → Craig (Deploy) → intl_claud
 
 ---
 
-## Deployment Phases
+## Deployment Status (Updated 2026-01-10)
 
-### Phase 1: Database Setup (Day 1)
-- [ ] DROP catalyst_trading (old US database)
-- [ ] CREATE catalyst_dev (fresh sandbox)
-- [ ] Add position_monitor_status to catalyst_intl
-- [ ] Initialize dev_claude in consciousness
+### Phase 1: Database Setup - COMPLETED
+- [x] DROP catalyst_trading (old US database)
+- [x] CREATE catalyst_dev (fresh sandbox with 8 tables + v_monitor_health view)
+- [x] Add position_monitor_status to catalyst_intl
+- [x] Initialize dev_claude in consciousness
+- [x] Retire public_claude from trading
 
-### Phase 2: Deploy to Consciousness Hub (Day 2)
-- [ ] Upload Python files to US droplet
-- [ ] Configure dev_claude_config.yaml
-- [ ] Set environment variables
-- [ ] Install cron schedule
+### Phase 2: Deploy to Consciousness Hub (US Droplet) - COMPLETED
+- [x] Upload Python files to /root/catalyst/dev/
+- [x] Configure dev_claude_config.yaml
+- [x] Create Python venv at /root/catalyst/venv/
+- [x] Install cron schedule at /etc/cron.d/catalyst-hub
+- [ ] Add ANTHROPIC_API_KEY to .env (pending)
 
-### Phase 3: Deploy to Production (Day 3)
-- [ ] Upload Python files to international droplet
+### Phase 3: Deploy to Production (INTL Droplet) - PENDING
+- [ ] Upload Python files to international droplet (requires SSH access)
 - [ ] Configure intl_claude_config.yaml
 - [ ] Update environment variables
 - [ ] Install cron schedule
 
-### Phase 4: Verification (Day 4)
+### Phase 4: Remaining Tasks
+- [ ] Close US positions (requires Alpaca access during market hours)
 - [ ] Test heartbeat mode on both agents
 - [ ] Verify monitor health view
-- [ ] Check consciousness messages
 - [ ] Monitor first trading session
+
+### Deployment Summary Table
+
+| Step | Location | Status | Notes |
+|------|----------|--------|-------|
+| Drop catalyst_trading | PostgreSQL | DONE | Old US database removed |
+| Create catalyst_dev | PostgreSQL | DONE | 8 tables + view created |
+| Add monitor tables | catalyst_intl | DONE | position_monitor_status added |
+| Initialize dev_claude | catalyst_research | DONE | Welcome messages sent |
+| Retire public_claude | catalyst_research | DONE | Mode set to 'retired' |
+| Deploy Python (US) | /root/catalyst/dev/ | DONE | All 4 Python files deployed |
+| Create venv | /root/catalyst/venv/ | DONE | asyncpg, anthropic installed |
+| Install cron (US) | /etc/cron.d/ | DONE | catalyst-hub installed |
+| Deploy Python (INTL) | INTL droplet | PENDING | Needs SSH access |
+| Add API keys | .env files | PENDING | ANTHROPIC_API_KEY needed |
+| Close US positions | Alpaca | PENDING | Requires market hours |
 
 ---
 
