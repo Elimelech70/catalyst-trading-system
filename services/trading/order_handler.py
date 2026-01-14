@@ -193,7 +193,7 @@ class OrderHandler:
                     # ===============================================================
                     await conn.execute("""
                         UPDATE orders SET
-                            alpaca_order_id = $1,
+                            broker_order_id = $1,
                             status = 'submitted',
                             submitted_at = NOW(),
                             updated_at = NOW(),
@@ -456,12 +456,12 @@ class OrderHandler:
         """
         async with self.db_pool.acquire() as conn:
             order = await conn.fetchrow("""
-                SELECT order_id, alpaca_order_id, status
+                SELECT order_id, broker_order_id, status
                 FROM orders
                 WHERE order_id = $1
             """, order_id)
 
-            if not order or not order['alpaca_order_id']:
+            if not order or not order['broker_order_id']:
                 return {"success": False, "error": "Order not found or no Alpaca ID"}
 
             if not self.alpaca_trader or not self.alpaca_trader.is_enabled():
@@ -470,7 +470,7 @@ class OrderHandler:
             try:
                 # Get status from Alpaca
                 alpaca_status = await self.alpaca_trader.get_order_status(
-                    order['alpaca_order_id']
+                    order['broker_order_id']
                 )
 
                 new_status = alpaca_status['status']

@@ -443,12 +443,13 @@ async def sync_order_statuses():
             async with state.db_pool.acquire() as conn:
                 # Find positions that need status sync (not in terminal state)
                 positions = await conn.fetch("""
-                    SELECT p.position_id, p.alpaca_order_id, p.alpaca_status, s.symbol
+                    SELECT p.position_id, p.broker_order_id,
+                           p.metadata->>'alpaca_status' as alpaca_status, s.symbol
                     FROM positions p
                     JOIN securities s ON s.security_id = p.security_id
-                    WHERE p.alpaca_order_id IS NOT NULL
+                    WHERE p.broker_order_id IS NOT NULL
                     AND p.status = 'open'
-                    AND (p.alpaca_status IS NULL OR p.alpaca_status NOT IN
+                    AND (p.metadata->>'alpaca_status' IS NULL OR p.metadata->>'alpaca_status' NOT IN
                          ('filled', 'canceled', 'expired', 'rejected', 'done_for_day', 'replaced', 'error'))
                 """)
 
@@ -460,16 +461,17 @@ async def sync_order_statuses():
 
                 for pos in positions:
                     try:
-                        status_info = await alpaca_trader.get_order_status(pos['alpaca_order_id'])
+                        status_info = await alpaca_trader.get_order_status(pos['broker_order_id'])
                         new_status = status_info.get('status', 'unknown')
                         filled_qty = status_info.get('filled_qty', 0)
                         filled_avg_price = status_info.get('filled_avg_price')
 
                         if new_status != pos['alpaca_status']:
-                            # Update alpaca_status
+                            # Update alpaca_status in metadata JSONB
                             await conn.execute("""
                                 UPDATE positions
-                                SET alpaca_status = $1, updated_at = NOW()
+                                SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{alpaca_status}', to_jsonb($1::text)),
+                                    updated_at = NOW()
                                 WHERE position_id = $2
                             """, new_status, pos['position_id'])
                             synced_count += 1
@@ -1166,11 +1168,11 @@ async def create_position(cycle_id: str, request: PositionRequest):
                     alpaca_order_id = alpaca_order['order_id']
                     alpaca_status = alpaca_order['status']
 
-                    # Store Alpaca order_id in database
+                    # Store Alpaca order_id in database (broker_order_id column, status in metadata)
                     await conn.execute("""
                         UPDATE positions
-                        SET alpaca_order_id = $1,
-                            alpaca_status = $2
+                        SET broker_order_id = $1,
+                            metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{alpaca_status}', to_jsonb($2::text))
                         WHERE position_id = $3
                     """, alpaca_order_id, alpaca_status, position_id)
 
@@ -1191,13 +1193,15 @@ async def create_position(cycle_id: str, request: PositionRequest):
                         }
                     )
 
-                    # Store error in database
+                    # Store error in database (in metadata JSONB)
                     await conn.execute("""
                         UPDATE positions
-                        SET alpaca_status = $1,
-                            alpaca_error = $2
-                        WHERE position_id = $3
-                    """, "error", str(e), position_id)
+                        SET metadata = jsonb_set(
+                            jsonb_set(COALESCE(metadata, '{}'::jsonb), '{alpaca_status}', '"error"'),
+                            '{alpaca_error}', to_jsonb($1::text)
+                        )
+                        WHERE position_id = $2
+                    """, str(e), position_id)
 
                     alpaca_status = "error"
             else:

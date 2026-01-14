@@ -186,7 +186,7 @@ async def execute_emergency_stop(cycle_id: str, reason: str) -> Dict[str, Any]:
                     p.security_id,
                     p.side,
                     p.quantity,
-                    p.alpaca_order_id,
+                    p.broker_order_id,
                     s.symbol
                 FROM positions p
                 JOIN securities s ON s.security_id = p.security_id
@@ -423,7 +423,7 @@ class PositionMonitor:
             positions = await conn.fetch("""
                 SELECT
                     p.position_id,
-                    p.alpaca_order_id,
+                    p.broker_order_id,
                     s.symbol,
                     p.quantity,
                     p.entry_price,

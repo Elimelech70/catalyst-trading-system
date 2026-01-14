@@ -500,8 +500,8 @@ psql "$DATABASE_URL" -c "
 SELECT
     DATE(opened_at AT TIME ZONE 'America/New_York') as trade_date,
     COUNT(*) as total,
-    COUNT(CASE WHEN alpaca_status = 'accepted' THEN 1 END) as accepted,
-    COUNT(CASE WHEN alpaca_status = 'filled' THEN 1 END) as filled,
+    COUNT(CASE WHEN metadata->>'alpaca_status' = 'accepted' THEN 1 END) as accepted,
+    COUNT(CASE WHEN metadata->>'alpaca_status' = 'filled' THEN 1 END) as filled,
     COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
     COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed
 FROM positions
@@ -516,8 +516,8 @@ ORDER BY trade_date DESC;"
 psql "$DATABASE_URL" -c "
 SELECT
     s.symbol, p.side, p.quantity, p.entry_price,
-    p.exit_price, p.realized_pnl, p.pnl_percent,
-    p.status, p.alpaca_status,
+    p.exit_price, p.realized_pnl, p.realized_pnl_pct,
+    p.status, p.metadata->>'alpaca_status' as alpaca_status,
     p.opened_at AT TIME ZONE 'America/New_York' as opened_et
 FROM positions p
 JOIN securities s ON s.security_id = p.security_id
@@ -535,7 +535,7 @@ SELECT
     COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed,
     COALESCE(SUM(realized_pnl), 0) as total_realized_pnl,
     COALESCE(SUM(unrealized_pnl), 0) as total_unrealized_pnl,
-    ROUND(AVG(pnl_percent), 2) as avg_pnl_percent
+    ROUND(AVG(realized_pnl_pct), 2) as avg_pnl_percent
 FROM positions
 WHERE opened_at >= NOW() - INTERVAL '7 days';"
 ```
@@ -547,8 +547,8 @@ psql "$DATABASE_URL" -c "
 SELECT
     s.symbol, p.side, p.quantity,
     p.entry_price, p.exit_price,
-    p.realized_pnl, p.pnl_percent,
-    p.close_reason,
+    p.realized_pnl, p.realized_pnl_pct,
+    p.exit_reason,
     p.closed_at AT TIME ZONE 'America/New_York' as closed_et
 FROM positions p
 JOIN securities s ON s.security_id = p.security_id
@@ -585,19 +585,21 @@ ORDER BY sr.score DESC;"
 # Check if orders are actually filling
 psql "$DATABASE_URL" -c "
 SELECT
-    alpaca_status,
+    metadata->>'alpaca_status' as alpaca_status,
     COUNT(*) as count
 FROM positions
 WHERE opened_at >= NOW() - INTERVAL '7 days'
-GROUP BY alpaca_status
+GROUP BY metadata->>'alpaca_status'
 ORDER BY count DESC;"
 
 # Positions with Alpaca errors
 psql "$DATABASE_URL" -c "
-SELECT s.symbol, p.alpaca_order_id, p.alpaca_status, p.alpaca_error
+SELECT s.symbol, p.broker_order_id,
+       p.metadata->>'alpaca_status' as alpaca_status,
+       p.metadata->>'alpaca_error' as alpaca_error
 FROM positions p
 JOIN securities s ON s.security_id = p.security_id
-WHERE p.alpaca_error IS NOT NULL
+WHERE p.metadata->>'alpaca_error' IS NOT NULL
   AND p.opened_at >= NOW() - INTERVAL '7 days';"
 ```
 
@@ -611,7 +613,7 @@ SELECT
     SUM(CASE WHEN p.realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
     SUM(CASE WHEN p.realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
     COALESCE(SUM(p.realized_pnl), 0) as total_pnl,
-    ROUND(AVG(p.pnl_percent), 2) as avg_pnl_pct
+    ROUND(AVG(p.realized_pnl_pct), 2) as avg_pnl_pct
 FROM positions p
 JOIN securities s ON s.security_id = p.security_id
 WHERE p.status = 'closed'
@@ -647,7 +649,8 @@ ORDER BY date DESC;
 
 -- Recent positions
 SELECT 'RECENT POSITIONS' as section;
-SELECT s.symbol, p.side, p.quantity, p.entry_price, p.status, p.alpaca_status,
+SELECT s.symbol, p.side, p.quantity, p.entry_price, p.status,
+       p.metadata->>'alpaca_status' as alpaca_status,
        p.opened_at AT TIME ZONE 'America/New_York' as opened_et
 FROM positions p
 JOIN securities s ON s.security_id = p.security_id
