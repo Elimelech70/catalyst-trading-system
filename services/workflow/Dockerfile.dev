@@ -1,0 +1,42 @@
+# Name of Application: Catalyst Trading System
+# Name of file: services/workflow/Dockerfile.dev
+# Version: 1.0.0
+# Last Updated: 2025-11-18
+# Purpose: Development Dockerfile with hot reload support for Workflow Service
+
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install development tools
+RUN pip install --no-cache-dir \
+    watchdog \
+    ipython \
+    ipdb \
+    pytest \
+    pytest-asyncio \
+    pytest-cov
+
+# Copy application code
+COPY . .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV SERVICE_PORT=5006
+
+# Development command with auto-reload
+CMD ["uvicorn", "workflow-coordinator:app", "--host", "0.0.0.0", "--port", "5006", "--reload"]
