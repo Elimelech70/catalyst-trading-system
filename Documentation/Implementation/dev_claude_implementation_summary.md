@@ -2,9 +2,41 @@
 
 **Name of Application:** Catalyst Trading System
 **Name of file:** dev_claude_implementation_summary.md
-**Version:** 1.0.0
-**Last Updated:** 2026-01-15
+**Version:** 1.1.0
+**Last Updated:** 2026-01-16
 **Purpose:** Summary of dev_claude unified agent implementation for US markets
+
+---
+
+## REVISION HISTORY
+
+- **v1.1.0 (2026-01-16)** - Deployment verified and operational
+  - All components deployed and tested
+  - Cron schedule active
+  - Alpaca paper trading connected
+  - Consciousness framework integrated
+- **v1.0.0 (2026-01-15)** - Initial summary
+
+---
+
+## Deployment Status: OPERATIONAL
+
+The dev_claude unified agent is **fully deployed and running autonomously** on the US market schedule.
+
+### Verification Summary (2026-01-16)
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Directory structure | ✅ Complete | `/root/catalyst-dev/` |
+| Virtual environment | ✅ Complete | Python 3.10 with venv |
+| Dependencies | ✅ Installed | anthropic 0.76.0, asyncpg 0.31.0, alpaca-py 0.43.2, PyYAML 6.0.3 |
+| Environment file | ✅ Configured | `.env` with all credentials |
+| Config file | ✅ Deployed | `config/dev_claude_config.yaml` |
+| Unified agent | ✅ Running | `unified_agent.py` v1.0.0 |
+| Cron schedule | ✅ Active | `/etc/cron.d/catalyst-dev` |
+| Trading database | ✅ Connected | catalyst_dev (9 tables) |
+| Research database | ✅ Connected | catalyst_research (consciousness) |
+| Alpaca broker | ✅ Connected | Paper trading with $105k equity |
 
 ---
 
@@ -24,28 +56,40 @@
 
 The new architecture follows the proven pattern from `intl_claude` on HKEX markets.
 
-## Key Components
+## File Structure (Deployed)
 
-### 1. File Structure
 ```
 /root/catalyst-dev/
-├── unified_agent.py          # Main agent (~1,200 lines)
-├── config/dev_claude_config.yaml
+├── unified_agent.py          # Main agent v1.0.0 (~1,200 lines)
+├── position_monitor.py       # Trade-triggered monitoring
+├── signals.py                # Exit signal detection
+├── startup_monitor.py        # Pre-market reconciliation
+├── config/
+│   └── dev_claude_config.yaml
 ├── .env                      # Environment variables
-├── venv/                     # Python virtual environment
-└── logs/                     # Agent logs
+├── venv/                     # Python 3.10 virtual environment
+└── logs/
+    ├── scan.log
+    ├── trade.log
+    ├── close.log
+    └── heartbeat.log
 ```
 
-### 2. Trading Configuration
-- **Max positions:** 8
-- **Max position value:** $5,000 USD
-- **Stop loss:** 5%
-- **Take profit:** 10%
-- **Daily loss limit:** $2,500
-- **Min volume:** 500,000
-- **Price range:** $5-$500
+## Trading Configuration
 
-### 3. Agent Tools (12 Total)
+| Parameter | Value |
+|-----------|-------|
+| Max positions | 8 |
+| Max position value | $5,000 USD |
+| Min position value | $500 USD |
+| Stop loss | 5% |
+| Take profit | 10% |
+| Daily loss limit | $2,500 |
+| Min volume | 500,000 |
+| Price range | $5-$500 |
+
+## Agent Tools (12 Total)
+
 | Tool | Purpose |
 |------|---------|
 | `scan_market` | Find trading candidates based on momentum/volume |
@@ -61,7 +105,8 @@ The new architecture follows the proven pattern from `intl_claude` on HKEX marke
 | `send_alert` | Alert big_bro or Craig |
 | `log_decision` | Record trading decisions for learning |
 
-### 4. Operating Modes
+## Operating Modes
+
 | Mode | Purpose | When |
 |------|---------|------|
 | `scan` | Find candidates, analyze, NO trading | Pre-market (08:00 EST) |
@@ -69,28 +114,48 @@ The new architecture follows the proven pattern from `intl_claude` on HKEX marke
 | `close` | Review positions, close weak setups, EOD report | Market close (16:00 EST) |
 | `heartbeat` | Check messages, update status | Off-hours |
 
-### 5. Cron Schedule (EST times, stored as UTC)
-- **Pre-market scan:** 08:00 EST (13:00 UTC)
-- **Market open trade:** 09:30 EST (14:30 UTC)
-- **Hourly trades:** 10:00-15:00 EST
-- **EOD close:** 16:00 EST (21:00 UTC)
-- **Off-hours heartbeat:** Every 3 hours weekdays, every 6 hours weekends
+## Cron Schedule (Active)
+
+| Time (EST) | Time (UTC) | Mode | Description |
+|------------|------------|------|-------------|
+| 08:00 | 13:00 | scan | Pre-market candidate search |
+| 09:30 | 14:30 | trade | Market open |
+| 10:00 | 15:00 | trade | Hourly cycle |
+| 11:00 | 16:00 | trade | Hourly cycle |
+| 12:00 | 17:00 | trade | Hourly cycle |
+| 13:00 | 18:00 | trade | Hourly cycle |
+| 14:00 | 19:00 | trade | Hourly cycle |
+| 15:00 | 20:00 | trade | Hourly cycle |
+| 16:00 | 21:00 | close | EOD position review |
+| Off-hours | - | heartbeat | Every 3h weekdays, 6h weekends |
 
 ## Integration Points
 
-### Broker: Alpaca
-- Paper trading mode for sandbox
-- Direct SDK integration (alpaca-py)
-- Market orders with DAY time-in-force
+### Broker: Alpaca (Verified)
+- **Mode:** Paper trading
+- **SDK:** alpaca-py 0.43.2
+- **Account:** $105,458 equity, 15 open positions
+- **Order type:** Market orders with DAY time-in-force
 
-### Database
-- **Trading DB:** catalyst_dev (orders, positions, decisions)
-- **Research DB:** catalyst_research (consciousness framework)
+### Database: catalyst_dev (Verified)
+Tables: `decisions`, `orders`, `patterns`, `position_monitor_status`, `positions`, `scan_results`, `securities`, `trading_cycles`, `v_monitor_health`
 
-### Consciousness Framework
-- Inter-agent messaging (big_bro, craig)
-- Observations and learnings storage
-- Budget tracking ($5/day API budget)
+### Consciousness: catalyst_research (Verified)
+- **Agent state:** dev_claude registered
+- **Status:** sleeping (wakes on schedule)
+- **Budget:** $5.00/day (API spend tracking active)
+- **Inter-agent messaging:** Connected to big_bro
+
+## Current Agent State
+
+```
+agent_id: dev_claude
+current_mode: sleeping
+api_spend_today: $0.06
+daily_budget: $5.00
+last_active: 2026-01-15 23:45 UTC
+status_message: Sandbox trader - US paper trading with full autonomy
+```
 
 ## Decision Framework
 
@@ -117,27 +182,57 @@ The new architecture follows the proven pattern from `intl_claude` on HKEX marke
 | Market hours | 09:30-12:00, 13:00-16:00 HKT | 09:30-16:00 EST |
 | Lunch break | Yes (12:00-13:00) | No |
 
-## Deployment Checklist
+## Deployment Checklist (All Complete)
 
-- [ ] Create `/root/catalyst-dev/` directory structure
-- [ ] Set up Python virtual environment
-- [ ] Install dependencies: `anthropic asyncpg pyyaml alpaca-py`
-- [ ] Configure `.env` with API keys and database URLs
-- [ ] Create `config/dev_claude_config.yaml`
-- [ ] Deploy `unified_agent.py`
-- [ ] Test with `--mode heartbeat`
-- [ ] Install cron schedule in `/etc/cron.d/catalyst-dev`
-- [ ] Verify logs directory is writable
+- [x] Create `/root/catalyst-dev/` directory structure
+- [x] Set up Python virtual environment
+- [x] Install dependencies: `anthropic asyncpg pyyaml alpaca-py`
+- [x] Configure `.env` with API keys and database URLs
+- [x] Create `config/dev_claude_config.yaml`
+- [x] Deploy `unified_agent.py`
+- [x] Test with `--mode heartbeat`
+- [x] Install cron schedule in `/etc/cron.d/catalyst-dev`
+- [x] Verify logs directory is writable
+- [x] Verify Alpaca paper trading connection
+- [x] Verify database connectivity
+- [x] Verify consciousness framework integration
+
+## Recent Activity Log
+
+```
+2026-01-16 06:00 UTC - Heartbeat cycle complete (0 messages)
+2026-01-16 03:00 UTC - Heartbeat processed message from big_bro: "Architectural Focus"
+2026-01-15 21:00 UTC - Close cycle complete
+2026-01-15 20:00 UTC - Trade cycle (market closed, switched to heartbeat)
+```
+
+## Monitoring Commands
+
+```bash
+# Check agent status
+cd /root/catalyst-dev && source .env && ./venv/bin/python3 unified_agent.py --mode heartbeat
+
+# View recent logs
+tail -50 /root/catalyst-dev/logs/trade.log
+tail -50 /root/catalyst-dev/logs/heartbeat.log
+
+# Check Alpaca positions
+./venv/bin/python3 -c "from alpaca.trading.client import TradingClient; c = TradingClient('PK...', '...', paper=True); print(c.get_all_positions())"
+
+# Check cron schedule
+cat /etc/cron.d/catalyst-dev
+```
 
 ## Next Steps
 
-1. **Deploy to US droplet** - Follow deployment instructions
-2. **Test paper trading** - Verify Alpaca connectivity
-3. **Monitor initial cycles** - Check logs for issues
-4. **Tune parameters** - Adjust based on performance
-5. **Enable consciousness** - Connect to research database
+1. ~~Deploy to US droplet~~ ✅ Complete
+2. ~~Test paper trading~~ ✅ Alpaca connected
+3. **Monitor first live trading session** - Next US market open
+4. **Review trading decisions** - Check decisions table
+5. **Tune parameters** - Adjust based on performance
 
 ---
 
-*Summary generated: 2026-01-15*
+*Implementation verified: 2026-01-16*
 *Source document: dev_claude_us_implementation.md v1.0.0*
+*Deployed by: Claude Code*
