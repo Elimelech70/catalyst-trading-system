@@ -1,0 +1,57 @@
+# ============================================================================
+# dev_claude Configuration - US Sandbox Trading
+# Version: 1.0.0
+# ============================================================================
+
+agent:
+  id: dev_claude
+  name: "Dev Claude"
+  role: sandbox_trader
+  market: US
+  daily_budget: 5.00  # USD for Claude API
+
+broker:
+  name: alpaca
+  mode: paper
+  base_url: https://paper-api.alpaca.markets
+
+trading:
+  markets:
+    - NYSE
+    - NASDAQ
+  currency: USD
+
+  # Position limits
+  max_positions: 8
+  max_position_value: 5000  # USD per position
+  min_position_value: 500   # USD minimum
+
+  # Risk limits
+  stop_loss_pct: 0.05       # 5% stop loss (sandbox = learning)
+  take_profit_pct: 0.10     # 10% take profit
+  daily_loss_limit: 2500    # USD max daily loss
+
+  # Entry criteria (relaxed for learning)
+  min_volume: 500000        # Minimum daily volume
+  min_price: 5.00           # Minimum stock price
+  max_price: 500.00         # Maximum stock price
+
+signals:
+  # Exit signal thresholds
+  stop_loss_strong: -0.05
+  stop_loss_moderate: -0.03
+  take_profit_strong: 0.10
+  take_profit_moderate: 0.06
+  rsi_overbought_strong: 80
+  rsi_overbought_moderate: 70
+
+schedule:
+  timezone: America/New_York
+  pre_market: "08:00"       # Pre-market scan
+  market_open: "09:30"
+  market_close: "16:00"
+
+autonomy:
+  level: full               # Full autonomy for sandbox
+  require_approval: false   # No approval needed
+  experimental: true        # Can try new strategies
