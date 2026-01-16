@@ -1458,45 +1458,77 @@ async def positions_page(
         risk_order = {"critical": 0, "danger": 1, "warning": 2, "safe": 3}
         positions.sort(key=lambda x: risk_order.get(x["risk_class"], 4))
 
-    # Calculate totals
+    # Calculate totals by market (before filtering)
+    us_pnl = sum(p["pnl"] for p in all_positions if p["market"] == "US")
+    hkex_pnl = sum(p["pnl"] for p in all_positions if p["market"] == "HKEX")
+
+    # Totals after filtering
     total_positions = len(positions)
     total_pnl = sum(p["pnl"] for p in positions)
     at_risk_count = len([p for p in positions if p["risk_class"] in ["danger", "critical"]])
     winners_count = len([p for p in positions if p["pnl"] > 0])
     losers_count = len([p for p in positions if p["pnl"] < 0])
 
-    # Account summary
+    # Account summary - show both US and HKEX
     account_html = ""
+
+    # US Summary (from Alpaca)
+    us_summary = ""
     if account:
         equity = float(account.equity)
         cash = float(account.cash)
         daily_change = float(account.equity) - float(account.last_equity)
         daily_pct = (daily_change / float(account.last_equity)) * 100 if float(account.last_equity) else 0
-        pnl_color = "#0f0" if daily_change >= 0 else "#f00"
-        pnl_sign = "+" if daily_change >= 0 else ""
+        us_pnl_color = "#0f0" if daily_change >= 0 else "#f00"
+        us_pnl_sign = "+" if daily_change >= 0 else ""
 
-        account_html = f'''
+        us_summary = f'''
         <div class="card" style="border-left-color: #00d4ff;">
-            <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+            <div style="font-size: 0.9em; color: #00d4ff; margin-bottom: 8px; font-weight: bold;">🇺🇸 US (Alpaca)</div>
+            <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
                 <div>
-                    <div style="color: #888; font-size: 0.8em;">Account Value</div>
-                    <div style="font-size: 1.2em; color: #fff;">${equity:,.2f}</div>
+                    <div style="color: #888; font-size: 0.75em;">Equity</div>
+                    <div style="color: #fff;">${equity:,.0f}</div>
                 </div>
                 <div>
-                    <div style="color: #888; font-size: 0.8em;">Cash</div>
-                    <div style="font-size: 1.2em; color: #fff;">${cash:,.2f}</div>
+                    <div style="color: #888; font-size: 0.75em;">Cash</div>
+                    <div style="color: #fff;">${cash:,.0f}</div>
                 </div>
                 <div>
-                    <div style="color: #888; font-size: 0.8em;">Today's P&L</div>
-                    <div style="font-size: 1.2em; color: {pnl_color};">{pnl_sign}${daily_change:,.2f} ({pnl_sign}{daily_pct:.2f}%)</div>
+                    <div style="color: #888; font-size: 0.75em;">Day P&L</div>
+                    <div style="color: {us_pnl_color};">{us_pnl_sign}${daily_change:,.0f}</div>
                 </div>
                 <div>
-                    <div style="color: #888; font-size: 0.8em;">Positions</div>
-                    <div style="font-size: 1.2em; color: #fff;">{total_positions}</div>
+                    <div style="color: #888; font-size: 0.75em;">Positions</div>
+                    <div style="color: #fff;">{us_count}</div>
                 </div>
             </div>
         </div>
         '''
+
+    # HKEX Summary
+    hkex_summary = ""
+    if hkex_count > 0:
+        hkex_pnl_color = "#0f0" if hkex_pnl >= 0 else "#f00"
+        hkex_pnl_sign = "+" if hkex_pnl >= 0 else ""
+
+        hkex_summary = f'''
+        <div class="card" style="border-left-color: #ff0;">
+            <div style="font-size: 0.9em; color: #ff0; margin-bottom: 8px; font-weight: bold;">🇭🇰 HKEX</div>
+            <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Unrealized P&L</div>
+                    <div style="color: {hkex_pnl_color};">{hkex_pnl_sign}HK${hkex_pnl:,.0f}</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Positions</div>
+                    <div style="color: #fff;">{hkex_count}</div>
+                </div>
+            </div>
+        </div>
+        '''
+
+    account_html = us_summary + hkex_summary
 
     # Filter tabs
     filter_tabs = f'''
