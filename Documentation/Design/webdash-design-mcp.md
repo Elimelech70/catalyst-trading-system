@@ -1,8 +1,8 @@
 # 🧠 Catalyst Consciousness - Web Dashboard
 
 **Name of Application:** Catalyst Trading System  
-**Name of file:** webdash-design-mcp-v1.1.0.md  
-**Version:** 1.1.0  
+**Name of file:** webdash-design-mcp-v1.2.0.md  
+**Version:** 1.2.0  
 **Last Updated:** 2025-01-16  
 **Purpose:** Web Dashboard Design & Implementation Document
 
@@ -14,6 +14,7 @@
 |---------|------|---------|
 | v1.0.0 | 2025-01-15 | Initial consolidated design document |
 | v1.1.0 | 2025-01-16 | Added Daily Report Format Specification (Section 11) - Orders Summary with reasoning, Open Positions with Stop Loss/Take Profit columns |
+| v1.2.0 | 2025-01-16 | Added Positions Monitor tab (Section 9.4) - Live positions table view with risk indicators, auto-refresh during market hours |
 | v1.3.0 | 2025-12-31 | Dashboard implementation: Perth timezone, approval alerts, reports section |
 
 ---
@@ -166,6 +167,7 @@ CREATE TABLE claude_reports (
 | `GET /approvals` | Pending escalation approvals |
 | `GET /reports` | Trading reports list with filters (market, type) |
 | `GET /reports/{id}` | Single report with full content and metrics |
+| `GET /positions` | Live positions from both US and HKEX markets |
 
 ### 4.2 POST Endpoints (Write)
 
@@ -182,8 +184,10 @@ CREATE TABLE claude_reports (
 | Parameter | Used On | Description |
 |-----------|---------|-------------|
 | `token` | All endpoints | Authentication token (required) |
-| `market` | `/reports` | Filter by market: US, HKEX |
+| `market` | `/reports`, `/positions` | Filter by market: US, HKEX |
 | `report_type` | `/reports` | Filter by type: daily, weekly |
+| `filter` | `/positions` | Filter by risk: all, at_risk, winners, losers |
+| `sort` | `/positions` | Sort by: pnl, symbol, market (default: pnl desc) |
 
 ---
 
@@ -194,7 +198,7 @@ CREATE TABLE claude_reports (
 Horizontal navigation with approval badge visible on all pages:
 
 ```
-[Home] [Approvals (3)] [Reports] [Agents] [Messages] [Observations] [Questions]
+[Home] [Approvals (3)] [Reports] [Positions] [Agents] [Messages] [Observations] [Questions]
 ```
 
 ### 5.2 Command Center
@@ -556,13 +560,69 @@ WantedBy=multi-user.target
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 9.4 Agents Page
+### 9.4 Positions Monitor (Live)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  📈 POSITIONS MONITOR                                    [🔄 Refresh]│
+├─────────────────────────────────────────────────────────────────────┤
+│ [Home] [Approvals] [Reports] [Positions] [Agents] [Messages]        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  US: $94,635 (36 pos) -$1,047 today   │  HKEX: HKD 1,005,890 (3 pos)│
+│                                        │  +HKD 6,678 today          │
+│                                                                     │
+│  [All 39] [US 36] [HKEX 3] [⚠️ At Risk 2]              Sort: [P&L ▼]│
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Mkt │Symbol│ Qty │ Entry  │Current │  SL   │  TP   │  P&L  │Risk│
+│  ├─────┼──────┼─────┼────────┼────────┼───────┼───────┼───────┼────┤
+│  │HKEX │ 981  │ 500 │  42.10 │  51.85 │ 39.99 │ 54.73 │+4,875 │ 🟢 │
+│  │HKEX │ 1810 │ 200 │  18.50 │  29.54 │ 17.58 │ 24.05 │+2,208 │ 🟢 │
+│  │ US  │ SOUN │ 200 │  12.03 │  12.39 │ 11.43 │ 13.23 │   +72 │ 🟢 │
+│  │ US  │ CCL  │ 200 │  27.84 │  27.65 │ 26.45 │ 30.62 │   -38 │ 🟡 │
+│  │ US  │ WVE  │ 200 │  16.75 │  16.68 │ 15.91 │ 18.43 │   -14 │ 🟡 │
+│  │HKEX │ 2382 │ 500 │  38.50 │  37.69 │ 36.58 │ 50.05 │  -405 │ 🟡 │
+│  │ US  │ EXK  │ 200 │   9.41 │   8.98 │  8.94 │ 10.35 │   -86 │ 🔴 │
+│  │ US  │ AG   │ 200 │  16.81 │  16.02 │ 15.97 │ 18.49 │  -158 │ 🔴 │
+│  │ US  │ CLF  │ 200 │  13.41 │  12.71 │ 12.74 │ 14.75 │  -140 │ ⚠️ │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Risk: 🟢 Safe  🟡 Monitor  🔴 Near SL (<10%)  ⚠️ Critical (<3%)   │
+│                                                                     │
+│  Page 1 of 4  [← Prev] [Next →]          Auto-refresh: ON (60s)    │
+│  Last updated: 01/16 14:32 AWST                                    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Data Sources:**
+- US positions: Alpaca API via `catalyst_trading` database
+- HKEX positions: Moomoo API via `catalyst_intl` database
+
+**Risk Indicator Logic:**
+
+| Status | Icon | Condition |
+|--------|------|-----------|
+| Critical | ⚠️ | Current price within 3% of stop loss |
+| Near SL | 🔴 | Current price within 10% of stop loss |
+| Monitor | 🟡 | Position is losing but > 10% from SL |
+| Safe | 🟢 | Position is profitable |
+
+**Auto-Refresh Behavior:**
+- Enabled during market hours only
+- US market: 9:30 AM - 4:00 PM ET (10:30 PM - 5:00 AM AWST)
+- HKEX market: 9:30 AM - 4:00 PM HKT (9:30 AM - 4:00 PM AWST)
+- Refresh interval: 60 seconds
+- Manual refresh button always available
+
+### 9.5 Agents Page
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Agents                                                 │
 ├─────────────────────────────────────────────────────────┤
-│ [Home] [Approvals] [Reports] [Agents] [Messages]        │
+│ [Home] [Approvals] [Reports] [Positions] [Agents] [Messages]│
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐   │
@@ -599,10 +659,10 @@ WantedBy=multi-user.target
 ### 10.1 Planned Features
 
 1. **Real-time WebSocket updates** - Auto-refresh without page reload
-2. **Push notifications** - For urgent approvals
-3. **Position monitoring dashboard** - With P&L charts
-4. **Historical report trends** - Analytics over time
-5. **Agent performance metrics** - Tracking over time
+2. **Push notifications** - For urgent approvals and critical position alerts
+3. **Historical report trends** - Analytics over time
+4. **Agent performance metrics** - Tracking over time
+5. **Position close actions** - Close positions directly from dashboard
 
 ### 10.2 MCP Tool Integration
 
@@ -785,6 +845,12 @@ Standard reasons for **placing orders**:
 - [ ] Daily report shows Orders Summary section
 - [ ] Daily report shows reasons for skipped orders
 - [ ] Open positions show Stop Loss and Take Profit columns
+- [ ] Positions Monitor loads US and HKEX positions
+- [ ] Positions Monitor filter tabs work (All, US, HKEX, At Risk)
+- [ ] Positions Monitor sort by P&L works
+- [ ] Risk indicators display correctly (🟢🟡🔴⚠️)
+- [ ] Auto-refresh activates during market hours
+- [ ] Manual refresh button works
 
 ---
 
