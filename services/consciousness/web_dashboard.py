@@ -2,7 +2,7 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: web_dashboard.py
-Version: 1.4.0
+Version: 1.5.0
 Last Updated: 2026-01-16
 Purpose: Mobile-friendly web dashboard for consciousness access
 
@@ -36,6 +36,14 @@ v1.4.0 (2026-01-16) - Markdown table rendering
 - Supports headings, lists, horizontal rules, bold text
 - Table header styling with cyan accent
 
+v1.5.0 (2026-01-16) - Positions Monitor
+- Live positions table from Alpaca API
+- Risk indicators (🟢🟡🔴⚠️) based on stop loss proximity
+- Filter tabs (All, At Risk, Winners, Losers)
+- Sort by P&L, symbol
+- Auto-refresh during market hours (60s)
+- Account summary with daily P&L
+
 ENDPOINTS:
 GET  /                     → Dashboard home (with pending approvals)
 GET  /agents               → All agent states
@@ -45,6 +53,7 @@ GET  /questions            → Open questions
 GET  /approvals            → Pending approvals page
 GET  /reports              → Trading reports list
 GET  /reports/{id}         → View single report
+GET  /positions            → Live positions monitor
 POST /message              → Send message
 POST /question             → Add question
 POST /approve/{id}         → Approve an escalation
@@ -59,6 +68,17 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import asyncpg
 import os
 from datetime import datetime, timezone, timedelta
+
+# Alpaca imports for positions
+try:
+    from alpaca.trading.client import TradingClient
+    ALPACA_AVAILABLE = True
+except ImportError:
+    ALPACA_AVAILABLE = False
+
+ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
+ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
+ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 
 # Perth timezone (UTC+8) - same as Hong Kong/Singapore
 PERTH_TZ = timezone(timedelta(hours=8))
@@ -244,6 +264,7 @@ def nav_html(active: str, token: str, approval_count: int = 0) -> str:
         ("Home", "/"),
         ("Approvals", "/approvals"),
         ("Reports", "/reports"),
+        ("Positions", "/positions"),
         ("Agents", "/agents"),
         ("Messages", "/messages"),
         ("Observations", "/observations"),
@@ -1181,6 +1202,296 @@ async def view_report(report_id: int, request: Request, token: str = Depends(ver
         <div class="card report-content" style="margin-top: 16px;">
             {content}
         </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+# ============================================================================
+# POSITIONS MONITOR
+# ============================================================================
+
+def get_risk_indicator(current_price: float, entry_price: float, stop_loss: float) -> tuple:
+    """Calculate risk indicator based on stop loss proximity."""
+    if not stop_loss or stop_loss <= 0:
+        return ("🟢", "Safe", "safe")  # No SL set, assume safe
+
+    pnl_pct = ((current_price - entry_price) / entry_price) * 100
+
+    # Distance from current price to stop loss as percentage
+    sl_distance_pct = ((current_price - stop_loss) / current_price) * 100
+
+    if pnl_pct > 0:
+        return ("🟢", "Safe", "safe")
+    elif sl_distance_pct <= 3:
+        return ("⚠️", "Critical", "critical")
+    elif sl_distance_pct <= 10:
+        return ("🔴", "Near SL", "danger")
+    else:
+        return ("🟡", "Monitor", "warning")
+
+
+def is_market_hours() -> bool:
+    """Check if US market is currently open (simplified check)."""
+    now_utc = datetime.now(timezone.utc)
+    # US market: 9:30 AM - 4:00 PM ET (14:30 - 21:00 UTC)
+    # Weekdays only
+    if now_utc.weekday() >= 5:  # Saturday or Sunday
+        return False
+    hour_utc = now_utc.hour
+    return 14 <= hour_utc < 21
+
+
+@app.get("/positions", response_class=HTMLResponse)
+async def positions_page(
+    request: Request,
+    filter: str = None,
+    sort: str = "pnl",
+    token: str = Depends(verify_token)
+):
+    """Live positions monitor."""
+    pool = await get_pool()
+    try:
+        approval_count = await get_approval_count(pool)
+    finally:
+        await pool.close()
+
+    # Get positions from Alpaca
+    positions = []
+    account = None
+    error_msg = ""
+
+    if ALPACA_AVAILABLE and ALPACA_API_KEY:
+        try:
+            client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=ALPACA_PAPER)
+            account = client.get_account()
+            alpaca_positions = client.get_all_positions()
+
+            for p in alpaca_positions:
+                current_price = float(p.current_price)
+                entry_price = float(p.avg_entry_price)
+                qty = float(p.qty)
+                unrealized_pl = float(p.unrealized_pl)
+                unrealized_plpc = float(p.unrealized_plpc) * 100
+
+                # Calculate stop loss (5% below entry for long positions)
+                # In production, this would come from the database
+                stop_loss = entry_price * 0.95 if p.side.value == "long" else entry_price * 1.05
+                take_profit = entry_price * 1.10 if p.side.value == "long" else entry_price * 0.90
+
+                risk_icon, risk_label, risk_class = get_risk_indicator(current_price, entry_price, stop_loss)
+
+                positions.append({
+                    "market": "US",
+                    "symbol": p.symbol,
+                    "qty": int(qty),
+                    "entry": entry_price,
+                    "current": current_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "pnl": unrealized_pl,
+                    "pnl_pct": unrealized_plpc,
+                    "risk_icon": risk_icon,
+                    "risk_label": risk_label,
+                    "risk_class": risk_class,
+                    "side": p.side.value,
+                })
+        except Exception as e:
+            error_msg = f"Error loading positions: {str(e)}"
+    else:
+        error_msg = "Alpaca not configured"
+
+    # Apply filters
+    if filter == "at_risk":
+        positions = [p for p in positions if p["risk_class"] in ["danger", "critical"]]
+    elif filter == "winners":
+        positions = [p for p in positions if p["pnl"] > 0]
+    elif filter == "losers":
+        positions = [p for p in positions if p["pnl"] < 0]
+
+    # Apply sorting
+    if sort == "pnl":
+        positions.sort(key=lambda x: x["pnl"], reverse=True)
+    elif sort == "symbol":
+        positions.sort(key=lambda x: x["symbol"])
+    elif sort == "risk":
+        risk_order = {"critical": 0, "danger": 1, "warning": 2, "safe": 3}
+        positions.sort(key=lambda x: risk_order.get(x["risk_class"], 4))
+
+    # Calculate totals
+    total_positions = len(positions)
+    total_pnl = sum(p["pnl"] for p in positions)
+    at_risk_count = len([p for p in positions if p["risk_class"] in ["danger", "critical"]])
+    winners_count = len([p for p in positions if p["pnl"] > 0])
+    losers_count = len([p for p in positions if p["pnl"] < 0])
+
+    # Account summary
+    account_html = ""
+    if account:
+        equity = float(account.equity)
+        cash = float(account.cash)
+        daily_change = float(account.equity) - float(account.last_equity)
+        daily_pct = (daily_change / float(account.last_equity)) * 100 if float(account.last_equity) else 0
+        pnl_color = "#0f0" if daily_change >= 0 else "#f00"
+        pnl_sign = "+" if daily_change >= 0 else ""
+
+        account_html = f'''
+        <div class="card" style="border-left-color: #00d4ff;">
+            <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+                <div>
+                    <div style="color: #888; font-size: 0.8em;">Account Value</div>
+                    <div style="font-size: 1.2em; color: #fff;">${equity:,.2f}</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.8em;">Cash</div>
+                    <div style="font-size: 1.2em; color: #fff;">${cash:,.2f}</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.8em;">Today's P&L</div>
+                    <div style="font-size: 1.2em; color: {pnl_color};">{pnl_sign}${daily_change:,.2f} ({pnl_sign}{daily_pct:.2f}%)</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.8em;">Positions</div>
+                    <div style="font-size: 1.2em; color: #fff;">{total_positions}</div>
+                </div>
+            </div>
+        </div>
+        '''
+
+    # Filter tabs
+    filter_tabs = f'''
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+        <a href="/positions?token={token}" class="nav {'active' if not filter else ''}" style="padding: 6px 12px;">All ({total_positions})</a>
+        <a href="/positions?token={token}&filter=at_risk" class="nav {'active' if filter == 'at_risk' else ''}" style="padding: 6px 12px; {'color: #f44;' if at_risk_count > 0 else ''}">⚠️ At Risk ({at_risk_count})</a>
+        <a href="/positions?token={token}&filter=winners" class="nav {'active' if filter == 'winners' else ''}" style="padding: 6px 12px;">Winners ({winners_count})</a>
+        <a href="/positions?token={token}&filter=losers" class="nav {'active' if filter == 'losers' else ''}" style="padding: 6px 12px;">Losers ({losers_count})</a>
+    </div>
+    <div style="display: flex; gap: 8px; margin-bottom: 16px; font-size: 0.85em;">
+        <span style="color: #888;">Sort:</span>
+        <a href="/positions?token={token}&filter={filter or ''}&sort=pnl" style="color: {'#00d4ff' if sort == 'pnl' else '#888'};">P&L</a>
+        <a href="/positions?token={token}&filter={filter or ''}&sort=symbol" style="color: {'#00d4ff' if sort == 'symbol' else '#888'};">Symbol</a>
+        <a href="/positions?token={token}&filter={filter or ''}&sort=risk" style="color: {'#00d4ff' if sort == 'risk' else '#888'};">Risk</a>
+    </div>
+    '''
+
+    # Build positions table
+    positions_html = ""
+    if positions:
+        rows = ""
+        for p in positions:
+            pnl_color = "#0f0" if p["pnl"] >= 0 else "#f00"
+            pnl_sign = "+" if p["pnl"] >= 0 else ""
+            risk_bg = "#2a1a1a" if p["risk_class"] in ["danger", "critical"] else ""
+
+            rows += f'''
+            <tr style="{'background: ' + risk_bg + ';' if risk_bg else ''}">
+                <td style="color: #00d4ff;">{p["market"]}</td>
+                <td style="color: #fff; font-weight: bold;">{p["symbol"]}</td>
+                <td>{p["qty"]}</td>
+                <td>${p["entry"]:.2f}</td>
+                <td>${p["current"]:.2f}</td>
+                <td>${p["stop_loss"]:.2f}</td>
+                <td>${p["take_profit"]:.2f}</td>
+                <td style="color: {pnl_color};">{pnl_sign}${p["pnl"]:,.2f}</td>
+                <td title="{p['risk_label']}">{p["risk_icon"]}</td>
+            </tr>
+            '''
+
+        positions_html = f'''
+        <div style="overflow-x: auto;">
+            <table class="positions-table">
+                <tr>
+                    <th>Mkt</th>
+                    <th>Symbol</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>Current</th>
+                    <th>SL</th>
+                    <th>TP</th>
+                    <th>P&L</th>
+                    <th>Risk</th>
+                </tr>
+                {rows}
+            </table>
+        </div>
+        '''
+    else:
+        positions_html = '<div class="empty">No positions</div>'
+
+    # Risk legend
+    legend_html = '''
+    <div style="margin-top: 16px; font-size: 0.8em; color: #888;">
+        Risk: 🟢 Safe · 🟡 Monitor · 🔴 Near SL (&lt;10%) · ⚠️ Critical (&lt;3%)
+    </div>
+    '''
+
+    # Auto-refresh meta tag during market hours
+    refresh_meta = ""
+    refresh_note = ""
+    market_open = is_market_hours()
+    if market_open:
+        refresh_meta = '<meta http-equiv="refresh" content="60">'
+        refresh_note = '<div style="color: #0f0; font-size: 0.8em; margin-top: 8px;">🔄 Auto-refresh: ON (60s) - Market Open</div>'
+    else:
+        refresh_note = '<div style="color: #888; font-size: 0.8em; margin-top: 8px;">Auto-refresh: OFF - Market Closed</div>'
+
+    # Last updated
+    now_perth = datetime.now(PERTH_TZ)
+    last_updated = f'<div style="color: #555; font-size: 0.8em; margin-top: 4px;">Last updated: {now_perth.strftime("%m/%d %H:%M AWST")}</div>'
+
+    # Manual refresh button
+    refresh_btn = f'<a href="/positions?token={token}&filter={filter or ""}&sort={sort}" style="color: #00d4ff; text-decoration: none; font-size: 0.9em;">🔄 Refresh</a>'
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        {refresh_meta}
+        <title>Positions - Catalyst</title>
+        {STYLES}
+        <style>
+            .positions-table {{
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.85em;
+            }}
+            .positions-table th {{
+                background: #252545;
+                color: #00d4ff;
+                padding: 10px 6px;
+                text-align: left;
+                border-bottom: 2px solid #00d4ff;
+                white-space: nowrap;
+            }}
+            .positions-table td {{
+                padding: 8px 6px;
+                border-bottom: 1px solid #333;
+                color: #ccc;
+            }}
+            .positions-table tr:hover {{ background: #1f1f3a; }}
+        </style>
+    </head>
+    <body>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1>📈 Positions Monitor</h1>
+            {refresh_btn}
+        </div>
+        {nav_html("positions", token, approval_count)}
+
+        {f'<div class="error-msg">{error_msg}</div>' if error_msg else ''}
+
+        {account_html}
+
+        {filter_tabs}
+
+        {positions_html}
+
+        {legend_html}
+        {refresh_note}
+        {last_updated}
     </body>
     </html>
     """
