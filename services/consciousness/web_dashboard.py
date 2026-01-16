@@ -83,6 +83,13 @@ ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 # HKEX database for intl_claude positions
 INTL_DATABASE_URL = os.environ.get("INTL_DATABASE_URL", "")
 
+# Yahoo Finance for HKEX prices
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+
 # Perth timezone (UTC+8) - same as Hong Kong/Singapore
 PERTH_TZ = timezone(timedelta(hours=8))
 
@@ -1246,6 +1253,40 @@ def is_market_hours() -> bool:
     return 14 <= hour_utc < 21
 
 
+def get_hkex_live_prices(symbols: list) -> dict:
+    """Fetch current prices for HKEX symbols using Yahoo Finance."""
+    if not YFINANCE_AVAILABLE or not symbols:
+        return {}
+
+    prices = {}
+    try:
+        # Convert HKEX symbols to Yahoo format (add .HK suffix, pad to 4 digits)
+        yf_symbols = []
+        symbol_map = {}
+        for s in symbols:
+            # Pad symbol to 4 digits and add .HK
+            padded = s.zfill(4)
+            yf_symbol = f"{padded}.HK"
+            yf_symbols.append(yf_symbol)
+            symbol_map[yf_symbol] = s
+
+        # Fetch quotes
+        tickers = yf.Tickers(" ".join(yf_symbols))
+        for yf_symbol, original in symbol_map.items():
+            try:
+                ticker = tickers.tickers.get(yf_symbol)
+                if ticker:
+                    info = ticker.fast_info
+                    if hasattr(info, 'last_price') and info.last_price:
+                        prices[original] = float(info.last_price)
+            except:
+                pass
+    except Exception as e:
+        print(f"Error fetching HKEX prices: {e}")
+
+    return prices
+
+
 async def get_hkex_positions() -> list:
     """Fetch open positions from HKEX (intl_claude) database."""
     if not INTL_DATABASE_URL:
@@ -1268,32 +1309,42 @@ async def get_hkex_positions() -> list:
                 ORDER BY entry_time DESC
             """)
 
+            # Get list of symbols for price lookup
+            symbols = [r['symbol'] for r in rows]
+
+            # Fetch live prices from Yahoo Finance
+            live_prices = get_hkex_live_prices(symbols)
+
             positions = []
             for r in rows:
                 entry_price = float(r['entry_price'])
                 stop_loss = float(r['stop_loss']) if r['stop_loss'] else entry_price * 0.95
                 take_profit = float(r['take_profit']) if r['take_profit'] else entry_price * 1.10
 
-                # For HKEX, we don't have live current price, use entry as estimate
-                # In production, this would come from Moomoo API
-                current_price = entry_price  # Placeholder - no live data available
+                # Get current price from Yahoo Finance or use entry as fallback
+                symbol = r['symbol']
+                current_price = live_prices.get(symbol, entry_price)
 
                 side = r['side'].lower()
                 if side in ('long', 'buy'):
                     side = 'long'
+                    pnl = (current_price - entry_price) * int(r['quantity'])
+                    pnl_pct = ((current_price - entry_price) / entry_price) * 100
                 else:
                     side = 'short'
+                    pnl = (entry_price - current_price) * int(r['quantity'])
+                    pnl_pct = ((entry_price - current_price) / entry_price) * 100
 
                 positions.append({
                     "market": "HKEX",
-                    "symbol": r['symbol'],
+                    "symbol": symbol,
                     "qty": int(r['quantity']),
                     "entry": entry_price,
                     "current": current_price,
                     "stop_loss": stop_loss,
                     "take_profit": take_profit,
-                    "pnl": 0.0,  # No live P&L without current price
-                    "pnl_pct": 0.0,
+                    "pnl": pnl,
+                    "pnl_pct": pnl_pct,
                     "side": side,
                 })
 
