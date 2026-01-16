@@ -2,8 +2,8 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: web_dashboard.py
-Version: 1.0.0
-Last Updated: 2025-12-31
+Version: 1.4.0
+Last Updated: 2026-01-16
 Purpose: Mobile-friendly web dashboard for consciousness access
 
 REVISION HISTORY:
@@ -23,6 +23,19 @@ v1.2.0 (2025-12-31) - Added reports section
 - Individual report view with metrics
 - Mobile-friendly report cards
 
+v1.3.0 (2026-01-16) - Dashboard implementation complete
+- Perth timezone (AWST) for all times
+- Approval alerts with pulsing red heading
+- Command center with quick actions
+- Reports section with market/type filters
+- Aligned with webdash-design-mcp.md specification
+
+v1.4.0 (2026-01-16) - Markdown table rendering
+- Converts markdown tables to styled HTML tables
+- Proper column alignment with CSS styling
+- Supports headings, lists, horizontal rules, bold text
+- Table header styling with cyan accent
+
 ENDPOINTS:
 GET  /                     → Dashboard home (with pending approvals)
 GET  /agents               → All agent states
@@ -38,7 +51,7 @@ POST /approve/{id}         → Approve an escalation
 POST /deny/{id}            → Deny an escalation
 
 USAGE:
-uvicorn web_dashboard:app --host 0.0.0.0 --port 8080
+uvicorn web_dashboard:app --host 0.0.0.0 --port 8088
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException, Depends
@@ -1057,14 +1070,59 @@ async def view_report(report_id: int, request: Request, token: str = Depends(ver
             </div>
             '''
 
-    # Convert markdown content to simple HTML (basic conversion)
+    # Convert markdown content to HTML
     content = report["content"] or ""
-    # Simple markdown-like formatting
-    content = content.replace("\n## ", "\n<h3>").replace("\n# ", "\n<h2>")
-    content = content.replace("\n", "<br>")
-    content = content.replace("<h2>", "</p><h2>").replace("<h3>", "</p><h3>")
-    content = content.replace("</h2>", "</h2><p>").replace("</h3>", "</h3><p>")
-    content = f"<p>{content}</p>"
+
+    # Convert markdown tables to HTML tables
+    lines = content.split('\n')
+    html_lines = []
+    in_table = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Check if this is a table row (starts and ends with |)
+        if stripped.startswith('|') and stripped.endswith('|'):
+            cells = [c.strip() for c in stripped.split('|')[1:-1]]
+            # Check if this is a separator row (contains only dashes and colons)
+            if all(c.replace('-', '').replace(':', '') == '' for c in cells):
+                continue  # Skip separator rows
+            # Convert bold markers in cells
+            cells = [c.replace('**', '<strong>', 1).replace('**', '</strong>', 1) if '**' in c else c for c in cells]
+            if not in_table:
+                html_lines.append('<table class="report-table">')
+                in_table = True
+                # First row is header
+                html_lines.append('<tr>' + ''.join(f'<th>{c}</th>' for c in cells) + '</tr>')
+            else:
+                html_lines.append('<tr>' + ''.join(f'<td>{c}</td>' for c in cells) + '</tr>')
+        else:
+            if in_table:
+                html_lines.append('</table>')
+                in_table = False
+            # Handle headings
+            if stripped.startswith('## '):
+                html_lines.append(f'<h3>{stripped[3:]}</h3>')
+            elif stripped.startswith('# '):
+                html_lines.append(f'<h2>{stripped[2:]}</h2>')
+            elif stripped.startswith('### '):
+                html_lines.append(f'<h4>{stripped[4:]}</h4>')
+            elif stripped == '---':
+                html_lines.append('<hr>')
+            elif stripped.startswith('- '):
+                html_lines.append(f'<div class="list-item">• {stripped[2:]}</div>')
+            elif stripped.startswith('**') and stripped.endswith('**'):
+                html_lines.append(f'<p><strong>{stripped[2:-2]}</strong></p>')
+            elif stripped:
+                # Handle bold text within line
+                formatted = stripped
+                while '**' in formatted:
+                    formatted = formatted.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
+                html_lines.append(f'<p>{formatted}</p>')
+
+    if in_table:
+        html_lines.append('</table>')
+
+    content = '\n'.join(html_lines)
 
     # Market badge color
     market_color = "#00d4ff" if report["market"] == "US" else "#ff0" if report["market"] == "HKEX" else "#888"
@@ -1079,9 +1137,32 @@ async def view_report(report_id: int, request: Request, token: str = Depends(ver
         {STYLES}
         <style>
             .report-content {{ line-height: 1.6; }}
-            .report-content h2 {{ color: #00d4ff; font-size: 1.1em; margin-top: 20px; }}
-            .report-content h3 {{ color: #aaa; font-size: 1em; margin-top: 16px; }}
-            .report-content p {{ margin: 8px 0; }}
+            .report-content h2 {{ color: #00d4ff; font-size: 1.2em; margin-top: 24px; margin-bottom: 12px; }}
+            .report-content h3 {{ color: #00d4ff; font-size: 1.1em; margin-top: 20px; margin-bottom: 10px; }}
+            .report-content h4 {{ color: #aaa; font-size: 0.95em; margin-top: 16px; margin-bottom: 8px; }}
+            .report-content p {{ margin: 6px 0; color: #ccc; }}
+            .report-content hr {{ border: none; border-top: 1px solid #333; margin: 16px 0; }}
+            .report-content .list-item {{ margin: 4px 0; padding-left: 8px; color: #aaa; }}
+            .report-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 12px 0;
+                font-size: 0.9em;
+            }}
+            .report-table th {{
+                background: #252545;
+                color: #00d4ff;
+                padding: 10px 8px;
+                text-align: left;
+                border-bottom: 2px solid #00d4ff;
+                white-space: nowrap;
+            }}
+            .report-table td {{
+                padding: 8px;
+                border-bottom: 1px solid #333;
+                color: #ccc;
+            }}
+            .report-table tr:hover {{ background: #1f1f3a; }}
         </style>
     </head>
     <body>
@@ -1112,4 +1193,4 @@ async def view_report(report_id: int, request: Request, token: str = Depends(ver
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=8088)
