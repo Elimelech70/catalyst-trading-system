@@ -80,6 +80,9 @@ ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
 ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
 ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 
+# HKEX database for intl_claude positions
+INTL_DATABASE_URL = os.environ.get("INTL_DATABASE_URL", "")
+
 # Perth timezone (UTC+8) - same as Hong Kong/Singapore
 PERTH_TZ = timezone(timedelta(hours=8))
 
@@ -1243,10 +1246,70 @@ def is_market_hours() -> bool:
     return 14 <= hour_utc < 21
 
 
+async def get_hkex_positions() -> list:
+    """Fetch open positions from HKEX (intl_claude) database."""
+    if not INTL_DATABASE_URL:
+        return []
+
+    try:
+        conn = await asyncpg.connect(INTL_DATABASE_URL)
+        try:
+            rows = await conn.fetch("""
+                SELECT
+                    symbol,
+                    side,
+                    quantity,
+                    entry_price,
+                    stop_loss,
+                    take_profit,
+                    status
+                FROM positions
+                WHERE status = 'open'
+                ORDER BY entry_time DESC
+            """)
+
+            positions = []
+            for r in rows:
+                entry_price = float(r['entry_price'])
+                stop_loss = float(r['stop_loss']) if r['stop_loss'] else entry_price * 0.95
+                take_profit = float(r['take_profit']) if r['take_profit'] else entry_price * 1.10
+
+                # For HKEX, we don't have live current price, use entry as estimate
+                # In production, this would come from Moomoo API
+                current_price = entry_price  # Placeholder - no live data available
+
+                side = r['side'].lower()
+                if side in ('long', 'buy'):
+                    side = 'long'
+                else:
+                    side = 'short'
+
+                positions.append({
+                    "market": "HKEX",
+                    "symbol": r['symbol'],
+                    "qty": int(r['quantity']),
+                    "entry": entry_price,
+                    "current": current_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "pnl": 0.0,  # No live P&L without current price
+                    "pnl_pct": 0.0,
+                    "side": side,
+                })
+
+            return positions
+        finally:
+            await conn.close()
+    except Exception as e:
+        print(f"Error fetching HKEX positions: {e}")
+        return []
+
+
 @app.get("/positions", response_class=HTMLResponse)
 async def positions_page(
     request: Request,
     filter: str = None,
+    market: str = None,
     sort: str = "pnl",
     token: str = Depends(verify_token)
 ):
@@ -1257,7 +1320,7 @@ async def positions_page(
     finally:
         await pool.close()
 
-    # Get positions from Alpaca
+    # Get positions from Alpaca (US)
     positions = []
     account = None
     error_msg = ""
@@ -1298,9 +1361,34 @@ async def positions_page(
                     "side": p.side.value,
                 })
         except Exception as e:
-            error_msg = f"Error loading positions: {str(e)}"
+            error_msg = f"Error loading US positions: {str(e)}"
     else:
         error_msg = "Alpaca not configured"
+
+    # Get HKEX positions from database
+    hkex_positions = await get_hkex_positions()
+    for p in hkex_positions:
+        risk_icon, risk_label, risk_class = get_risk_indicator(
+            p["current"], p["entry"], p["stop_loss"]
+        )
+        p["risk_icon"] = risk_icon
+        p["risk_label"] = risk_label
+        p["risk_class"] = risk_class
+
+    # Merge positions
+    all_positions = positions + hkex_positions
+
+    # Store counts before filtering
+    us_count = len([p for p in all_positions if p["market"] == "US"])
+    hkex_count = len([p for p in all_positions if p["market"] == "HKEX"])
+
+    # Apply market filter first
+    if market == "US":
+        all_positions = [p for p in all_positions if p["market"] == "US"]
+    elif market == "HKEX":
+        all_positions = [p for p in all_positions if p["market"] == "HKEX"]
+
+    positions = all_positions
 
     # Apply filters
     if filter == "at_risk":
@@ -1361,17 +1449,17 @@ async def positions_page(
 
     # Filter tabs
     filter_tabs = f'''
-    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
-        <a href="/positions?token={token}" class="nav {'active' if not filter else ''}" style="padding: 6px 12px;">All ({total_positions})</a>
-        <a href="/positions?token={token}&filter=at_risk" class="nav {'active' if filter == 'at_risk' else ''}" style="padding: 6px 12px; {'color: #f44;' if at_risk_count > 0 else ''}">⚠️ At Risk ({at_risk_count})</a>
-        <a href="/positions?token={token}&filter=winners" class="nav {'active' if filter == 'winners' else ''}" style="padding: 6px 12px;">Winners ({winners_count})</a>
-        <a href="/positions?token={token}&filter=losers" class="nav {'active' if filter == 'losers' else ''}" style="padding: 6px 12px;">Losers ({losers_count})</a>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+        <a href="/positions?token={token}" class="nav {'active' if not market and not filter else ''}" style="padding: 6px 12px;">All ({us_count + hkex_count})</a>
+        <a href="/positions?token={token}&market=US" class="nav {'active' if market == 'US' else ''}" style="padding: 6px 12px; color: #00d4ff;">US ({us_count})</a>
+        <a href="/positions?token={token}&market=HKEX" class="nav {'active' if market == 'HKEX' else ''}" style="padding: 6px 12px; color: #ff0;">HKEX ({hkex_count})</a>
+        <a href="/positions?token={token}&filter=at_risk{'&market=' + market if market else ''}" class="nav {'active' if filter == 'at_risk' else ''}" style="padding: 6px 12px; {'color: #f44;' if at_risk_count > 0 else ''}">⚠️ At Risk ({at_risk_count})</a>
     </div>
     <div style="display: flex; gap: 8px; margin-bottom: 16px; font-size: 0.85em;">
         <span style="color: #888;">Sort:</span>
-        <a href="/positions?token={token}&filter={filter or ''}&sort=pnl" style="color: {'#00d4ff' if sort == 'pnl' else '#888'};">P&L</a>
-        <a href="/positions?token={token}&filter={filter or ''}&sort=symbol" style="color: {'#00d4ff' if sort == 'symbol' else '#888'};">Symbol</a>
-        <a href="/positions?token={token}&filter={filter or ''}&sort=risk" style="color: {'#00d4ff' if sort == 'risk' else '#888'};">Risk</a>
+        <a href="/positions?token={token}&filter={filter or ''}&market={market or ''}&sort=pnl" style="color: {'#00d4ff' if sort == 'pnl' else '#888'};">P&L</a>
+        <a href="/positions?token={token}&filter={filter or ''}&market={market or ''}&sort=symbol" style="color: {'#00d4ff' if sort == 'symbol' else '#888'};">Symbol</a>
+        <a href="/positions?token={token}&filter={filter or ''}&market={market or ''}&sort=risk" style="color: {'#00d4ff' if sort == 'risk' else '#888'};">Risk</a>
     </div>
     '''
 
@@ -1383,17 +1471,19 @@ async def positions_page(
             pnl_color = "#0f0" if p["pnl"] >= 0 else "#f00"
             pnl_sign = "+" if p["pnl"] >= 0 else ""
             risk_bg = "#2a1a1a" if p["risk_class"] in ["danger", "critical"] else ""
+            market_color = "#00d4ff" if p["market"] == "US" else "#ff0"
+            currency = "$" if p["market"] == "US" else "HK$"
 
             rows += f'''
             <tr style="{'background: ' + risk_bg + ';' if risk_bg else ''}">
-                <td style="color: #00d4ff;">{p["market"]}</td>
+                <td style="color: {market_color};">{p["market"]}</td>
                 <td style="color: #fff; font-weight: bold;">{p["symbol"]}</td>
                 <td>{p["qty"]}</td>
-                <td>${p["entry"]:.2f}</td>
-                <td>${p["current"]:.2f}</td>
-                <td>${p["stop_loss"]:.2f}</td>
-                <td>${p["take_profit"]:.2f}</td>
-                <td style="color: {pnl_color};">{pnl_sign}${p["pnl"]:,.2f}</td>
+                <td>{currency}{p["entry"]:.2f}</td>
+                <td>{currency}{p["current"]:.2f}</td>
+                <td>{currency}{p["stop_loss"]:.2f}</td>
+                <td>{currency}{p["take_profit"]:.2f}</td>
+                <td style="color: {pnl_color};">{pnl_sign}{currency}{p["pnl"]:,.2f}</td>
                 <td title="{p['risk_label']}">{p["risk_icon"]}</td>
             </tr>
             '''
@@ -1441,7 +1531,7 @@ async def positions_page(
     last_updated = f'<div style="color: #555; font-size: 0.8em; margin-top: 4px;">Last updated: {now_perth.strftime("%m/%d %H:%M AWST")}</div>'
 
     # Manual refresh button
-    refresh_btn = f'<a href="/positions?token={token}&filter={filter or ""}&sort={sort}" style="color: #00d4ff; text-decoration: none; font-size: 0.9em;">🔄 Refresh</a>'
+    refresh_btn = f'<a href="/positions?token={token}&filter={filter or ""}&market={market or ""}&sort={sort}" style="color: #00d4ff; text-decoration: none; font-size: 0.9em;">🔄 Refresh</a>'
 
     html = f"""
     <!DOCTYPE html>
