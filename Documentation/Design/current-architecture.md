@@ -1,39 +1,99 @@
 # Catalyst Trading System - Current Architecture
 
 **Name of Application:** Catalyst Trading System
-**Name of file:** current-architecture-v10.2.0.md
-**Version:** 10.2.0
+**Name of file:** current-architecture.md
+**Version:** 10.3.0
 **Last Updated:** 2026-01-16
-**Purpose:** Current deployed architecture and configuration
+**Purpose:** Current deployed architecture and repository structure
 
 ---
 
 ## REVISION HISTORY
 
-- **v10.2.0 (2026-01-16)** - dev_claude Unified Agent Deployed
-  - Deployed dev_claude unified agent to `/root/catalyst-dev/`
-  - Single-process architecture replaces microservices for sandbox
-  - Alpaca paper trading verified ($105k equity, 15 positions)
-  - Cron schedule active for US market hours
-  - Added code to git: `services/dev_claude/`
+- **v10.3.0 (2026-01-16)** - Repository Cleanup
+  - Archived microservices to `archive/`
+  - Clean repository structure with unified agent
+  - Retained consciousness framework in `services/`
+  - Retained shared common modules
 
+- **v10.2.0 (2026-01-16)** - dev_claude Unified Agent Deployed
 - **v10.1.0 (2026-01-10)** - Dual-Broker Architecture Design
 - **v10.0.0 (2026-01-10)** - Ecosystem Restructure
 
 ---
 
-## 1. Current System Overview
+## 1. Repository Structure
 
-### 1.1 What's Actually Deployed
+### 1.1 Clean Structure (Current)
 
-| Component | Location | Status | Architecture |
-|-----------|----------|--------|--------------|
-| **dev_claude** | `/root/catalyst-dev/` | ✅ OPERATIONAL | Unified Agent (single process) |
-| **Microservices** | `/root/catalyst-trading-system/` | ✅ Running | Docker containers (10 services) |
-| **big_bro** | `/root/catalyst-trading-system/` | ✅ Active | Consciousness heartbeat |
-| **intl_claude** | Not on this droplet | - | Separate INTL droplet |
+```
+catalyst-trading-system/
+├── CLAUDE.md                           # AI assistant instructions
+├── README.md                           # Project overview
+│
+├── services/                           # Active services
+│   ├── dev_claude/                     # Unified trading agent
+│   │   ├── unified_agent.py            # Main agent (1,200 lines)
+│   │   ├── position_monitor.py         # Position monitoring
+│   │   ├── signals.py                  # Exit signal detection
+│   │   ├── startup_monitor.py          # Pre-market reconciliation
+│   │   ├── config/
+│   │   │   └── dev_claude_config.yaml  # Trading parameters
+│   │   ├── cron.d                      # Cron schedule
+│   │   ├── .env.example                # Environment template
+│   │   └── README.md                   # Documentation
+│   │
+│   ├── consciousness/                  # Agent heartbeat system
+│   │   ├── heartbeat.py                # big_bro heartbeat
+│   │   ├── heartbeat_public.py         # public_claude heartbeat
+│   │   ├── task_executor.py            # Task execution
+│   │   ├── web_dashboard.py            # Status dashboard
+│   │   ├── run-heartbeat.sh
+│   │   ├── run-heartbeat-public.sh
+│   │   └── run-dashboard.sh
+│   │
+│   └── shared/                         # Shared modules
+│       └── common/
+│           ├── __init__.py
+│           ├── consciousness.py        # Inter-agent messaging
+│           ├── database.py             # DB connection management
+│           ├── alerts.py               # Email notifications
+│           └── doctor_claude.py        # Health monitoring
+│
+├── Documentation/
+│   ├── Design/                         # Architecture documents
+│   │   ├── current-architecture.md     # This document
+│   │   ├── database-schema.md          # Database schema
+│   │   ├── claude-consciousness-framework.md
+│   │   ├── concepts-catalyst-trading.md
+│   │   ├── operations.md
+│   │   ├── strategy-ml-roadmap.md
+│   │   ├── webdash-design-mcp.md
+│   │   └── Archive/                    # Old design docs
+│   │
+│   ├── Implementation/                 # Implementation docs
+│   │   ├── dev_claude_implementation_summary.md
+│   │   ├── dev_claude_us_implementation.md
+│   │   └── dev_claude_deployment_complete.md
+│   │
+│   ├── Reports/                        # Trading reports
+│   └── Analysis/                       # Analysis documents
+│
+└── archive/                            # Legacy code (not active)
+    ├── microservices/                  # Docker-based services
+    ├── documentation/                  # Old documentation
+    ├── config/                         # Old configurations
+    ├── scripts/                        # Legacy scripts
+    ├── sql/                            # Migration scripts
+    ├── backups/                        # Database backups
+    └── ...
+```
 
-### 1.2 Architecture Diagram (Current State)
+---
+
+## 2. System Architecture
+
+### 2.1 Current Deployment
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -42,7 +102,7 @@
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                    UNIFIED AGENT (NEW)                                 │ │
+│  │                    UNIFIED AGENT                                       │ │
 │  │                    /root/catalyst-dev/                                 │ │
 │  │                                                                        │ │
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
@@ -52,23 +112,23 @@
 │  │  │  ├── ConsciousnessClient (inter-agent messaging)                │  │ │
 │  │  │  └── Claude API (dynamic decision making)                       │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
-│  │                              │                                         │ │
-│  │  Cron Schedule: scan/trade/close/heartbeat                            │ │
+│  │                                                                        │ │
+│  │  Cron: /etc/cron.d/catalyst-dev                                       │ │
 │  │  Logs: /root/catalyst-dev/logs/                                       │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                    MICROSERVICES (LEGACY)                              │ │
-│  │                    /root/catalyst-trading-system/                      │ │
+│  │                    CONSCIOUSNESS FRAMEWORK                             │ │
+│  │                    /root/catalyst-trading-system/services/             │ │
 │  │                                                                        │ │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐    │ │
-│  │  │ Scanner  │ │ Pattern  │ │Technical │ │  Risk    │ │ Trading  │    │ │
-│  │  │  :5001   │ │  :5002   │ │  :5003   │ │  :5004   │ │  :5005   │    │ │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘    │ │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                 │ │
-│  │  │ Workflow │ │   News   │ │Reporting │ │  Redis   │                 │ │
-│  │  │  :5006   │ │  :5008   │ │  :5009   │ │  :6379   │                 │ │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘                 │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐    │ │
+│  │  │   consciousness/ │  │   shared/common/ │  │   dev_claude/    │    │ │
+│  │  │                  │  │                  │  │   (source code)  │    │ │
+│  │  │  heartbeat.py    │  │  consciousness.py│  │                  │    │ │
+│  │  │  task_executor   │  │  database.py     │  │  unified_agent   │    │ │
+│  │  │  web_dashboard   │  │  alerts.py       │  │  signals.py      │    │ │
+│  │  │                  │  │  doctor_claude   │  │  monitors        │    │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘    │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │                              │                                               │
@@ -78,9 +138,8 @@
 │  │                                                                        │ │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐    │ │
 │  │  │   catalyst_dev   │  │  catalyst_intl   │  │catalyst_research │    │ │
-│  │  │                  │  │                  │  │                  │    │ │
-│  │  │  dev_claude      │  │  intl_claude     │  │  ALL agents      │    │ │
-│  │  │  9 tables        │  │  9 tables        │  │  8 tables        │    │ │
+│  │  │   (US sandbox)   │  │  (HKEX prod)     │  │  (consciousness) │    │ │
+│  │  │   9 tables       │  │  9 tables        │  │  8 tables        │    │ │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────┘    │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
@@ -96,137 +155,124 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### 2.2 Component Overview
+
+| Component | Location | Status | Purpose |
+|-----------|----------|--------|---------|
+| **dev_claude** | `/root/catalyst-dev/` | ✅ OPERATIONAL | US market trading |
+| **consciousness** | `services/consciousness/` | ✅ Active | Agent heartbeat system |
+| **shared/common** | `services/shared/common/` | ✅ Active | Shared Python modules |
+| **Microservices** | `archive/microservices/` | 📦 Archived | Legacy Docker services |
+
 ---
 
-## 2. dev_claude Unified Agent (Deployed)
+## 3. Active Services
 
-### 2.1 File Structure
+### 3.1 dev_claude (Unified Trading Agent)
 
-```
-/root/catalyst-dev/                    # DEPLOYED
-├── unified_agent.py                   # Main agent v1.0.0 (1,200 lines)
-├── position_monitor.py                # Position monitoring
-├── signals.py                         # Exit signal detection
-├── startup_monitor.py                 # Pre-market reconciliation
-├── config/
-│   └── dev_claude_config.yaml         # Trading parameters
-├── .env                               # Credentials (not in git)
-├── venv/                              # Python 3.10 environment
-└── logs/
-    ├── scan.log
-    ├── trade.log
-    ├── close.log
-    └── heartbeat.log
-
-/root/catalyst-trading-system/services/dev_claude/   # IN GIT
-├── unified_agent.py                   # Source code
-├── position_monitor.py
-├── signals.py
-├── startup_monitor.py
-├── config/
-│   └── dev_claude_config.yaml
-├── cron.d                             # Cron schedule
-├── .env.example                       # Environment template
-└── README.md                          # Documentation
-```
-
-### 2.2 Trading Configuration
+**Deployed at:** `/root/catalyst-dev/`
+**Source code:** `services/dev_claude/`
 
 | Parameter | Value |
 |-----------|-------|
 | Agent ID | dev_claude |
-| Role | sandbox_trader |
 | Market | US (NYSE/NASDAQ) |
 | Broker | Alpaca (paper) |
-| Currency | USD |
 | Max positions | 8 |
 | Max position value | $5,000 |
 | Stop loss | 5% |
 | Take profit | 10% |
-| Daily loss limit | $2,500 |
 | API budget | $5/day |
 
-### 2.3 Trading Tools (12)
+**Trading Tools (12):**
+- `scan_market`, `get_quote`, `get_technicals`, `detect_patterns`
+- `get_news`, `get_portfolio`, `check_risk`
+- `execute_trade`, `close_position`, `close_all`
+- `send_alert`, `log_decision`
 
-| Tool | Purpose |
-|------|---------|
-| `scan_market` | Find trading candidates |
-| `get_quote` | Current bid/ask |
-| `get_technicals` | RSI, MACD, MAs |
-| `detect_patterns` | Chart patterns |
-| `get_news` | News headlines |
-| `get_portfolio` | Account status |
-| `check_risk` | Validate trades |
-| `execute_trade` | Submit orders |
-| `close_position` | Close position |
-| `close_all` | Emergency close |
-| `send_alert` | Alert big_bro |
-| `log_decision` | Record reasoning |
+### 3.2 Consciousness Framework
 
-### 2.4 Operating Modes
+**Location:** `services/consciousness/` and `services/shared/common/`
 
-| Mode | Purpose | Trigger |
-|------|---------|---------|
-| `scan` | Pre-market candidate search | 08:00 EST |
-| `trade` | Full trading cycle | 09:30-15:00 EST (hourly) |
-| `close` | EOD position review | 16:00 EST |
-| `heartbeat` | Check messages | Off-hours (every 3h) |
+| Module | Purpose |
+|--------|---------|
+| `heartbeat.py` | big_bro agent heartbeat |
+| `heartbeat_public.py` | public_claude heartbeat |
+| `task_executor.py` | Execute pending tasks |
+| `web_dashboard.py` | Status dashboard |
+| `consciousness.py` | Inter-agent messaging API |
+| `database.py` | Database connection pools |
+| `alerts.py` | Email notification system |
+| `doctor_claude.py` | Health monitoring |
+
+### 3.3 Shared Common Modules
+
+**Location:** `services/shared/common/`
+
+```python
+# consciousness.py - Inter-agent messaging
+class ClaudeConsciousness:
+    async def wake_up() -> AgentState
+    async def sleep(status_message: str)
+    async def send_message(to_agent, subject, body, ...)
+    async def check_messages() -> List[Message]
+    async def observe(observation_type, subject, content, ...)
+    async def learn(category, learning, source, ...)
+
+# database.py - Connection management
+class DatabaseManager:
+    async def connect()
+    async def close()
+    async def trading_fetch(query, *args)
+    async def research_fetch(query, *args)
+
+# alerts.py - Email notifications
+class AlertManager:
+    def send_email(subject, body, priority)
+    def send_trade_alert(agent_id, action, symbol, ...)
+    def send_error_alert(agent_id, error_type, ...)
+
+# doctor_claude.py - Health monitoring
+class DoctorClaude:
+    async def check_agent_health()
+    async def check_database_health()
+    async def run_health_check()
+```
 
 ---
 
-## 3. Cron Schedules (Active)
+## 4. Cron Schedules
 
-### 3.1 dev_claude Schedule (`/etc/cron.d/catalyst-dev`)
+### 4.1 dev_claude (`/etc/cron.d/catalyst-dev`)
 
-| Time (EST) | Time (UTC) | Mode | Command |
-|------------|------------|------|---------|
-| 08:00 | 13:00 | scan | `unified_agent.py --mode scan` |
-| 09:30 | 14:30 | trade | `unified_agent.py --mode trade` |
-| 10:00 | 15:00 | trade | `unified_agent.py --mode trade` |
-| 11:00 | 16:00 | trade | `unified_agent.py --mode trade` |
-| 12:00 | 17:00 | trade | `unified_agent.py --mode trade` |
-| 13:00 | 18:00 | trade | `unified_agent.py --mode trade` |
-| 14:00 | 19:00 | trade | `unified_agent.py --mode trade` |
-| 15:00 | 20:00 | trade | `unified_agent.py --mode trade` |
-| 16:00 | 21:00 | close | `unified_agent.py --mode close` |
-| Off-hours | - | heartbeat | Every 3h weekdays, 6h weekends |
+| Time (EST) | Time (UTC) | Mode | Description |
+|------------|------------|------|-------------|
+| 08:00 | 13:00 | scan | Pre-market candidate search |
+| 09:30 | 14:30 | trade | Market open |
+| 10:00-15:00 | 15:00-20:00 | trade | Hourly trading cycles |
+| 16:00 | 21:00 | close | EOD position review |
+| Off-hours | - | heartbeat | Every 3h weekdays |
 
-### 3.2 Microservices Schedule (User Crontab)
+### 4.2 Consciousness (User Crontab)
 
-| Time | Action |
-|------|--------|
-| 21:00 AWST | Start Docker services |
-| 22:30-05:00 AWST | Trading workflows (US market hours) |
-| 06:00 AWST | Stop Docker services |
-| Hourly | Consciousness heartbeat |
+| Schedule | Script | Purpose |
+|----------|--------|---------|
+| Hourly (:00) | `run-heartbeat.sh` | big_bro heartbeat |
+| Hourly (:15) | `run-heartbeat-public.sh` | public_claude heartbeat |
 
 ---
 
-## 4. Database Configuration
+## 5. Database Schema
 
-### 4.1 Connection Details
+### 5.1 Three Databases
 
-| Database | Purpose | Tables |
-|----------|---------|--------|
-| `catalyst_dev` | dev_claude sandbox | 9 |
-| `catalyst_intl` | intl_claude production | 9 |
-| `catalyst_research` | Consciousness framework | 8 |
+| Database | Purpose | Used By |
+|----------|---------|---------|
+| `catalyst_dev` | US sandbox trading | dev_claude |
+| `catalyst_intl` | HKEX production | intl_claude |
+| `catalyst_research` | Consciousness | All agents |
 
-### 4.2 catalyst_dev Tables
-
-```
-decisions              # AI decision audit trail
-orders                 # Order history
-patterns               # Detected patterns
-position_monitor_status # Real-time monitoring
-positions              # Open/closed positions
-scan_results           # Scanner output
-securities             # Stock registry
-trading_cycles         # Cycle logs
-v_monitor_health       # Health dashboard (view)
-```
-
-### 4.3 catalyst_research Tables
+### 5.2 catalyst_research Tables (Consciousness)
 
 ```
 claude_state           # Agent status and budgets
@@ -239,106 +285,60 @@ claude_thinking        # Extended thinking
 sync_log               # Cross-database sync
 ```
 
----
-
-## 5. Agent Status (Current)
-
-### 5.1 dev_claude
+### 5.3 catalyst_dev Tables (Trading)
 
 ```
-agent_id: dev_claude
-status: sleeping
-current_mode: sleeping
-api_spend_today: $0.06
-daily_budget: $5.00
-last_active: 2026-01-15 23:45 UTC
-```
-
-### 5.2 Alpaca Paper Account
-
-```
-Cash: $33,882.20
-Equity: $105,458.02
-Buying Power: $115,136.16
-Open Positions: 15
-Day Trade Count: 5
+securities             # Stock registry
+positions              # Open/closed positions
+orders                 # Order history
+decisions              # AI decision audit
+scan_results           # Scanner output
+trading_cycles         # Cycle logs
+patterns               # Detected patterns
+position_monitor_status # Real-time monitoring
+v_monitor_health       # Health view
 ```
 
 ---
 
-## 6. What Was Implemented (2026-01-16)
+## 6. Deployment Locations
 
-### 6.1 Summary of Work Done
-
-| Task | Status | Details |
-|------|--------|---------|
-| Review implementation docs | ✅ | Read `dev_claude_us_implementation.md` |
-| Verify deployment | ✅ | Files at `/root/catalyst-dev/` |
-| Check dependencies | ✅ | anthropic, asyncpg, alpaca-py, PyYAML |
-| Test heartbeat mode | ✅ | Agent runs successfully |
-| Test scan mode | ✅ | Correctly detects market closed |
-| Verify Alpaca connection | ✅ | $105k equity, 15 positions |
-| Verify database connection | ✅ | catalyst_dev, catalyst_research |
-| Verify cron schedule | ✅ | `/etc/cron.d/catalyst-dev` active |
-| Update implementation summary | ✅ | v1.1.0 with deployment status |
-| Add code to git | ✅ | `services/dev_claude/` |
-| Push to GitHub | ✅ | Commits `067058f`, `f6d7586` |
-
-### 6.2 Git Commits
+### 6.1 Runtime (Deployed)
 
 ```
-f6d7586 feat(dev_claude): Add unified agent for US market trading
-067058f docs: Update dev_claude implementation summary - deployment verified
-```
-
-### 6.3 Files Added to Git
-
-```
-services/dev_claude/
-├── .env.example
-├── README.md
-├── config/dev_claude_config.yaml
-├── cron.d
+/root/catalyst-dev/                    # dev_claude runtime
+├── unified_agent.py
 ├── position_monitor.py
 ├── signals.py
 ├── startup_monitor.py
-└── unified_agent.py
+├── config/
+├── venv/
+├── logs/
+└── .env
+
+/root/catalyst-trading-system/         # Git repository
+├── services/                          # Source code
+├── Documentation/                     # Docs
+└── archive/                           # Legacy code
+```
+
+### 6.2 Source Code (Git)
+
+```
+services/
+├── dev_claude/                        # Trading agent source
+├── consciousness/                     # Heartbeat scripts
+└── shared/common/                     # Shared modules
 ```
 
 ---
 
-## 7. Architecture Comparison
+## 7. Monitoring Commands
 
-### 7.1 Unified Agent vs Microservices
-
-| Aspect | Unified Agent (dev_claude) | Microservices (legacy) |
-|--------|---------------------------|------------------------|
-| Code size | ~1,200 lines | ~5,000+ lines |
-| Processes | 1 Python process | 10 Docker containers |
-| Decision making | Claude API dynamic | Fixed workflow |
-| Broker integration | Alpaca SDK direct | HTTP services |
-| Startup time | Seconds | Minutes |
-| Memory usage | ~200MB | ~2GB |
-| Complexity | Low | High |
-| Location | `/root/catalyst-dev/` | `/root/catalyst-trading-system/` |
-
-### 7.2 When to Use Each
-
-| Use Case | Architecture |
-|----------|--------------|
-| Sandbox/experimental trading | Unified Agent (dev_claude) |
-| Production trading (if enabled) | Microservices |
-| Quick iterations | Unified Agent |
-| Complex multi-service workflows | Microservices |
-
----
-
-## 8. Monitoring Commands
-
-### 8.1 dev_claude
+### 7.1 dev_claude
 
 ```bash
-# Check agent status
+# Test agent
 cd /root/catalyst-dev && source .env
 ./venv/bin/python3 unified_agent.py --mode heartbeat
 
@@ -350,54 +350,70 @@ tail -50 /root/catalyst-dev/logs/heartbeat.log
 cat /etc/cron.d/catalyst-dev
 ```
 
-### 8.2 Microservices
-
-```bash
-# Check Docker status
-docker-compose ps
-
-# View service logs
-docker logs catalyst-trading --tail 100
-
-# Health check
-curl http://localhost:5005/health
-```
-
-### 8.3 Database
+### 7.2 Consciousness
 
 ```bash
 # Check agent state
-psql "$RESEARCH_DATABASE_URL" -c "SELECT * FROM claude_state WHERE agent_id = 'dev_claude';"
+source /root/catalyst-trading-system/.env
+psql "$RESEARCH_DATABASE_URL" -c "SELECT agent_id, current_mode, last_wake_at FROM claude_state;"
 
-# Check positions
-psql "$DATABASE_URL" -c "SELECT * FROM positions ORDER BY opened_at DESC LIMIT 10;"
+# Check messages
+psql "$RESEARCH_DATABASE_URL" -c "SELECT * FROM claude_messages WHERE status = 'pending';"
+```
+
+### 7.3 Database
+
+```bash
+# Check dev_claude positions
+psql "$DATABASE_URL" -c "SELECT s.symbol, p.status, p.side FROM positions p JOIN securities s ON s.security_id = p.security_id ORDER BY p.opened_at DESC LIMIT 10;"
 ```
 
 ---
 
-## 9. Key Documents Reference
+## 8. Key Documents
 
-| Document | Version | Purpose |
-|----------|---------|---------|
-| `architecture-v10.1.0.md` | 10.1.0 | Dual-broker design |
-| `functional-specification.md` | 8.0.0 | Module specifications |
-| `ARCHITECTURE-RULES.md` | 1.0.0 | Mandatory coding rules |
-| `database-schema-v10.0.0.md` | 10.0.0 | Database schema |
-| `dev_claude_us_implementation.md` | 1.0.0 | Full implementation |
-| `dev_claude_implementation_summary.md` | 1.1.0 | Deployment status |
-| **current-architecture-v10.2.0.md** | **10.2.0** | **This document** |
+| Document | Location | Purpose |
+|----------|----------|---------|
+| **current-architecture.md** | Design/ | This document |
+| database-schema.md | Design/ | Database schema |
+| claude-consciousness-framework.md | Design/ | Consciousness spec |
+| dev_claude_implementation_summary.md | Implementation/ | Deployment status |
+| dev_claude_us_implementation.md | Implementation/ | Full implementation |
 
 ---
 
-## 10. Next Steps
+## 9. Archive Contents
 
-1. **Monitor first live trading session** - Next US market open (09:30 EST)
-2. **Review trading decisions** - Check `decisions` table after trades
-3. **Tune parameters** - Adjust based on performance
-4. **Consider retiring microservices** - If unified agent proves stable
+The `archive/` folder contains legacy microservices code:
+
+| Folder | Contents |
+|--------|----------|
+| `microservices/` | Docker services (scanner, trading, workflow, etc.) |
+| `documentation/` | Old implementation guides |
+| `config/` | Old YAML configurations |
+| `scripts/` | Legacy bash/python scripts |
+| `sql/` | Database migration scripts |
+| `backups/` | Database backup files |
+
+**Note:** Microservices are archived, not deleted. They can be restored if needed.
 
 ---
 
-*Current Architecture v10.2.0*
-*Verified and documented: 2026-01-16*
+## 10. Summary
+
+**Current Architecture:** Unified Agent + Consciousness Framework
+
+| Component | Status |
+|-----------|--------|
+| dev_claude unified agent | ✅ Operational |
+| Consciousness heartbeat | ✅ Active |
+| Shared common modules | ✅ Active |
+| Microservices | 📦 Archived |
+
+**Key Principle:** Single-process agent with Claude API for dynamic decisions, consciousness framework for inter-agent communication.
+
+---
+
+*Current Architecture v10.3.0*
+*Updated: 2026-01-16*
 *Craig + Claude Family*
