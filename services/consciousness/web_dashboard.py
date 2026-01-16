@@ -2,7 +2,7 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: web_dashboard.py
-Version: 1.4.0
+Version: 1.5.0
 Last Updated: 2026-01-16
 Purpose: Mobile-friendly web dashboard for consciousness access
 
@@ -36,6 +36,14 @@ v1.4.0 (2026-01-16) - Markdown table rendering
 - Supports headings, lists, horizontal rules, bold text
 - Table header styling with cyan accent
 
+v1.5.0 (2026-01-16) - Positions Monitor
+- Live positions table from Alpaca API
+- Risk indicators (🟢🟡🔴⚠️) based on stop loss proximity
+- Filter tabs (All, At Risk, Winners, Losers)
+- Sort by P&L, symbol
+- Auto-refresh during market hours (60s)
+- Account summary with daily P&L
+
 ENDPOINTS:
 GET  /                     → Dashboard home (with pending approvals)
 GET  /agents               → All agent states
@@ -45,6 +53,7 @@ GET  /questions            → Open questions
 GET  /approvals            → Pending approvals page
 GET  /reports              → Trading reports list
 GET  /reports/{id}         → View single report
+GET  /positions            → Live positions monitor
 POST /message              → Send message
 POST /question             → Add question
 POST /approve/{id}         → Approve an escalation
@@ -59,6 +68,27 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import asyncpg
 import os
 from datetime import datetime, timezone, timedelta
+
+# Alpaca imports for positions
+try:
+    from alpaca.trading.client import TradingClient
+    ALPACA_AVAILABLE = True
+except ImportError:
+    ALPACA_AVAILABLE = False
+
+ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
+ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
+ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
+
+# HKEX database for intl_claude positions
+INTL_DATABASE_URL = os.environ.get("INTL_DATABASE_URL", "")
+
+# Yahoo Finance for HKEX prices
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
 
 # Perth timezone (UTC+8) - same as Hong Kong/Singapore
 PERTH_TZ = timezone(timedelta(hours=8))
@@ -244,6 +274,7 @@ def nav_html(active: str, token: str, approval_count: int = 0) -> str:
         ("Home", "/"),
         ("Approvals", "/approvals"),
         ("Reports", "/reports"),
+        ("Positions", "/positions"),
         ("Agents", "/agents"),
         ("Messages", "/messages"),
         ("Observations", "/observations"),
@@ -1181,6 +1212,459 @@ async def view_report(report_id: int, request: Request, token: str = Depends(ver
         <div class="card report-content" style="margin-top: 16px;">
             {content}
         </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+# ============================================================================
+# POSITIONS MONITOR
+# ============================================================================
+
+def get_risk_indicator(current_price: float, entry_price: float, stop_loss: float) -> tuple:
+    """Calculate risk indicator based on stop loss proximity."""
+    if not stop_loss or stop_loss <= 0:
+        return ("🟢", "Safe", "safe")  # No SL set, assume safe
+
+    pnl_pct = ((current_price - entry_price) / entry_price) * 100
+
+    # Distance from current price to stop loss as percentage
+    sl_distance_pct = ((current_price - stop_loss) / current_price) * 100
+
+    if pnl_pct > 0:
+        return ("🟢", "Safe", "safe")
+    elif sl_distance_pct <= 3:
+        return ("⚠️", "Critical", "critical")
+    elif sl_distance_pct <= 10:
+        return ("🔴", "Near SL", "danger")
+    else:
+        return ("🟡", "Monitor", "warning")
+
+
+def is_market_hours() -> bool:
+    """Check if US market is currently open (simplified check)."""
+    now_utc = datetime.now(timezone.utc)
+    # US market: 9:30 AM - 4:00 PM ET (14:30 - 21:00 UTC)
+    # Weekdays only
+    if now_utc.weekday() >= 5:  # Saturday or Sunday
+        return False
+    hour_utc = now_utc.hour
+    return 14 <= hour_utc < 21
+
+
+def get_hkex_live_prices(symbols: list) -> dict:
+    """Fetch current prices for HKEX symbols using Yahoo Finance."""
+    if not YFINANCE_AVAILABLE or not symbols:
+        return {}
+
+    prices = {}
+    try:
+        # Convert HKEX symbols to Yahoo format (add .HK suffix, pad to 4 digits)
+        yf_symbols = []
+        symbol_map = {}
+        for s in symbols:
+            # Pad symbol to 4 digits and add .HK
+            padded = s.zfill(4)
+            yf_symbol = f"{padded}.HK"
+            yf_symbols.append(yf_symbol)
+            symbol_map[yf_symbol] = s
+
+        # Fetch quotes
+        tickers = yf.Tickers(" ".join(yf_symbols))
+        for yf_symbol, original in symbol_map.items():
+            try:
+                ticker = tickers.tickers.get(yf_symbol)
+                if ticker:
+                    info = ticker.fast_info
+                    if hasattr(info, 'last_price') and info.last_price:
+                        prices[original] = float(info.last_price)
+            except:
+                pass
+    except Exception as e:
+        print(f"Error fetching HKEX prices: {e}")
+
+    return prices
+
+
+async def get_hkex_positions() -> list:
+    """Fetch open positions from HKEX (intl_claude) database."""
+    if not INTL_DATABASE_URL:
+        return []
+
+    try:
+        conn = await asyncpg.connect(INTL_DATABASE_URL)
+        try:
+            rows = await conn.fetch("""
+                SELECT
+                    symbol,
+                    side,
+                    quantity,
+                    entry_price,
+                    stop_loss,
+                    take_profit,
+                    status
+                FROM positions
+                WHERE status = 'open'
+                ORDER BY entry_time DESC
+            """)
+
+            # Get list of symbols for price lookup
+            symbols = [r['symbol'] for r in rows]
+
+            # Fetch live prices from Yahoo Finance
+            live_prices = get_hkex_live_prices(symbols)
+
+            positions = []
+            for r in rows:
+                entry_price = float(r['entry_price'])
+                stop_loss = float(r['stop_loss']) if r['stop_loss'] else entry_price * 0.95
+                take_profit = float(r['take_profit']) if r['take_profit'] else entry_price * 1.10
+
+                # Get current price from Yahoo Finance or use entry as fallback
+                symbol = r['symbol']
+                current_price = live_prices.get(symbol, entry_price)
+
+                side = r['side'].lower()
+                if side in ('long', 'buy'):
+                    side = 'long'
+                    pnl = (current_price - entry_price) * int(r['quantity'])
+                    pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                else:
+                    side = 'short'
+                    pnl = (entry_price - current_price) * int(r['quantity'])
+                    pnl_pct = ((entry_price - current_price) / entry_price) * 100
+
+                positions.append({
+                    "market": "HKEX",
+                    "symbol": symbol,
+                    "qty": int(r['quantity']),
+                    "entry": entry_price,
+                    "current": current_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "pnl": pnl,
+                    "pnl_pct": pnl_pct,
+                    "side": side,
+                })
+
+            return positions
+        finally:
+            await conn.close()
+    except Exception as e:
+        print(f"Error fetching HKEX positions: {e}")
+        return []
+
+
+@app.get("/positions", response_class=HTMLResponse)
+async def positions_page(
+    request: Request,
+    filter: str = None,
+    market: str = None,
+    sort: str = "pnl",
+    token: str = Depends(verify_token)
+):
+    """Live positions monitor."""
+    pool = await get_pool()
+    try:
+        approval_count = await get_approval_count(pool)
+    finally:
+        await pool.close()
+
+    # Get positions from Alpaca (US)
+    positions = []
+    account = None
+    error_msg = ""
+
+    if ALPACA_AVAILABLE and ALPACA_API_KEY:
+        try:
+            client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=ALPACA_PAPER)
+            account = client.get_account()
+            alpaca_positions = client.get_all_positions()
+
+            for p in alpaca_positions:
+                current_price = float(p.current_price)
+                entry_price = float(p.avg_entry_price)
+                qty = float(p.qty)
+                unrealized_pl = float(p.unrealized_pl)
+                unrealized_plpc = float(p.unrealized_plpc) * 100
+
+                # Calculate stop loss (5% below entry for long positions)
+                # In production, this would come from the database
+                stop_loss = entry_price * 0.95 if p.side.value == "long" else entry_price * 1.05
+                take_profit = entry_price * 1.10 if p.side.value == "long" else entry_price * 0.90
+
+                risk_icon, risk_label, risk_class = get_risk_indicator(current_price, entry_price, stop_loss)
+
+                positions.append({
+                    "market": "US",
+                    "symbol": p.symbol,
+                    "qty": int(qty),
+                    "entry": entry_price,
+                    "current": current_price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "pnl": unrealized_pl,
+                    "pnl_pct": unrealized_plpc,
+                    "risk_icon": risk_icon,
+                    "risk_label": risk_label,
+                    "risk_class": risk_class,
+                    "side": p.side.value,
+                })
+        except Exception as e:
+            error_msg = f"Error loading US positions: {str(e)}"
+    else:
+        error_msg = "Alpaca not configured"
+
+    # Get HKEX positions from database
+    hkex_positions = await get_hkex_positions()
+    for p in hkex_positions:
+        risk_icon, risk_label, risk_class = get_risk_indicator(
+            p["current"], p["entry"], p["stop_loss"]
+        )
+        p["risk_icon"] = risk_icon
+        p["risk_label"] = risk_label
+        p["risk_class"] = risk_class
+
+    # Merge positions
+    all_positions = positions + hkex_positions
+
+    # Store counts before filtering
+    us_count = len([p for p in all_positions if p["market"] == "US"])
+    hkex_count = len([p for p in all_positions if p["market"] == "HKEX"])
+
+    # Apply market filter first
+    if market == "US":
+        all_positions = [p for p in all_positions if p["market"] == "US"]
+    elif market == "HKEX":
+        all_positions = [p for p in all_positions if p["market"] == "HKEX"]
+
+    positions = all_positions
+
+    # Apply filters
+    if filter == "at_risk":
+        positions = [p for p in positions if p["risk_class"] in ["danger", "critical"]]
+    elif filter == "winners":
+        positions = [p for p in positions if p["pnl"] > 0]
+    elif filter == "losers":
+        positions = [p for p in positions if p["pnl"] < 0]
+
+    # Apply sorting
+    if sort == "pnl":
+        positions.sort(key=lambda x: x["pnl"], reverse=True)
+    elif sort == "symbol":
+        positions.sort(key=lambda x: x["symbol"])
+    elif sort == "risk":
+        risk_order = {"critical": 0, "danger": 1, "warning": 2, "safe": 3}
+        positions.sort(key=lambda x: risk_order.get(x["risk_class"], 4))
+
+    # Calculate totals by market (before filtering)
+    us_pnl = sum(p["pnl"] for p in all_positions if p["market"] == "US")
+    hkex_pnl = sum(p["pnl"] for p in all_positions if p["market"] == "HKEX")
+
+    # Totals after filtering
+    total_positions = len(positions)
+    total_pnl = sum(p["pnl"] for p in positions)
+    at_risk_count = len([p for p in positions if p["risk_class"] in ["danger", "critical"]])
+    winners_count = len([p for p in positions if p["pnl"] > 0])
+    losers_count = len([p for p in positions if p["pnl"] < 0])
+
+    # Account summary - show both US and HKEX
+    account_html = ""
+
+    # US Summary (from Alpaca)
+    us_summary = ""
+    if account:
+        equity = float(account.equity)
+        cash = float(account.cash)
+        daily_change = float(account.equity) - float(account.last_equity)
+        daily_pct = (daily_change / float(account.last_equity)) * 100 if float(account.last_equity) else 0
+        us_pnl_color = "#0f0" if daily_change >= 0 else "#f00"
+        us_pnl_sign = "+" if daily_change >= 0 else ""
+
+        us_summary = f'''
+        <div class="card" style="border-left-color: #00d4ff;">
+            <div style="font-size: 0.9em; color: #00d4ff; margin-bottom: 8px; font-weight: bold;">🇺🇸 US (Alpaca)</div>
+            <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Equity</div>
+                    <div style="color: #fff;">${equity:,.0f}</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Cash</div>
+                    <div style="color: #fff;">${cash:,.0f}</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Day P&L</div>
+                    <div style="color: {us_pnl_color};">{us_pnl_sign}${daily_change:,.0f}</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Positions</div>
+                    <div style="color: #fff;">{us_count}</div>
+                </div>
+            </div>
+        </div>
+        '''
+
+    # HKEX Summary
+    hkex_summary = ""
+    if hkex_count > 0:
+        hkex_pnl_color = "#0f0" if hkex_pnl >= 0 else "#f00"
+        hkex_pnl_sign = "+" if hkex_pnl >= 0 else ""
+
+        hkex_summary = f'''
+        <div class="card" style="border-left-color: #ff0;">
+            <div style="font-size: 0.9em; color: #ff0; margin-bottom: 8px; font-weight: bold;">🇭🇰 HKEX</div>
+            <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Unrealized P&L</div>
+                    <div style="color: {hkex_pnl_color};">{hkex_pnl_sign}HK${hkex_pnl:,.0f}</div>
+                </div>
+                <div>
+                    <div style="color: #888; font-size: 0.75em;">Positions</div>
+                    <div style="color: #fff;">{hkex_count}</div>
+                </div>
+            </div>
+        </div>
+        '''
+
+    account_html = us_summary + hkex_summary
+
+    # Filter tabs
+    filter_tabs = f'''
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+        <a href="/positions?token={token}" class="nav {'active' if not market and not filter else ''}" style="padding: 6px 12px;">All ({us_count + hkex_count})</a>
+        <a href="/positions?token={token}&market=US" class="nav {'active' if market == 'US' else ''}" style="padding: 6px 12px; color: #00d4ff;">US ({us_count})</a>
+        <a href="/positions?token={token}&market=HKEX" class="nav {'active' if market == 'HKEX' else ''}" style="padding: 6px 12px; color: #ff0;">HKEX ({hkex_count})</a>
+        <a href="/positions?token={token}&filter=at_risk{'&market=' + market if market else ''}" class="nav {'active' if filter == 'at_risk' else ''}" style="padding: 6px 12px; {'color: #f44;' if at_risk_count > 0 else ''}">⚠️ At Risk ({at_risk_count})</a>
+    </div>
+    <div style="display: flex; gap: 8px; margin-bottom: 16px; font-size: 0.85em;">
+        <span style="color: #888;">Sort:</span>
+        <a href="/positions?token={token}&filter={filter or ''}&market={market or ''}&sort=pnl" style="color: {'#00d4ff' if sort == 'pnl' else '#888'};">P&L</a>
+        <a href="/positions?token={token}&filter={filter or ''}&market={market or ''}&sort=symbol" style="color: {'#00d4ff' if sort == 'symbol' else '#888'};">Symbol</a>
+        <a href="/positions?token={token}&filter={filter or ''}&market={market or ''}&sort=risk" style="color: {'#00d4ff' if sort == 'risk' else '#888'};">Risk</a>
+    </div>
+    '''
+
+    # Build positions table
+    positions_html = ""
+    if positions:
+        rows = ""
+        for p in positions:
+            pnl_color = "#0f0" if p["pnl"] >= 0 else "#f00"
+            pnl_sign = "+" if p["pnl"] >= 0 else ""
+            risk_bg = "#2a1a1a" if p["risk_class"] in ["danger", "critical"] else ""
+            market_color = "#00d4ff" if p["market"] == "US" else "#ff0"
+            currency = "$" if p["market"] == "US" else "HK$"
+
+            rows += f'''
+            <tr style="{'background: ' + risk_bg + ';' if risk_bg else ''}">
+                <td style="color: {market_color};">{p["market"]}</td>
+                <td style="color: #fff; font-weight: bold;">{p["symbol"]}</td>
+                <td>{p["qty"]}</td>
+                <td>{currency}{p["entry"]:.2f}</td>
+                <td>{currency}{p["current"]:.2f}</td>
+                <td>{currency}{p["stop_loss"]:.2f}</td>
+                <td>{currency}{p["take_profit"]:.2f}</td>
+                <td style="color: {pnl_color};">{pnl_sign}{currency}{p["pnl"]:,.2f}</td>
+                <td title="{p['risk_label']}">{p["risk_icon"]}</td>
+            </tr>
+            '''
+
+        positions_html = f'''
+        <div style="overflow-x: auto;">
+            <table class="positions-table">
+                <tr>
+                    <th>Mkt</th>
+                    <th>Symbol</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>Current</th>
+                    <th>SL</th>
+                    <th>TP</th>
+                    <th>P&L</th>
+                    <th>Risk</th>
+                </tr>
+                {rows}
+            </table>
+        </div>
+        '''
+    else:
+        positions_html = '<div class="empty">No positions</div>'
+
+    # Risk legend
+    legend_html = '''
+    <div style="margin-top: 16px; font-size: 0.8em; color: #888;">
+        Risk: 🟢 Safe · 🟡 Monitor · 🔴 Near SL (&lt;10%) · ⚠️ Critical (&lt;3%)
+    </div>
+    '''
+
+    # Auto-refresh meta tag during market hours
+    refresh_meta = ""
+    refresh_note = ""
+    market_open = is_market_hours()
+    if market_open:
+        refresh_meta = '<meta http-equiv="refresh" content="60">'
+        refresh_note = '<div style="color: #0f0; font-size: 0.8em; margin-top: 8px;">🔄 Auto-refresh: ON (60s) - Market Open</div>'
+    else:
+        refresh_note = '<div style="color: #888; font-size: 0.8em; margin-top: 8px;">Auto-refresh: OFF - Market Closed</div>'
+
+    # Last updated
+    now_perth = datetime.now(PERTH_TZ)
+    last_updated = f'<div style="color: #555; font-size: 0.8em; margin-top: 4px;">Last updated: {now_perth.strftime("%m/%d %H:%M AWST")}</div>'
+
+    # Manual refresh button
+    refresh_btn = f'<a href="/positions?token={token}&filter={filter or ""}&market={market or ""}&sort={sort}" style="color: #00d4ff; text-decoration: none; font-size: 0.9em;">🔄 Refresh</a>'
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        {refresh_meta}
+        <title>Positions - Catalyst</title>
+        {STYLES}
+        <style>
+            .positions-table {{
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.85em;
+            }}
+            .positions-table th {{
+                background: #252545;
+                color: #00d4ff;
+                padding: 10px 6px;
+                text-align: left;
+                border-bottom: 2px solid #00d4ff;
+                white-space: nowrap;
+            }}
+            .positions-table td {{
+                padding: 8px 6px;
+                border-bottom: 1px solid #333;
+                color: #ccc;
+            }}
+            .positions-table tr:hover {{ background: #1f1f3a; }}
+        </style>
+    </head>
+    <body>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1>📈 Positions Monitor</h1>
+            {refresh_btn}
+        </div>
+        {nav_html("positions", token, approval_count)}
+
+        {f'<div class="error-msg">{error_msg}</div>' if error_msg else ''}
+
+        {account_html}
+
+        {filter_tabs}
+
+        {positions_html}
+
+        {legend_html}
+        {refresh_note}
+        {last_updated}
     </body>
     </html>
     """
