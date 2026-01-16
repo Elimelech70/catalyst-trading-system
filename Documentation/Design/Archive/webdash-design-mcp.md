@@ -1,9 +1,9 @@
 # 🧠 Catalyst Consciousness - Web Dashboard
 
-**Name of Application:** Catalyst Trading System  
-**Name of file:** webdash-design-mcp-v1.1.0.md  
-**Version:** 1.1.0  
-**Last Updated:** 2025-01-16  
+**Name of Application:** Catalyst Trading System
+**Name of file:** webdash-design-mcp.md
+**Version:** 1.4.0
+**Last Updated:** 2026-01-16
 **Purpose:** Web Dashboard Design & Implementation Document
 
 ---
@@ -15,6 +15,7 @@
 | v1.0.0 | 2025-01-15 | Initial consolidated design document |
 | v1.1.0 | 2025-01-16 | Added Daily Report Format Specification (Section 11) - Orders Summary with reasoning, Open Positions with Stop Loss/Take Profit columns |
 | v1.3.0 | 2025-12-31 | Dashboard implementation: Perth timezone, approval alerts, reports section |
+| v1.4.0 | 2026-01-16 | Added markdown table rendering - converts markdown tables to styled HTML tables with aligned columns |
 
 ---
 
@@ -334,6 +335,50 @@ body { background: #0f0f23; color: #e0e0e0; font-family: -apple-system, sans-ser
 - **Active state** on current page (cyan background, black text)
 - **Yellow left border** on escalation cards
 
+### 6.4 Markdown Table Rendering
+
+Reports use markdown format stored in the database. The dashboard converts markdown tables to styled HTML tables automatically.
+
+**Conversion Process:**
+1. Detects table rows (lines starting and ending with `|`)
+2. Skips separator rows (containing only `-` and `:`)
+3. First row becomes `<th>` header cells
+4. Subsequent rows become `<td>` data cells
+5. Bold markers (`**text**`) converted to `<strong>` tags
+
+**Table CSS:**
+```css
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 0.9em;
+}
+.report-table th {
+    background: #252545;
+    color: #00d4ff;
+    padding: 10px 8px;
+    text-align: left;
+    border-bottom: 2px solid #00d4ff;
+    white-space: nowrap;
+}
+.report-table td {
+    padding: 8px;
+    border-bottom: 1px solid #333;
+    color: #ccc;
+}
+.report-table tr:hover { background: #1f1f3a; }
+```
+
+**Supported Markdown Elements:**
+- `# Heading 1` → `<h2>`
+- `## Heading 2` → `<h3>`
+- `### Heading 3` → `<h4>`
+- `---` → `<hr>`
+- `- list item` → bullet list item
+- `| col | col |` → HTML table
+- `**bold**` → `<strong>`
+
 ---
 
 ## 7. Implementation Files
@@ -342,9 +387,9 @@ body { background: #0f0f23; color: #e0e0e0; font-family: -apple-system, sans-ser
 
 | File | Version | Purpose |
 |------|---------|---------|
-| `services/consciousness/web_dashboard.py` | v1.3.0 | Main FastAPI application |
+| `services/consciousness/web_dashboard.py` | v1.4.0 | Main FastAPI application |
 | `services/consciousness/run-dashboard.sh` | v1.0.0 | Startup script with environment loading |
-| `Documentation/Implementation/Completed/reports-feature-design-v1.0.0.md` | v1.0.0 | Reports section design specification |
+| `Documentation/Design/Archive/webdash-design-mcp.md` | v1.4.0 | This design specification |
 
 ### 7.2 Environment Variables
 
