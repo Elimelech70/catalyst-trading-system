@@ -1,7 +1,8 @@
 # ============================================================================
 # DEV_CLAUDE - US Market Trading Schedule
 # Timezone: UTC (EST = UTC-5, EDT = UTC-4)
-# Version: 1.0.0
+# Version: 1.1.0
+# Updated: 2026-01-17 - Consolidated to services/dev_claude
 # ============================================================================
 
 SHELL=/bin/bash
@@ -9,9 +10,9 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 MAILTO=""
 
 # Working directories
-CATALYST_DIR=/root/catalyst-dev
-VENV_PYTHON=/root/catalyst-dev/venv/bin/python3
-LOG_DIR=/root/catalyst-dev/logs
+CATALYST_DIR=/root/catalyst-trading-system/services/dev_claude
+VENV_PYTHON=/root/catalyst-trading-system/services/dev_claude/venv/bin/python3
+LOG_DIR=/root/catalyst-trading-system/services/dev_claude/logs
 
 # ============================================================================
 # PRE-MARKET SCAN (08:00 EST = 13:00 UTC)
