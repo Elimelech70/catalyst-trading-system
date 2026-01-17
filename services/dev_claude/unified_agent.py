@@ -2,11 +2,16 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: unified_agent.py
-Version: 1.0.0
-Last Updated: 2026-01-14
+Version: 2.0.0
+Last Updated: 2026-01-17
 Purpose: Unified trading agent for US markets (dev_claude)
 
 REVISION HISTORY:
+v2.0.0 (2026-01-17) - Modular refactor aligned with intl_claude
+  - Separated brokers/alpaca.py, data/database.py, tools.py
+  - ToolExecutor moved to separate module
+  - Aligned structure with intl_claude (HKEX)
+
 v1.0.0 (2026-01-14) - Initial implementation
   - Adapted from intl_claude HKEX agent
   - Alpaca broker integration
@@ -31,6 +36,12 @@ from datetime import datetime, timezone, timedelta, time
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from dotenv import load_dotenv
+
+# Local modular imports (aligned with intl_claude structure)
+from tools import TOOLS, TOOL_NAMES, get_tools_for_mode
+from tool_executor import ToolExecutor, create_tool_executor
+from brokers.alpaca import AlpacaClient, init_alpaca_client, get_alpaca_client
+from data.database import DatabaseClient, init_database, get_database
 
 # Load environment variables
 load_dotenv()

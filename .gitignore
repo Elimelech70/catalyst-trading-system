@@ -53,6 +53,7 @@ desktop.ini
 # Trading data
 logs/
 data/
+!services/dev_claude/data/
 trades/
 positions/
 orders/
