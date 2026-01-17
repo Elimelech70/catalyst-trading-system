@@ -2,11 +2,12 @@
 
 **Name of Application:** Catalyst Trading System
 **Name of File:** catalyst-alignment-implementation-summary.md
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Last Updated:** 2026-01-17
 **Purpose:** Summary of dev_claude alignment with intl_claude architecture
 
 REVISION HISTORY:
+- v1.2.0 (2026-01-17) - Modular refactor complete, structure aligned with intl_claude
 - v1.1.0 (2026-01-17) - Added full trade testing results
 - v1.0.0 (2026-01-17) - Initial implementation summary
 
@@ -18,15 +19,40 @@ The **Catalyst Alignment** package aligns the US market trading agent (dev_claud
 
 ---
 
-## Package Contents
+## Deployed Structure
 
-| File | Version | Purpose |
-|------|---------|---------|
-| `DEPLOYMENT.md` | 1.0.0 | Deployment guide and verification checklist |
-| `alpaca.py` | 1.0.0 | Alpaca broker client for US markets |
+```
+catalyst-trading-system/services/dev_claude/
+├── brokers/
+│   ├── __init__.py
+│   └── alpaca.py              # v1.0.0 - Alpaca client with singleton
+├── data/
+│   ├── __init__.py
+│   └── database.py            # v1.0.0 - Trading + consciousness DB
+├── config/
+│   └── dev_claude_config.yaml # Agent configuration
+├── logs/                      # Runtime logs (gitignored)
+├── venv/                      # Python environment (gitignored)
+├── .env                       # Secrets (gitignored)
+├── .env.example               # Template
+├── cron.d                     # Cron schedule
+├── position_monitor.py        # Position monitoring
+├── signals.py                 # Exit signal detection
+├── startup_monitor.py         # Pre-market reconciliation
+├── tools.py                   # v1.0.0 - 12 trading tool definitions
+├── tool_executor.py           # v1.0.0 - Routes tool calls
+└── unified_agent.py           # v2.0.0 - Main Claude AI agent
+```
+
+## Module Summary
+
+| Module | Version | Purpose |
+|--------|---------|---------|
+| `brokers/alpaca.py` | 1.0.0 | Alpaca broker client for US markets |
+| `data/database.py` | 1.0.0 | Database connection manager (trading + consciousness) |
 | `tools.py` | 1.0.0 | 12 trading tool definitions for Claude AI |
 | `tool_executor.py` | 1.0.0 | Routes tool calls to implementations |
-| `database.py` | 1.0.0 | Database connection manager (trading + consciousness) |
+| `unified_agent.py` | 2.0.0 | Main agent with Claude AI loop |
 
 ---
 
@@ -331,14 +357,21 @@ This alignment package ensures dev_claude (US markets) follows the same architec
 
 ### Current Status
 
-- **Deployment:** Complete at `/root/catalyst-dev/`
+- **Deployment:** Complete at `/root/catalyst-trading-system/services/dev_claude/`
+- **Structure:** Modular - aligned with intl_claude (HKEX)
 - **Testing:** All tests passed (2026-01-17)
 - **Trading:** System ready for paper trading
 - **Market:** Next open Monday 2026-01-20 09:30 ET
+
+### Consolidation Complete
+
+Old location `/root/catalyst-dev/` archived to `/root/catalyst-dev.archived.20260117/`
+
+All code now in single git-tracked location: `services/dev_claude/`
 
 ---
 
 **Created:** 2026-01-17
 **Updated:** 2026-01-17
 **Author:** Claude Code
-**Status:** Deployed and Tested
+**Status:** Deployed, Tested, and Aligned
