@@ -598,6 +598,8 @@ Craig manually deploys validated learnings to intl_claude (production)
 
 ## PART 8: OPERATIONS
 
+> **Complete Operations Guide:** See [operations-guide.md](operations-guide.md) for detailed workflows, troubleshooting, and command reference.
+
 ### 8.1 Market Hours
 
 #### intl_claude (HKEX - HKT)
@@ -609,6 +611,14 @@ Craig manually deploys validated learnings to intl_claude (production)
 | Lunch break | 12:00-13:00 | 12:00-13:00 |
 | Afternoon session | 13:00-16:00 | 13:00-16:00 |
 | EOD close | 16:00-16:30 | 16:00-16:30 |
+
+#### dev_claude (US - ET)
+
+| Mode | ET Time | AWST Time |
+|------|---------|-----------|
+| Pre-market scan | 08:00 | 21:00 |
+| Market open | 09:30-16:00 | 22:30-05:00 |
+| EOD close | 16:00 | 05:00 |
 
 ### 8.2 Cron Schedule (INTL)
 
