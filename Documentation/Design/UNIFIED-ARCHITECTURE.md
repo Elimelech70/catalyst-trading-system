@@ -2,8 +2,8 @@
 
 **Name of Application:** Catalyst Trading System  
 **Name of file:** UNIFIED-ARCHITECTURE.md  
-**Version:** 10.5.0  
-**Last Updated:** 2026-01-16  
+**Version:** 10.6.0  
+**Last Updated:** 2026-01-18  
 **Purpose:** Single authoritative architecture document for the entire Catalyst ecosystem  
 **Supersedes:** All previous architecture documents in both repositories
 
@@ -13,6 +13,7 @@
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| v10.6.0 | 2026-01-18 | Craig + Claude | **Schema Extraction** - Moved database schema to standalone database-schema.md v10.5.0 |
 | v10.5.0 | 2026-01-16 | Craig + Claude | **Position Monitor Service** - persistent systemd daemon for continuous position monitoring |
 | v10.4.0 | 2026-01-16 | Craig + Claude | Unified architecture consolidating both repositories |
 | v10.3.0 | 2026-01-16 | Craig + Claude | Repository cleanup, microservices archived |
@@ -28,12 +29,13 @@
 2. [System Architecture](#part-2-system-architecture)
 3. [The Claude Family](#part-3-the-claude-family)
 4. [Trading Architecture](#part-4-trading-architecture)
-5. [Position Monitoring](#part-5-position-monitoring) ← **NEW in v10.5.0**
+5. [Position Monitoring](#part-5-position-monitoring)
 6. [Consciousness Framework](#part-6-consciousness-framework)
-7. [Database Schema](#part-7-database-schema)
-8. [Infrastructure](#part-8-infrastructure)
-9. [Operations](#part-9-operations)
-10. [Repository Structure](#part-10-repository-structure)
+7. [Infrastructure](#part-7-infrastructure)
+8. [Operations](#part-8-operations)
+9. [Repository Structure](#part-9-repository-structure)
+
+> **Database Schema:** See [database-schema.md](database-schema.md) v10.5.0 for complete schema documentation.
 
 ---
 
@@ -529,140 +531,9 @@ Craig manually deploys validated learnings to intl_claude (production)
 
 ---
 
-## PART 7: DATABASE SCHEMA
+## PART 7: INFRASTRUCTURE
 
-### 7.1 Three-Database Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    DIGITALOCEAN MANAGED POSTGRESQL                          │
-│                    Single cluster · 47 connections · $15/mo                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐   │
-│  │  catalyst_research  │ │    catalyst_dev     │ │   catalyst_intl     │   │
-│  │   (consciousness)   │ │    (dev_claude)     │ │   (intl_claude)     │   │
-│  │                     │ │                     │ │                     │   │
-│  │  SHARED TABLES:     │ │  TRADING TABLES:    │ │  TRADING TABLES:    │   │
-│  │  • claude_state     │ │  • securities       │ │  • securities       │   │
-│  │  • claude_messages  │ │  • trading_cycles   │ │  • trading_cycles   │   │
-│  │  • claude_learnings │ │  • positions        │ │  • positions        │   │
-│  │  • claude_observations│ • orders           │ │  • orders           │   │
-│  │  • claude_questions │ │  • scan_results     │ │  • scan_results     │   │
-│  │  • claude_conversations│ • decisions       │ │  • decisions        │   │
-│  │  • claude_thinking  │ │  • patterns         │ │  • patterns         │   │
-│  │  • sync_log         │ │  • position_monitor_│ │  • position_monitor_│   │
-│  │                     │ │    status           │ │    status           │   │
-│  │                     │ │  • service_health   │ │  • service_health   │   │
-│  │  Access: ALL agents │ │  Access: dev_claude │ │  Access: intl_claude│   │
-│  └─────────────────────┘ └─────────────────────┘ └─────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### 7.2 New Tables (v10.5.0)
-
-#### service_health
-
-```sql
-CREATE TABLE service_health (
-    service_id SERIAL PRIMARY KEY,
-    service_name VARCHAR(50) UNIQUE NOT NULL,
-    status VARCHAR(20) DEFAULT 'unknown',
-    last_heartbeat TIMESTAMPTZ,
-    last_check_count INTEGER DEFAULT 0,
-    positions_monitored INTEGER DEFAULT 0,
-    exits_executed INTEGER DEFAULT 0,
-    haiku_calls INTEGER DEFAULT 0,
-    errors_today INTEGER DEFAULT 0,
-    started_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-COMMENT ON TABLE service_health IS 'Track health of background services like position monitor';
-```
-
-#### position_monitor_status (updated)
-
-```sql
-CREATE TABLE position_monitor_status (
-    monitor_id SERIAL PRIMARY KEY,
-    position_id INTEGER REFERENCES positions(position_id) UNIQUE,
-    symbol VARCHAR(20) NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending',
-    started_at TIMESTAMPTZ DEFAULT NOW(),
-    last_check_at TIMESTAMPTZ,
-    checks_completed INTEGER DEFAULT 0,
-    haiku_calls INTEGER DEFAULT 0,
-    high_watermark NUMERIC(15,4),
-    recommendation VARCHAR(20),
-    recommendation_reason TEXT,
-    error_count INTEGER DEFAULT 0,
-    last_error TEXT,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-COMMENT ON TABLE position_monitor_status IS 'Track position monitoring status';
-```
-
-### 7.3 New Views (v10.5.0)
-
-#### v_monitor_health
-
-```sql
-CREATE OR REPLACE VIEW v_monitor_health AS
-SELECT 
-    p.position_id,
-    p.symbol,
-    p.status AS position_status,
-    p.entry_price,
-    p.quantity,
-    m.status AS monitor_status,
-    m.last_check_at,
-    m.checks_completed,
-    CASE 
-        WHEN m.last_check_at IS NULL THEN 'NO_MONITOR'
-        WHEN EXTRACT(EPOCH FROM (NOW() - m.last_check_at)) > 600 THEN 'STALE'
-        ELSE 'HEALTHY'
-    END AS health_status
-FROM positions p
-LEFT JOIN position_monitor_status m ON p.position_id = m.position_id
-WHERE p.status = 'open';
-```
-
-#### v_service_status
-
-```sql
-CREATE OR REPLACE VIEW v_service_status AS
-SELECT 
-    service_name,
-    status,
-    last_heartbeat,
-    EXTRACT(EPOCH FROM (NOW() - last_heartbeat))/60 AS minutes_since_heartbeat,
-    CASE 
-        WHEN EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) > 600 THEN 'STALE'
-        WHEN status = 'running' THEN 'HEALTHY'
-        ELSE status
-    END AS health_status
-FROM service_health;
-```
-
-### 7.4 Key Database Rules
-
-| Rule | Description |
-|------|-------------|
-| **Orders ≠ Positions** | Order data ONLY in orders table, never in positions |
-| **security_id FK** | Always use JOINs, not symbol VARCHAR directly |
-| **Lot size varies** | HKEX lot sizes vary by stock (check securities.lot_size) |
-| **Use defined ENUMs** | Status values must match defined constraints |
-| **UUID for external** | Use UUIDs for anything exposed externally |
-| **Timestamps with TZ** | Always use TIMESTAMPTZ, never TIMESTAMP |
-
----
-
-## PART 8: INFRASTRUCTURE
-
-### 8.1 Infrastructure Summary
+### 7.1 Infrastructure Summary
 
 | Component | Provider | Spec | Cost |
 |-----------|----------|------|------|
@@ -674,14 +545,14 @@ FROM service_health;
 | Alpaca Data | Included | Real-time US | $0 |
 | **Total** | | | **~$42-52/mo** |
 
-### 8.2 Droplet Details
+### 7.2 Droplet Details
 
 | Droplet | IP | Location | Purpose |
 |---------|-----|----------|---------|
 | US (Consciousness Hub) | TBD | NYC | big_bro, dev_claude, public_claude, dashboard |
 | INTL (Production) | 137.184.244.45 | SFO | intl_claude, position-monitor.service |
 
-### 8.3 Services Running
+### 7.3 Services Running
 
 | Droplet | Service | Type | Purpose |
 |---------|---------|------|---------|
@@ -691,7 +562,7 @@ FROM service_health;
 | US | unified_agent.py | Cron | Hourly trading cycles |
 | US | heartbeat.py | Cron | big_bro heartbeat |
 
-### 8.4 File Structure
+### 7.4 File Structure
 
 #### INTL Droplet
 
@@ -725,9 +596,9 @@ FROM service_health;
 
 ---
 
-## PART 9: OPERATIONS
+## PART 8: OPERATIONS
 
-### 9.1 Market Hours
+### 8.1 Market Hours
 
 #### intl_claude (HKEX - HKT)
 
@@ -739,7 +610,7 @@ FROM service_health;
 | Afternoon session | 13:00-16:00 | 13:00-16:00 |
 | EOD close | 16:00-16:30 | 16:00-16:30 |
 
-### 9.2 Cron Schedule (INTL)
+### 8.2 Cron Schedule (INTL)
 
 ```bash
 # Pre-market scan (09:00 HKT = 01:00 UTC)
@@ -762,7 +633,7 @@ FROM service_health;
 0 9-23,0 * * 1-5 cd /root/catalyst-international && ./venv/bin/python3 unified_agent.py --mode heartbeat
 ```
 
-### 9.3 Monitoring Commands
+### 8.3 Monitoring Commands
 
 ```bash
 # === POSITION MONITOR SERVICE (NEW) ===
@@ -789,7 +660,7 @@ psql "$DATABASE_URL" -c "SELECT symbol, status, side, quantity, entry_price FROM
 tail -50 /root/catalyst-international/logs/trade.log
 ```
 
-### 9.4 Emergency Procedures
+### 8.4 Emergency Procedures
 
 ```bash
 # Stop all trading
@@ -807,9 +678,9 @@ systemctl start position-monitor
 
 ---
 
-## PART 10: REPOSITORY STRUCTURE
+## PART 9: REPOSITORY STRUCTURE
 
-### 10.1 catalyst-trading-system (US Repo)
+### 9.1 catalyst-trading-system (US Repo)
 
 ```
 catalyst-trading-system/
@@ -839,7 +710,7 @@ catalyst-trading-system/
 └── archive/                            # Legacy code
 ```
 
-### 10.2 catalyst-international (INTL Repo)
+### 9.2 catalyst-international (INTL Repo)
 
 ```
 catalyst-international/
@@ -931,15 +802,15 @@ This document supersedes the following:
 | Repository | Document | Version | Status |
 |------------|----------|---------|--------|
 | catalyst-trading-system | current-architecture.md | v10.3.0 | → Superseded |
-| catalyst-trading-system | UNIFIED-ARCHITECTURE.md | v10.4.0 | → Superseded by v10.5.0 |
+| catalyst-trading-system | UNIFIED-ARCHITECTURE.md | v10.5.0 | → Superseded by v10.6.0 |
 | catalyst-international | CONSOLIDATED-ARCHITECTURE.md | v1.0.0 | → Superseded |
 | catalyst-international | catalyst-ecosystem-architecture-v10.0.0.md | v10.0.0 | → Archived |
 
 ---
 
-**END OF UNIFIED ARCHITECTURE DOCUMENT v10.5.0**
+**END OF UNIFIED ARCHITECTURE DOCUMENT v10.6.0**
 
 *Catalyst Trading System*  
 *Craig + The Claude Family (big_bro, dev_claude, public_claude, intl_claude)*  
 *"Enable the poor through accessible algorithmic trading"*  
-*2026-01-16*
+*2026-01-18*
