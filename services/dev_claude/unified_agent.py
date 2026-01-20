@@ -2,11 +2,15 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: unified_agent.py
-Version: 2.0.0
-Last Updated: 2026-01-17
+Version: 2.0.1
+Last Updated: 2026-01-20
 Purpose: Unified trading agent for US markets (dev_claude)
 
 REVISION HISTORY:
+v2.0.1 (2026-01-20) - Switch to IEX data feed
+  - Changed from SIP to IEX feed for market data
+  - Fixes "subscription does not permit querying recent SIP data" error
+
 v2.0.0 (2026-01-17) - Modular refactor aligned with intl_claude
   - Separated brokers/alpaca.py, data/database.py, tools.py
   - ToolExecutor moved to separate module
@@ -313,6 +317,7 @@ class AlpacaClient:
         from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass
         from alpaca.data.requests import StockLatestQuoteRequest, StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
+        from alpaca.data.enums import DataFeed
 
         self.api_key = os.getenv('ALPACA_API_KEY')
         self.secret_key = os.getenv('ALPACA_SECRET_KEY')
@@ -348,6 +353,7 @@ class AlpacaClient:
         self._StockLatestQuoteRequest = StockLatestQuoteRequest
         self._StockBarsRequest = StockBarsRequest
         self._TimeFrame = TimeFrame
+        self._DataFeed = DataFeed
 
         logger.info(f"Alpaca client initialized (paper={paper_trading})")
 
@@ -381,7 +387,7 @@ class AlpacaClient:
 
     def get_quote(self, symbol: str) -> Dict[str, Any]:
         """Get current quote for a symbol."""
-        request = self._StockLatestQuoteRequest(symbol_or_symbols=symbol)
+        request = self._StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=self._DataFeed.IEX)
         quotes = self.data_client.get_stock_latest_quote(request)
 
         if symbol in quotes:
@@ -409,7 +415,8 @@ class AlpacaClient:
             symbol_or_symbols=symbol,
             timeframe=self._TimeFrame.Day,
             start=start,
-            end=end
+            end=end,
+            feed=self._DataFeed.IEX
         )
 
         bars = self.data_client.get_stock_bars(request)
