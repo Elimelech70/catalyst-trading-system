@@ -396,7 +396,7 @@ async def save_learning(pool, category: str, learning: str, evidence: str, confi
     """Save a learning."""
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO claude_learnings (agent_id, category, learning, evidence, confidence)
+            INSERT INTO claude_learnings (agent_id, category, learning, source, confidence)
             VALUES ($1, $2, $3, $4, $5)
         """, AGENT_ID, category, learning, evidence, confidence)
 

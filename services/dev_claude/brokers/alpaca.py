@@ -2,11 +2,15 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca.py
-Version: 1.0.0
-Last Updated: 2026-01-17
+Version: 1.0.1
+Last Updated: 2026-01-20
 Purpose: Alpaca broker client for US markets via Alpaca API
 
 REVISION HISTORY:
+v1.0.1 (2026-01-20) - Switch to IEX data feed
+  - Changed from SIP to IEX feed for all market data requests
+  - Fixes "subscription does not permit querying recent SIP data" error
+
 v1.0.0 (2026-01-17) - Initial implementation
   - Aligned with intl_claude's brokers/moomoo.py pattern
   - Module-level client singleton pattern
@@ -64,6 +68,7 @@ try:
         StockLatestBarRequest,
     )
     from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.enums import DataFeed
     ALPACA_AVAILABLE = True
 except ImportError:
     ALPACA_AVAILABLE = False
@@ -238,16 +243,16 @@ class AlpacaClient:
             raise RuntimeError("Not connected to Alpaca")
         
         try:
-            request = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+            request = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
             quotes = self.data_client.get_stock_latest_quote(request)
-            
+
             if symbol not in quotes:
                 raise ValueError(f"No quote data for {symbol}")
-            
+
             quote = quotes[symbol]
-            
+
             # Get latest bar for OHLC
-            bar_request = StockLatestBarRequest(symbol_or_symbols=symbol)
+            bar_request = StockLatestBarRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
             bars = self.data_client.get_stock_latest_bar(bar_request)
             bar = bars.get(symbol)
             
@@ -291,9 +296,9 @@ class AlpacaClient:
             raise RuntimeError("Not connected to Alpaca")
         
         try:
-            request = StockLatestQuoteRequest(symbol_or_symbols=symbols)
+            request = StockLatestQuoteRequest(symbol_or_symbols=symbols, feed=DataFeed.IEX)
             quotes = self.data_client.get_stock_latest_quote(request)
-            
+
             results = []
             for symbol in symbols:
                 if symbol in quotes:
@@ -352,6 +357,7 @@ class AlpacaClient:
                 timeframe=tf,
                 start=start,
                 limit=limit,
+                feed=DataFeed.IEX,
             )
             bars = self.data_client.get_stock_bars(request)
             
