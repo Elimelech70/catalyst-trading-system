@@ -2,11 +2,17 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: unified_agent.py
-Version: 2.0.1
+Version: 3.0.0
 Last Updated: 2026-01-20
 Purpose: Unified trading agent for US markets (dev_claude)
 
 REVISION HISTORY:
+v3.0.0 (2026-01-20) - Workflow tracker and position auto-sync
+  - Added WorkflowTracker for 10-phase workflow visibility
+  - Added position auto-sync with broker at cycle start
+  - Added DECIDE/VALIDATE/MONITOR phase transitions
+  - Ported from intl_claude unified_agent.py v3.1.0
+
 v2.0.1 (2026-01-20) - Switch to IEX data feed
   - Changed from SIP to IEX feed for market data
   - Fixes "subscription does not permit querying recent SIP data" error
@@ -44,6 +50,7 @@ from dotenv import load_dotenv
 # Local modular imports (aligned with intl_claude structure)
 from tools import TOOLS, TOOL_NAMES, get_tools_for_mode
 from tool_executor import ToolExecutor, create_tool_executor
+from workflow_tracker import WorkflowTracker, WORKFLOW_PHASES, get_phase_for_tool
 from brokers.alpaca import AlpacaClient, init_alpaca_client, get_alpaca_client
 from data.database import DatabaseClient, init_database, get_database
 
@@ -1408,6 +1415,26 @@ Always explain your reasoning using log_decision.
             logger.warning("Daily budget exhausted")
             return {'status': 'budget_exhausted', 'cycle_id': cycle_id}
 
+        # Initialize workflow tracker
+        self.tracker = WorkflowTracker(
+            cycle_id=cycle_id,
+            agent_id=self.agent_id,
+            db_pool=self.db.research_pool if self.db else None,
+            timezone="America/New_York"
+        )
+        await self.tracker.start_phase("INIT", "Cycle initialization")
+
+        # Auto-sync positions with broker at start of each cycle
+        if self.executor and mode in ['trade', 'scan', 'close']:
+            try:
+                sync_result = self.executor.sync_positions_with_broker()
+                if sync_result.get('changes_made'):
+                    logger.info(f"Position sync: {sync_result}")
+            except Exception as e:
+                logger.warning(f"Position sync failed: {e}")
+
+        await self.tracker.complete_phase("INIT", sync_complete=True)
+
         # Skip trading if market closed (except heartbeat)
         if mode in ['trade', 'scan'] and not self._is_market_open():
             logger.info("Market closed - switching to heartbeat mode")
@@ -1458,13 +1485,41 @@ Always explain your reasoning using log_decision.
                     # No tools called - cycle complete
                     break
 
-                # Execute tools
+                # Execute tools with workflow tracking
                 tool_results = []
                 for tool_block in tool_blocks:
-                    result = await self.executor.execute(
-                        tool_block.name,
-                        tool_block.input
-                    )
+                    tool_name = tool_block.name
+                    tool_input = tool_block.input
+
+                    # Update workflow phase based on tool
+                    new_phase = get_phase_for_tool(tool_name, self.tracker.current_phase or "INIT")
+                    if new_phase != self.tracker.current_phase:
+                        if self.tracker.current_phase:
+                            await self.tracker.complete_phase(self.tracker.current_phase)
+                        await self.tracker.start_phase(new_phase, f"Executing {tool_name}")
+
+                    # Execute the tool
+                    result = await self.executor.execute(tool_name, tool_input)
+
+                    # Handle special workflow transitions
+                    if tool_name == "check_risk" and isinstance(result, dict):
+                        # After DECIDE (check_risk), transition to VALIDATE
+                        await self.tracker.complete_phase("DECIDE", decision_made=True)
+                        await self.tracker.start_phase("VALIDATE", "Risk validation")
+                        await self.tracker.complete_phase("VALIDATE",
+                            approved=result.get("approved", False),
+                            reason=result.get("reason", "")
+                        )
+
+                    elif tool_name == "execute_trade" and isinstance(result, dict):
+                        if result.get("status", "").lower() in ["filled", "success", "submitted", "accepted"]:
+                            # After successful EXECUTE, transition to MONITOR
+                            await self.tracker.complete_phase("EXECUTE", trades=1)
+                            await self.tracker.start_phase("MONITOR", "Position monitoring")
+                            await self.tracker.complete_phase("MONITOR",
+                                symbol=result.get("symbol"),
+                                monitoring_active=True
+                            )
 
                     tool_results.append({
                         "type": "tool_result",
@@ -1482,6 +1537,10 @@ Always explain your reasoning using log_decision.
                 logger.error(f"Cycle error: {e}", exc_info=True)
                 break
 
+        # Complete LOG phase
+        await self.tracker.start_phase("LOG", "Logging results")
+        await self.tracker.complete_phase("LOG")
+
         # Update budget
         if self.consciousness:
             await self.consciousness.update_budget(api_spend)
@@ -1490,6 +1549,15 @@ Always explain your reasoning using log_decision.
         # Get summary
         summary = self.executor.get_summary() if self.executor else {}
 
+        # Complete cycle
+        await self.tracker.complete_cycle({
+            'mode': mode,
+            'iterations': iterations,
+            'trades': summary.get('trades_executed', 0)
+        })
+
+        logger.info(f"Cycle complete: {self.tracker.get_progress_bar()}")
+
         return {
             'status': 'complete',
             'cycle_id': cycle_id,
@@ -1497,7 +1565,8 @@ Always explain your reasoning using log_decision.
             'iterations': iterations,
             'api_spend': round(api_spend, 4),
             'tools_called': summary.get('tools_called', 0),
-            'trades_executed': summary.get('trades_executed', 0)
+            'trades_executed': summary.get('trades_executed', 0),
+            'workflow': self.tracker.get_progress_bar()
         }
 
     async def run_scan(self) -> Dict[str, Any]:
