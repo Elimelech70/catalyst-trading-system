@@ -2,11 +2,16 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: unified_agent.py
-Version: 3.0.0
-Last Updated: 2026-01-20
+Version: 3.0.1
+Last Updated: 2026-01-21
 Purpose: Unified trading agent for US markets (dev_claude)
 
 REVISION HISTORY:
+v3.0.1 (2026-01-21) - Fix position sync dict/object mismatch
+  - Fixed sync_positions_with_broker() to use dict notation
+  - Internal AlpacaClient returns dicts, not Position objects
+  - Fixes "'dict' object has no attribute 'symbol'" error
+
 v3.0.0 (2026-01-20) - Workflow tracker and position auto-sync
   - Added WorkflowTracker for 10-phase workflow visibility
   - Added position auto-sync with broker at cycle start
@@ -1302,16 +1307,16 @@ class ToolExecutor:
             return {"error": "Broker not connected", "changes_made": False}
 
         try:
-            # Get positions from Alpaca
+            # Get positions from Alpaca (returns list of dicts)
             broker_positions = self.broker.get_positions()
-            broker_symbols = {p.symbol: p for p in broker_positions}
+            broker_symbols = {p['symbol']: p for p in broker_positions}
 
             logger.info(f"Position sync: {len(broker_positions)} positions in Alpaca")
 
             # For now, just log what we find - DB sync requires async
             if broker_positions:
                 for p in broker_positions:
-                    logger.info(f"  Alpaca position: {p.symbol} qty={p.quantity} @ ${p.avg_cost:.2f}")
+                    logger.info(f"  Alpaca position: {p['symbol']} qty={p['quantity']} @ ${p['entry_price']:.2f}")
 
             return result
 
