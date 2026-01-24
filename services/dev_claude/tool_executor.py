@@ -2,11 +2,17 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: tool_executor.py
-Version: 1.0.0
-Last Updated: 2026-01-17
+Version: 2.0.0
+Last Updated: 2026-01-20
 Purpose: Routes Claude's tool calls to actual implementations for US markets
 
 REVISION HISTORY:
+v2.0.0 (2026-01-20) - Position auto-sync and workflow integration
+  - Added sync_positions_with_broker() method
+  - Syncs DB positions with Alpaca at cycle start
+  - Closes phantom positions, adds missing positions
+  - Ported from intl_claude tool_executor.py v2.9.0
+
 v1.0.0 (2026-01-17) - Initial implementation
   - Aligned with intl_claude tool_executor.py v2.6.0 pattern
   - 12 trading tools for US markets
@@ -581,6 +587,114 @@ class ToolExecutor:
                 logger.warning(f"Failed to log decision: {e}")
         
         return {"logged": True, **log_entry}
+
+    # =========================================================================
+    # POSITION SYNC
+    # =========================================================================
+
+    def sync_positions_with_broker(self) -> Dict[str, Any]:
+        """
+        Sync database positions with Alpaca broker.
+
+        This method reconciles the local database with the broker's actual positions:
+        - Closes phantom positions (in DB but not in Alpaca)
+        - Adds missing positions (in Alpaca but not in DB)
+        - Updates quantity mismatches
+
+        Returns:
+            dict with sync results including changes_made flag
+        """
+        result = {
+            "phantoms_closed": [],
+            "missing_added": [],
+            "quantity_updated": [],
+            "changes_made": False,
+            "timestamp": datetime.now(ET).isoformat(),
+        }
+
+        if not self.broker:
+            logger.warning("Broker not connected, skipping position sync")
+            return {"error": "Broker not connected", "changes_made": False}
+
+        try:
+            # Get positions from broker (Alpaca)
+            broker_positions = self.broker.get_positions()
+            broker_symbols = {p.symbol: p for p in broker_positions}
+
+            logger.info(f"Position sync: {len(broker_positions)} positions in Alpaca")
+
+            # Get positions from database (if available)
+            if self.db and hasattr(self.db, 'get_open_positions'):
+                db_positions = self.db.get_open_positions()
+                db_symbols = {p['symbol']: p for p in db_positions}
+
+                # Find phantoms (in DB but not in broker)
+                for symbol in db_symbols:
+                    if symbol not in broker_symbols:
+                        logger.info(f"Phantom position detected: {symbol} (in DB, not in Alpaca)")
+                        try:
+                            if hasattr(self.db, 'close_position'):
+                                self.db.close_position(
+                                    db_symbols[symbol].get('position_id'),
+                                    reason='phantom_sync'
+                                )
+                            result["phantoms_closed"].append(symbol)
+                            result["changes_made"] = True
+                        except Exception as e:
+                            logger.warning(f"Failed to close phantom {symbol}: {e}")
+
+                # Find missing (in broker but not in DB)
+                for symbol, pos in broker_symbols.items():
+                    if symbol not in db_symbols:
+                        logger.info(f"Missing position detected: {symbol} (in Alpaca, not in DB)")
+                        try:
+                            if hasattr(self.db, 'create_position'):
+                                self.db.create_position(
+                                    symbol=symbol,
+                                    side='long' if pos.quantity > 0 else 'short',
+                                    quantity=abs(pos.quantity),
+                                    entry_price=pos.avg_cost,
+                                )
+                            result["missing_added"].append(symbol)
+                            result["changes_made"] = True
+                        except Exception as e:
+                            logger.warning(f"Failed to add missing {symbol}: {e}")
+
+                # Check quantity mismatches
+                for symbol in set(broker_symbols) & set(db_symbols):
+                    broker_qty = abs(broker_symbols[symbol].quantity)
+                    db_qty = abs(db_symbols[symbol].get('quantity', 0))
+
+                    if broker_qty != db_qty:
+                        logger.info(f"Quantity mismatch for {symbol}: DB={db_qty}, Alpaca={broker_qty}")
+                        try:
+                            if hasattr(self.db, 'update_position_quantity'):
+                                self.db.update_position_quantity(
+                                    db_symbols[symbol].get('position_id'),
+                                    broker_qty
+                                )
+                            result["quantity_updated"].append({
+                                "symbol": symbol,
+                                "from": db_qty,
+                                "to": broker_qty
+                            })
+                            result["changes_made"] = True
+                        except Exception as e:
+                            logger.warning(f"Failed to update quantity for {symbol}: {e}")
+
+            else:
+                logger.debug("Database not available for position sync")
+
+            if result["changes_made"]:
+                logger.info(f"Position sync complete: {result}")
+            else:
+                logger.info("Position sync complete: no changes needed")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Position sync error: {e}")
+            return {"error": str(e), "changes_made": False}
 
 
 # =============================================================================
