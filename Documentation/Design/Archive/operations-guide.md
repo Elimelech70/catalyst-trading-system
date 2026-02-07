@@ -2,8 +2,8 @@
 
 **Name of Application:** Catalyst Trading System  
 **Name of File:** operations-guide.md  
-**Version:** 2.0.0  
-**Last Updated:** 2026-02-07  
+**Version:** 1.0.0  
+**Last Updated:** 2026-01-06  
 **Purpose:** Complete operational workflows for all system components
 
 ---
@@ -31,36 +31,27 @@
 │                    CATALYST TRADING SYSTEM ARCHITECTURE                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ┌─────────────────┐   ┌──────────────────────────┐   ┌─────────────────┐  │
-│  │  PUBLIC_CLAUDE  │   │     INTL_CLAUDE           │   │    BIG_BRO      │  │
-│  │                 │   │  (Multi-Agent MCP v2.0)   │   │                 │  │
-│  │  US Markets     │   │                           │   │  Strategic      │  │
-│  │  NYSE/NASDAQ    │   │  ┌──────────────────────┐│   │  Oversight      │  │
-│  │  Alpaca API     │   │  │ Coordinator (Brain)  ││   │  Coordination   │  │
-│  │  $5/day budget  │   │  │ Claude Sonnet 4      ││   │  $10/day budget │  │
-│  │                 │   │  └───┬──────┬──────┬────┘│   │                 │  │
-│  │                 │   │      │MCP   │MCP   │MCP  │   │                 │  │
-│  │                 │   │  ┌───▼──┐┌──▼───┐┌─▼───┐│   │                 │  │
-│  │                 │   │  │Pos.  ││Market││Trade ││   │                 │  │
-│  │                 │   │  │Mon.  ││Scan. ││Exec. ││   │                 │  │
-│  │                 │   │  │:8001 ││:8002 ││:8003 ││   │                 │  │
-│  │                 │   │  │READ  ││READ  ││WRITE ││   │                 │  │
-│  │                 │   │  └──────┘└──────┘└──────┘│   │                 │  │
-│  │                 │   │  Moomoo/OpenD  $5/day     │   │                 │  │
-│  └────────┬────────┘   └────────────┬─────────────┘   └────────┬────────┘  │
-│           │                         │                          │            │
-│           └─────────────────────────┼──────────────────────────┘            │
-│                                     │                                      │
-│                    ┌────────────────▼────────────┐                         │
-│                    │   CONSCIOUSNESS DB           │                         │
-│                    │   (catalyst_research)        │                         │
-│                    │                              │                         │
-│                    │  • claude_state              │                         │
-│                    │  • claude_messages           │                         │
-│                    │  • claude_observations       │                         │
-│                    │  • claude_learnings          │                         │
-│                    │  • claude_questions          │                         │
-│                    └─────────────────────────────┘                         │
+│  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐           │
+│  │  PUBLIC_CLAUDE  │   │  INTL_CLAUDE    │   │    BIG_BRO      │           │
+│  │                 │   │                 │   │                 │           │
+│  │  US Markets     │   │  HKEX Markets   │   │  Strategic      │           │
+│  │  NYSE/NASDAQ    │   │  Hong Kong      │   │  Oversight      │           │
+│  │  Alpaca API     │   │  Moomoo/OpenD   │   │  Coordination   │           │
+│  │  $5/day budget  │   │  $5/day budget  │   │  $10/day budget │           │
+│  └────────┬────────┘   └────────┬────────┘   └────────┬────────┘           │
+│           │                     │                     │                     │
+│           └─────────────────────┼─────────────────────┘                     │
+│                                 │                                           │
+│                    ┌────────────▼────────────┐                              │
+│                    │   CONSCIOUSNESS DB      │                              │
+│                    │   (catalyst_research)   │                              │
+│                    │                         │                              │
+│                    │  • claude_state         │                              │
+│                    │  • claude_messages      │                              │
+│                    │  • claude_observations  │                              │
+│                    │  • claude_learnings     │                              │
+│                    │  • claude_questions     │                              │
+│                    └─────────────────────────┘                              │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -129,24 +120,7 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 HKEX Operations (Multi-Agent MCP v2.0)
-
-**Primary Mode: Docker Compose (replaces cron-based agent)**
-
-```bash
-# Start all agents (coordinator waits for all 3 MCP agents to be healthy)
-docker compose up -d
-
-# Coordinator runs continuously while market is open:
-#   - Polls Position Monitor every 60s for exit signals
-#   - Runs full scan cycle every 30 minutes
-#   - Sleeps between cycles
-
-# Force run outside market hours (testing)
-FORCE_MARKET_OPEN=1 docker compose up coordinator
-```
-
-**Legacy Mode (deprecated, available via Docker profile):**
+### 2.2 HKEX Cron Schedule
 
 ```cron
 # Morning session start (09:30 HKT = 01:30 UTC)
@@ -155,8 +129,6 @@ FORCE_MARKET_OPEN=1 docker compose up coordinator
 # Afternoon session start (13:00 HKT = 05:00 UTC)
 0 5 * * 1-5 cd /root/Catalyst-Trading-System-International/catalyst-international && ./venv/bin/python3 agent.py >> logs/cron.log 2>&1
 ```
-
-**Note:** Legacy mode available via `docker compose --profile legacy up agent-legacy`. Do NOT run both modes simultaneously.
 
 ### 2.3 US Cron Schedule (When Enabled)
 
@@ -172,101 +144,89 @@ FORCE_MARKET_OPEN=1 docker compose up coordinator
 
 ## 3. HKEX Trading Workflows
 
-### 3.1 Agent Cycle Flow (Multi-Agent MCP v2.0)
+### 3.1 Agent Cycle Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                  INTL_CLAUDE MULTI-AGENT TRADING CYCLE                      │
+│                      INTL_CLAUDE TRADING CYCLE                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  DOCKER COMPOSE UP (continuous while market open)                          │
+│  CRON TRIGGER (01:30 or 05:00 UTC)                                         │
 │         │                                                                   │
 │         ▼                                                                   │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ COORDINATOR LOOP (every 60s)                                        │   │
-│  │                                                                     │   │
-│  │  1. POLL EXIT SIGNALS                                               │   │
-│  │     │                                                               │   │
-│  │     ├── Call Position Monitor → get_exit_recommendations()          │   │
-│  │     │                                                               │   │
-│  │     ├── EXIT recommendation?                                        │   │
-│  │     │   └── Call Trade Executor → close_position()                  │   │
-│  │     │   └── Call Position Monitor → acknowledge_recommendation()    │   │
-│  │     │                                                               │   │
-│  │     ├── CONSULT_AI recommendation?                                  │   │
-│  │     │   └── Gather data from Market Scanner                         │   │
-│  │     │   └── Coordinator (Sonnet 4) decides CLOSE or HOLD           │   │
-│  │     │   └── Act via Trade Executor if CLOSE                         │   │
-│  │     │   └── acknowledge_recommendation()                            │   │
-│  │     │                                                               │   │
-│  │     └── HOLD → continue                                             │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│         │                                                                   │
-│         ▼ (every 30 minutes)                                               │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ 2. FULL SCAN CYCLE (Claude AI tool-use loop, max 35 iterations)     │   │
-│  │                                                                     │   │
-│  │    Trade Executor → get_portfolio (current state)                   │   │
-│  │         │                                                           │   │
-│  │         ▼                                                           │   │
-│  │    Market Scanner → scan_market (find candidates)                   │   │
-│  │         │                                                           │   │
-│  │         ▼                                                           │   │
-│  │    For each candidate:                                              │   │
-│  │         ├── Market Scanner → get_quote                              │   │
-│  │         ├── Market Scanner → get_technicals                         │   │
-│  │         ├── Market Scanner → detect_patterns                        │   │
-│  │         ├── Market Scanner → get_news                               │   │
-│  │         │                                                           │   │
-│  │         ▼                                                           │   │
-│  │    Evaluate against TIERED CRITERIA (Tier 1/2/3)                    │   │
-│  │         │                                                           │   │
-│  │         ├── Trade Executor → check_risk                             │   │
-│  │         └── Trade Executor → execute_trade (if approved)            │   │
-│  │                                                                     │   │
-│  │    Trade Executor → log_decision (audit trail)                      │   │
-│  │                                                                     │   │
+│  │ 1. BUILD CONTEXT                                                     │   │
+│  │    • Load current portfolio (get_portfolio)                          │   │
+│  │    • Check market hours                                              │   │
+│  │    • Initialize cycle ID                                             │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │         │                                                                   │
 │         ▼                                                                   │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ BACKGROUND: POSITION MONITOR (independent, every 300s)              │   │
-│  │                                                                     │   │
-│  │  • Loads open positions from DB (READ ONLY)                         │   │
-│  │  • Gets quotes from Moomoo broker                                   │   │
-│  │  • Runs signal analysis (stop loss, take profit, trailing stop,     │   │
-│  │    RSI, volume, MACD, time-based)                                   │   │
-│  │  • For CONSULT_AI signals → optionally consults Haiku (max 5/cycle) │   │
-│  │  • Writes recommendations to position_monitor_status via upsert     │   │
-│  │  • NEVER executes trades or writes to positions table               │   │
-│  │                                                                     │   │
+│  │ 2. CALL CLAUDE API                                                   │   │
+│  │    • Send SYSTEM_PROMPT + context                                    │   │
+│  │    • Provide 12 trading tools                                        │   │
+│  │    • Claude decides actions                                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│         │                                                                   │
+│         ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ 3. TOOL EXECUTION LOOP                                               │   │
+│  │                                                                       │   │
+│  │    Claude requests: scan_market                                       │   │
+│  │         │                                                             │   │
+│  │         ▼                                                             │   │
+│  │    For each candidate:                                                │   │
+│  │         │                                                             │   │
+│  │         ├── get_quote → Current price                                 │   │
+│  │         ├── get_technicals → RSI, MACD, support/resistance            │   │
+│  │         ├── detect_patterns → Breakout, bull flag, etc.               │   │
+│  │         ├── get_news → Catalysts, sentiment                           │   │
+│  │         │                                                             │   │
+│  │         ▼                                                             │   │
+│  │    Evaluate against TIERED CRITERIA:                                  │   │
+│  │         │                                                             │   │
+│  │         ├── Tier 1: Volume >2x, RSI 30-70, Pattern AND Catalyst       │   │
+│  │         ├── Tier 2: Volume >1.5x, Pattern OR Catalyst                 │   │
+│  │         └── Tier 3: Volume >1.3x, Momentum >3%                        │   │
+│  │                                                                       │   │
+│  │    If criteria met:                                                   │   │
+│  │         │                                                             │   │
+│  │         ├── check_risk → Validate trade                               │   │
+│  │         └── execute_trade → Place order via Moomoo                    │   │
+│  │                  │                                                    │   │
+│  │                  ▼                                                    │   │
+│  │         POSITION MONITOR STARTS (if BUY)                              │   │
+│  │                                                                       │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│         │                                                                   │
+│         ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ 4. LOG & COMPLETE                                                    │   │
+│  │    • log_decision → Record reasoning                                 │   │
+│  │    • Update database                                                 │   │
+│  │    • Send alerts if configured                                       │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.2 Available Trading Tools (MCP-Routed)
+### 3.2 Available Trading Tools
 
-| Tool | MCP Agent | Purpose | Returns |
-|------|-----------|---------|---------|
-| `get_exit_recommendations` | Position Monitor :8001 | Unacknowledged EXIT/CONSULT_AI recommendations | Recommendations + position data |
-| `get_position_health` | Position Monitor :8001 | Health status of all monitored positions | P&L, signals, watermark |
-| `acknowledge_recommendation` | Position Monitor :8001 | Mark recommendation as processed | Acknowledgment status |
-| `scan_market` | Market Scanner :8002 | Find momentum candidates | List with volume/change |
-| `get_quote` | Market Scanner :8002 | Current price data | Bid/ask/last/volume |
-| `get_technicals` | Market Scanner :8002 | Technical indicators | RSI, MACD, SMA, EMA, ATR, Bollinger |
-| `detect_patterns` | Market Scanner :8002 | Chart patterns | Pattern + entry/stop/target |
-| `get_news` | Market Scanner :8002 | News and sentiment | Headlines with sentiment score |
-| `get_portfolio` | Trade Executor :8003 | Current holdings | Cash, equity, positions, P&L |
-| `execute_trade` | Trade Executor :8003 | Place order (auto-adjusts for HKD 10K limit) | Fill confirmation |
-| `close_position` | Trade Executor :8003 | Close specific position | Close result |
-| `close_all` | Trade Executor :8003 | Emergency close all | List of results |
-| `sync_positions` | Trade Executor :8003 | Reconcile DB with broker | Sync report |
-| `check_risk` | Trade Executor :8003 | Validate trade (13 checks) | Approved/rejected + reason |
-| `log_decision` | Trade Executor :8003 | Record reasoning | Decision ID |
-
-**Single-Writer Rule:** Only Trade Executor (:8003) writes to the `positions` table. Position Monitor and Market Scanner are strictly READ-ONLY.
+| Tool | Purpose | Returns |
+|------|---------|---------|
+| `scan_market` | Find momentum candidates | List with volume/change |
+| `get_quote` | Current price data | Bid/ask/last/volume |
+| `get_technicals` | Technical indicators | RSI, MACD, support/resistance |
+| `detect_patterns` | Chart patterns | Pattern + entry/stop/target |
+| `get_news` | News and sentiment | Headlines with sentiment score |
+| `check_risk` | Validate trade | Approved/rejected + reason |
+| `get_portfolio` | Current holdings | Cash, positions, P&L |
+| `execute_trade` | Place order | Order result |
+| `close_position` | Close specific position | Close result |
+| `close_all` | Emergency close all | List of results |
+| `send_alert` | Send notification | Success/failure |
+| `log_decision` | Record reasoning | Decision ID |
 
 ### 3.3 Entry Criteria (Tiered System)
 
@@ -465,71 +425,82 @@ Access via Claude Desktop or catalyst-consciousness MCP server:
 
 ## 6. Position Monitoring
 
-### 6.1 Monitoring Flow (Multi-Agent MCP v2.0)
+### 6.1 Monitoring Flow (NEW in v2.2.1)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              POSITION MONITORING (MCP Recommendation-Based)                 │
+│                     CONTINUOUS POSITION MONITORING                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  POSITION MONITOR AGENT (:8001) — Runs independently every 300s            │
+│  BUY Order Executed                                                         │
 │         │                                                                   │
 │         ▼                                                                   │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ 1. DETECT SIGNALS (rules-based, FREE)                               │   │
-│  │                                                                     │   │
-│  │    For each open position (READ from DB):                           │   │
-│  │      • Get quote from Moomoo broker (read-only)                     │   │
-│  │      • Calculate P&L, track high/low watermark                      │   │
-│  │      • Run signal analysis:                                         │   │
-│  │        - Stop loss (-3% EXIT, -2% CONSULT_AI)                       │   │
-│  │        - Take profit (+8% EXIT, +5% CONSULT_AI)                     │   │
-│  │        - Trailing stop (2% drawdown CONSULT_AI)                     │   │
-│  │        - RSI (>85 EXIT, >75 CONSULT_AI)                             │   │
-│  │        - Volume collapse (<25% EXIT, <40% CONSULT_AI)               │   │
-│  │        - MACD bearish (histogram < -0.5 CONSULT_AI)                 │   │
-│  │        - Near close (15:50-16:00 EXIT)                              │   │
-│  │        - Lunch break (11:50-12:00 CONSULT_AI)                       │   │
-│  │                                                                     │   │
+│  │                   POSITION MONITOR STARTS                            │   │
+│  │                                                                       │   │
+│  │  while position_open AND market_open:                                 │   │
+│  │                                                                       │   │
+│  │      ┌─────────────────────────────────────────────────────────┐     │   │
+│  │      │ 1. GET CURRENT STATE                                     │     │   │
+│  │      │    • Quote: price, bid, ask, volume                      │     │   │
+│  │      │    • Technicals: RSI, MACD                               │     │   │
+│  │      │    • Calculate P&L %                                     │     │   │
+│  │      │    • Track high watermark for trailing stop              │     │   │
+│  │      └─────────────────────────────────────────────────────────┘     │   │
+│  │                           │                                           │   │
+│  │                           ▼                                           │   │
+│  │      ┌─────────────────────────────────────────────────────────┐     │   │
+│  │      │ 2. DETECT EXIT SIGNALS (FREE - rules based)             │     │   │
+│  │      │                                                          │     │   │
+│  │      │    P&L Signals:                                          │     │   │
+│  │      │    • Stop loss hit (-3% STRONG, -2% MODERATE)            │     │   │
+│  │      │    • Take profit (+8% STRONG, +5% MODERATE)              │     │   │
+│  │      │    • Trailing stop (3% drawdown from high)               │     │   │
+│  │      │                                                          │     │   │
+│  │      │    Technical Signals:                                    │     │   │
+│  │      │    • RSI overbought (85 STRONG, 75 MODERATE)             │     │   │
+│  │      │    • Below VWAP, below EMA9                              │     │   │
+│  │      │    • MACD bearish cross                                  │     │   │
+│  │      │                                                          │     │   │
+│  │      │    Volume Signals:                                       │     │   │
+│  │      │    • Volume dying (<25% STRONG, <40% MODERATE)           │     │   │
+│  │      │                                                          │     │   │
+│  │      │    Time Signals:                                         │     │   │
+│  │      │    • Market closing (<10min STRONG)                      │     │   │
+│  │      │    • Lunch break (11:50 STRONG)                          │     │   │
+│  │      │    • Time stop (flat >2hrs STRONG)                       │     │   │
+│  │      └─────────────────────────────────────────────────────────┘     │   │
+│  │                           │                                           │   │
+│  │                           ▼                                           │   │
+│  │      ┌─────────────────────────────────────────────────────────┐     │   │
+│  │      │ 3. DECISION LOGIC                                        │     │   │
+│  │      │                                                          │     │   │
+│  │      │    STRONG signal ────────────────▶ EXIT immediately      │     │   │
+│  │      │                                    (no AI cost)          │     │   │
+│  │      │                                                          │     │   │
+│  │      │    Multiple MODERATE signals ────▶ EXIT                  │     │   │
+│  │      │                                    (high confidence)     │     │   │
+│  │      │                                                          │     │   │
+│  │      │    Few MODERATE signals ─────────▶ ASK HAIKU (~$0.05)    │     │   │
+│  │      │                                    │                     │     │   │
+│  │      │                                    ▼                     │     │   │
+│  │      │                               HAIKU says EXIT? ──▶ EXIT  │     │   │
+│  │      │                               HAIKU says HOLD? ──▶ HOLD  │     │   │
+│  │      │                                                          │     │   │
+│  │      │    WEAK/NONE signals ────────────▶ HOLD                  │     │   │
+│  │      │                                    (continue monitoring) │     │   │
+│  │      └─────────────────────────────────────────────────────────┘     │   │
+│  │                           │                                           │   │
+│  │                           ▼                                           │   │
+│  │      sleep(5 minutes) ───────────────────▶ loop                      │   │
+│  │                                                                       │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │         │                                                                   │
 │         ▼                                                                   │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ 2. WRITE RECOMMENDATIONS (to position_monitor_status only)          │   │
-│  │                                                                     │   │
-│  │    EXIT ──────────► Upsert recommendation = EXIT                    │   │
-│  │    CONSULT_AI ────► Optionally consult Haiku (max 5/cycle)          │   │
-│  │                     Upsert recommendation = EXIT or HOLD            │   │
-│  │    No signal ─────► Upsert recommendation = HOLD                    │   │
-│  │                                                                     │   │
-│  │    ⚠ NEVER writes to positions table                                │   │
-│  │    ⚠ NEVER executes trades                                          │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ═══════════════════════════════════════════════════════════════════════    │
-│                                                                             │
-│  COORDINATOR (Brain) — Polls every 60s                                     │
+│  EXIT EXECUTED                                                              │
 │         │                                                                   │
 │         ▼                                                                   │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ 3. ACT ON RECOMMENDATIONS                                          │   │
-│  │                                                                     │   │
-│  │    get_exit_recommendations() via MCP → Position Monitor            │   │
-│  │         │                                                           │   │
-│  │         ├── EXIT → close_position() via Trade Executor              │   │
-│  │         │          acknowledge_recommendation()                     │   │
-│  │         │                                                           │   │
-│  │         ├── CONSULT_AI → gather data, Sonnet decides                │   │
-│  │         │                 CLOSE → close_position()                  │   │
-│  │         │                 HOLD → continue                           │   │
-│  │         │                 acknowledge_recommendation()              │   │
-│  │         │                                                           │   │
-│  │         └── HOLD → no action                                        │   │
-│  │                                                                     │   │
-│  │    Acknowledgment resets when recommendation changes                 │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  Notify big_bro with P&L result                                            │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -568,52 +539,7 @@ ssh root@137.184.244.45
 
 # Navigate to project
 cd /root/Catalyst-Trading-System-International/catalyst-international
-
-# ─────────────────────────────────────────────────────────────────
-# MULTI-AGENT MCP OPERATIONS (v2.0 — Primary)
-# ─────────────────────────────────────────────────────────────────
-
-# Start all agents
-docker compose up -d
-
-# Check status
-docker compose ps
-
-# View coordinator (brain) decisions
-docker compose logs -f coordinator
-
-# View position monitoring signals
-docker compose logs -f position-monitor
-
-# View trade execution
-docker compose logs -f trade-executor
-
-# View market scanning
-docker compose logs -f market-scanner
-
-# View all logs
-docker compose logs -f
-
-# Health check all MCP endpoints
-curl http://localhost:8001/health   # Position Monitor
-curl http://localhost:8002/health   # Market Scanner
-curl http://localhost:8003/health   # Trade Executor
-
-# Force run outside market hours (testing)
-FORCE_MARKET_OPEN=1 docker compose up coordinator
-
-# Restart specific agent
-docker compose restart position-monitor
-
-# Stop all agents
-docker compose down
-
-# Rebuild and start (after code changes)
-docker compose build --no-cache
-docker compose up -d
-
-# Run legacy agent (deprecated — do NOT run with MCP agents)
-docker compose --profile legacy up agent-legacy
+source venv/bin/activate
 
 # ─────────────────────────────────────────────────────────────────
 # SERVICE MANAGEMENT
@@ -629,10 +555,8 @@ sudo systemctl status opend
 tail -f /root/opend/logs/*.log
 
 # ─────────────────────────────────────────────────────────────────
-# LEGACY AGENT OPERATIONS (deprecated — use Docker MCP instead)
+# AGENT OPERATIONS
 # ─────────────────────────────────────────────────────────────────
-
-source venv/bin/activate
 
 # Run agent manually
 python3 agent.py --force
@@ -802,12 +726,7 @@ catalyst-consciousness:get_all_positions
 | "No quote data" | Market closed | Check HKEX hours (09:30-16:00 HKT) |
 | "Rate limit exceeded" | Too many API calls | Wait 30s, use batch APIs |
 | "Position not found" | Symbol format | Check .HK suffix handling |
-| Agent not running | Cron issue (legacy) | Check `crontab -l`, verify paths |
-| MCP agent unhealthy | Container crash | `docker compose restart <agent>` |
-| Coordinator not connecting | MCP agents not ready | Check `docker compose ps`, verify health checks |
-| Duplicate positions | Running legacy + MCP simultaneously | Stop one mode — never run both |
-| Position Monitor stale | Container stopped | `docker compose restart position-monitor` |
-| Trade Executor error | DB connection pool exhausted | Check PostgreSQL connections, restart executor |
+| Agent not running | Cron issue | Check `crontab -l`, verify paths |
 
 ### 8.2 US System Issues
 
@@ -834,17 +753,12 @@ catalyst-consciousness:get_all_positions
 
 ### 9.1 Emergency Close All Positions
 
-**HKEX (Multi-Agent MCP — preferred):**
+**HKEX:**
 ```bash
 ssh root@137.184.244.45
 cd /root/Catalyst-Trading-System-International/catalyst-international
-
-# Via Trade Executor MCP (if agents running)
-# Coordinator will call close_all via Trade Executor
-docker compose logs -f trade-executor  # Watch for execution
-
-# If agents not responding — direct Python:
 source venv/bin/activate
+
 python3 -c "
 from brokers.moomoo import MoomooClient
 client = MoomooClient(paper_trading=True)
@@ -866,16 +780,7 @@ curl -X POST http://localhost:5005/api/v1/positions/close_all \
 
 ### 9.2 Stop All Trading
 
-**HKEX (Multi-Agent MCP):**
-```bash
-# Stop all Docker agents
-docker compose down
-
-# Also stop OpenD if full shutdown needed
-systemctl stop opend
-```
-
-**HKEX (Legacy — if running):**
+**HKEX:**
 ```bash
 # Disable cron jobs
 crontab -r
@@ -930,24 +835,17 @@ crontab /path/to/crontab-file
 
 | File | Version | Last Updated |
 |------|---------|--------------|
-| agent.py (legacy) | 2.2.0 | 2026-01-02 |
-| tool_executor.py (legacy) | 2.2.1 | 2026-01-06 |
+| agent.py | 2.2.0 | 2026-01-02 |
+| tool_executor.py | 2.2.1 | 2026-01-06 |
 | brokers/moomoo.py | 1.2.1 | 2026-01-06 |
 | data/patterns.py | 1.1.0 | 2026-01-06 |
 | data/market.py | 2.1.1 | 2026-01-06 |
 | signals.py | 1.1.0 | 2026-01-06 |
 | consciousness_notify.py | 1.1.0 | 2026-01-06 |
-| position_monitor.py (legacy) | 1.1.0 | 2026-01-06 |
-| agents/coordinator/coordinator.py | 1.0.0 | 2026-02-07 |
-| agents/coordinator/system_prompt.py | 1.0.0 | 2026-02-07 |
-| agents/position-monitor/mcp_server.py | 1.0.0 | 2026-02-07 |
-| agents/position-monitor/monitor.py | 1.0.0 | 2026-02-07 |
-| agents/market-scanner/mcp_server.py | 1.0.0 | 2026-02-07 |
-| agents/trade-executor/mcp_server.py | 1.0.0 | 2026-02-07 |
-| docker-compose.yml | 2.0.0 | 2026-02-07 |
+| position_monitor.py | 1.1.0 | 2026-01-06 |
 
 ---
 
-**END OF OPERATIONS GUIDE v2.0.0**
+**END OF OPERATIONS GUIDE v1.0.0**
 
 *Catalyst Trading System - "Enable the poor through accessible trading systems"*

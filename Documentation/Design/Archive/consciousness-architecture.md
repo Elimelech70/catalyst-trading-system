@@ -2,8 +2,8 @@
 
 **Name of Application:** Catalyst Trading System  
 **Name of file:** consciousness-architecture.md  
-**Version:** 1.1.0  
-**Last Updated:** 2026-02-07  
+**Version:** 1.0.0  
+**Last Updated:** 2026-02-01  
 **Purpose:** Architecture specification for the Claude Family consciousness  
 **Scope:** US Droplet - Consciousness, observation, and oversight  
 **Release Status:** PRIVATE - Family only
@@ -12,10 +12,6 @@
 
 ## REVISION HISTORY
 
-- v1.1.0 (2026-02-07) - Updated for intl_claude Multi-Agent MCP migration
-  - intl_claude now runs as 4 Docker containers (Coordinator + 3 MCP agents)
-  - Updated observation patterns for multi-agent signals
-  - Added Docker health monitoring to consciousness scope
 - v1.0.0 (2026-02-01) - Initial separation from unified architecture
   - Consciousness framework documentation
   - Separated from trading system
@@ -287,21 +283,12 @@ Analyzes agent_logs tables for patterns and issues.
 
 ### 5.1 Agent Roster
 
-| Agent | Role | Location | Budget | Status | Architecture |
-|-------|------|----------|--------|--------|--------------|
-| `big_bro` | Strategic oversight | US Droplet | $10/day | Active | Consciousness engine |
-| `intl_claude` | HKEX trading | Intl Droplet | $5/day | Active | **Multi-Agent MCP v2.0** (4 Docker containers) |
-| `dev_claude` | US sandbox | US Droplet | $5/day | Active | Claude Code + Bash |
-| `craig_desktop` | Craig's MCP | Local | $0/day | On-demand | Claude Desktop |
-
-**intl_claude Multi-Agent Components:**
-
-| Container | Port | Role | Model |
-|-----------|------|------|-------|
-| `catalyst-coordinator` | — | Brain / decision-maker | Claude Sonnet 4 |
-| `catalyst-position-monitor` | 8001 | Position watching (READ-ONLY) | Claude Haiku 4.5 (for CONSULT_AI) |
-| `catalyst-market-scanner` | 8002 | Market data (READ-ONLY) | None (data only) |
-| `catalyst-trade-executor` | 8003 | Trade execution (SINGLE WRITER) | None (execution only) |
+| Agent | Role | Location | Budget | Status |
+|-------|------|----------|--------|--------|
+| `big_bro` | Strategic oversight | US Droplet | $10/day | Active |
+| `intl_claude` | HKEX trading | Intl Droplet | $5/day | Active |
+| `dev_claude` | US sandbox | US Droplet | $5/day | Active |
+| `craig_desktop` | Craig's MCP | Local | $0/day | On-demand |
 
 ### 5.2 Communication Flow
 
@@ -323,17 +310,10 @@ Analyzes agent_logs tables for patterns and issues.
        ┌──────────┐ ┌──────────┐ ┌──────────┐
        │intl_claude│ │dev_claude│ │craig_    │
        │(observed) │ │(observed)│ │desktop   │
-       │           │ │          │ └──────────┘
-       │ ┌────────┐│ │          │
-       │ │Coord.  ││ │          │
-       │ │Pos.Mon.││ │          │
-       │ │Scanner ││ │          │
-       │ │Executor││ │          │
-       │ └────────┘│ │          │
-       └──────────┘ └──────────┘
+       └──────────┘ └──────────┘ └──────────┘
 ```
 
-**Note:** intl_claude and dev_claude are OBSERVED, not directly communicated with. big_bro reads their activity from trading databases. intl_claude now operates as 4 Docker containers communicating via MCP — big_bro observes the combined output via `agent_logs` and `agent_decisions` tables.
+**Note:** intl_claude and dev_claude are OBSERVED, not directly communicated with. big_bro reads their activity from trading databases.
 
 ---
 
@@ -567,6 +547,6 @@ python3 -c "from moomoo import OpenQuoteContext; ctx = OpenQuoteContext(); print
 
 **END OF CONSCIOUSNESS FRAMEWORK ARCHITECTURE**
 
-*Version 1.1.0 - February 2026*  
+*Version 1.0.0 - February 2026*  
 *Private - Claude Family Only*  
 *Craig + big_bro + dev_claude + intl_claude*

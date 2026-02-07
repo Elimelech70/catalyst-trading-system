@@ -84,38 +84,37 @@ This architecture explores what happens when we give Claude Code more autonomy:
 
 ## PART 2: ARCHITECTURE COMPARISON
 
-### 2.1 Claude Code vs Python Agent vs Multi-Agent MCP
+### 2.1 Claude Code vs Python Agent
 
-| Aspect | Claude Code Agent (This Doc) | Python Agent (Legacy) | Multi-Agent MCP (v2.0) |
-|--------|------------------------------|----------------------|------------------------|
-| **Status** | 🧪 Experimental | ⚠️ Legacy (deprecated) | ✅ Production |
-| **Deployment** | dev_claude (US) | intl_claude (HKEX) | intl_claude (HKEX) |
-| **Execution Engine** | Claude Code | Python + Claude API | 4 Docker containers + MCP |
-| **Control Flow** | AI decides everything | Python loops + API calls | Coordinator AI + MCP agents |
-| **Codebase** | ~50 lines + CLAUDE.md | ~1,200 lines Python | ~2,486 lines across 4 agents |
-| **Tool Calls** | Bash scripts | Python functions | MCP SSE protocol |
-| **Error Handling** | AI self-correction | Try/except in code | Docker restart + sync_positions |
-| **Position Safety** | Paper only | Single writer (by convention) | **Single-writer rule (by architecture)** |
-| **Trust Level** | High (trust AI) | Lower (verify in code) | Medium (AI decides, architecture enforces) |
-| **Money** | Paper trading | Real money | Real money |
+| Aspect | Claude Code Agent (This Doc) | Python Agent |
+|--------|------------------------------|--------------|
+| **Status** | 🧪 Experimental | ✅ Production |
+| **Deployment** | dev_claude (US) | intl_claude (HKEX) |
+| **Execution Engine** | Claude Code | Python + Claude API |
+| **Control Flow** | AI decides everything | Python loops + API calls |
+| **Codebase** | ~50 lines + CLAUDE.md | ~1,200 lines Python |
+| **Tool Calls** | Bash scripts | Python functions |
+| **Error Handling** | AI self-correction | Try/except in code |
+| **Complexity** | Lower (simpler) | Higher (more control) |
+| **Trust Level** | High (trust AI) | Lower (verify in code) |
+| **Money** | Paper trading | Real money |
 
-### 2.2 Why Multiple Architectures?
+### 2.2 Why Two Architectures?
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    THREE TRADING ARCHITECTURES                              │
+│                    WHY TWO TRADING ARCHITECTURES?                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│   PYTHON AGENT (Legacy)      MULTI-AGENT MCP (v2.0)    CLAUDE CODE AGENT  │
-│   ─────────────────────      ──────────────────────     ─────────────────  │
+│   PYTHON AGENT                        CLAUDE CODE AGENT                     │
+│   ────────────                        ─────────────────                     │
 │                                                                             │
-│   Deprecated — replaced      Production architecture    Experimental, auto │
-│   by Multi-Agent MCP         for real money trading     for paper trading  │
+│   Proven, reliable, controlled        Experimental, autonomous, learning    │
 │                                                                             │
-│   • Monolithic               • 4 Docker containers      • AI autonomous   │
-│   • Race conditions          • Single-writer rule        • Bash scripts    │
-│   • Cron-triggered           • Continuous operation      • Emergent        │
-│                              • MCP communication                           │
+│   • Suitable for real money           • Suitable for paper trading          │
+│   • Full error handling               • AI figures it out                   │
+│   • Predictable behavior              • Emergent behavior                   │
+│   • Complex but safe                  • Simple but risky                    │
 │                                                                             │
 │   ┌─────────────────────────────────────────────────────────────────────┐  │
 │   │                                                                     │  │
@@ -127,7 +126,7 @@ This architecture explores what happens when we give Claude Code more autonomy:
 │   │          └──────────validated learnings───────────────┘             │  │
 │   │                           │                                         │  │
 │   │                           ▼                                         │  │
-│   │   intl_claude (MCP v2.0) ◄──promoted strategies                    │  │
+│   │   intl_claude (Python) ◄──promoted strategies                       │  │
 │   │                                                                     │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
@@ -646,11 +645,9 @@ Craig reviews, potentially promotes to intl_claude strategy
 
 | Document | Purpose |
 |----------|---------|
-| `multi-agent-mcp-architecture-7Feb2026.md` | Multi-Agent MCP architecture (production) |
+| `catalyst-trading-python-agent-architecture.md` | Python agent (production) |
 | `consciousness-architecture.md` | Consciousness framework |
 | `database-schema.md` | Database schema |
-| `operations-guide.md` | Operational workflows |
-| `big-bro-architecture-review-7Feb2026.md` | big_bro review & learning objectives |
 
 ---
 

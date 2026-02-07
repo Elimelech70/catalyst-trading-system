@@ -2,8 +2,8 @@
 
 **Name of Application:** Catalyst Trading System  
 **Name of file:** database-schema.md  
-**Version:** 11.0.0  
-**Last Updated:** 2026-02-01  
+**Version:** 12.0.0  
+**Last Updated:** 2026-02-07  
 **Purpose:** Complete database schema for all three Catalyst databases  
 **Source:** Extracted from schema-catalyst-trading.sql and schema-consciousness.sql
 
@@ -13,6 +13,7 @@
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| v12.0.0 | 2026-02-07 | Craig + Claude | Multi-agent MCP: added agent_decisions, position_monitor_status acknowledgment fields |
 | v11.0.0 | 2026-02-01 | Craig + Claude | Major consolidation - Trading/Consciousness separation |
 | v10.5.0 | 2026-01-18 | Craig + Claude | Added service_health table |
 | v10.0.0 | 2026-01-10 | Craig + Claude | Three-database architecture |
@@ -96,10 +97,14 @@ Allocation:
 │   └── big_bro + public_claude + dashboard + MCP = ~8
 ├── catalyst_dev (dev_claude)
 │   └── unified_agent + position_monitor = ~5
-├── catalyst_intl (intl_claude)
-│   └── unified_agent + position_monitor = ~5
+├── catalyst_intl (intl_claude — Multi-Agent MCP v2.0)
+│   ├── Position Monitor: asyncpg pool (2-5 connections)
+│   ├── Trade Executor: psycopg2 ThreadedConnectionPool (~3-5)
+│   ├── Market Scanner: 0 (no DB access)
+│   ├── Coordinator: 0 (accesses DB via MCP agents)
+│   └── Subtotal: ~5-10
 ├── Buffer
-│   └── ~29 connections headroom
+│   └── ~24-29 connections headroom
 ```
 
 ---
@@ -343,7 +348,7 @@ CREATE INDEX idx_agent_logs_errors ON agent_logs(timestamp DESC)
 
 ### 2.9 position_monitor_status
 
-Real-time position monitoring state.
+Real-time position monitoring state. Under Multi-Agent MCP v2.0, this is the **communication interface** between Position Monitor (writer) and Coordinator (reader). The acknowledgment pattern prevents double-processing of recommendations.
 
 ```sql
 CREATE TABLE IF NOT EXISTS position_monitor_status (
@@ -358,15 +363,24 @@ CREATE TABLE IF NOT EXISTS position_monitor_status (
     current_signals JSONB,
     last_signal_type VARCHAR(50),
     last_signal_strength VARCHAR(20),
-    recommendation VARCHAR(50),
+    recommendation VARCHAR(50),              -- EXIT, CONSULT_AI, HOLD
     recommendation_reason TEXT,
+    acknowledged BOOLEAN DEFAULT FALSE,       -- Set by Coordinator after acting
+    acknowledged_at TIMESTAMPTZ,              -- When Coordinator acknowledged
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_position_monitor_position ON position_monitor_status(position_id);
 CREATE INDEX idx_position_monitor_status ON position_monitor_status(status);
+CREATE INDEX idx_position_monitor_unacked ON position_monitor_status(acknowledged)
+    WHERE acknowledged = FALSE AND recommendation IN ('EXIT', 'CONSULT_AI');
 ```
+
+**MCP v2.0 Behavior:**
+- Position Monitor upserts recommendations; resets `acknowledged = FALSE` when recommendation changes
+- Coordinator reads unacknowledged EXIT/CONSULT_AI recommendations via `get_exit_recommendations`
+- After acting, Coordinator calls `acknowledge_recommendation` to set `acknowledged = TRUE`
 
 ### 2.10 service_health
 
@@ -386,6 +400,37 @@ CREATE TABLE IF NOT EXISTS service_health (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+```
+
+### 2.11 agent_decisions (NEW — Multi-Agent MCP v2.0)
+
+Coordinator decision audit trail. Records every decision made by the Coordinator during scan and exit cycles, including which MCP agent provided the data.
+
+```sql
+CREATE TABLE IF NOT EXISTS agent_decisions (
+    id SERIAL PRIMARY KEY,
+    cycle_id VARCHAR(50),
+    decision_type VARCHAR(50) NOT NULL,       -- scan, entry, exit, hold, skip, close
+    symbol VARCHAR(20),
+    action VARCHAR(50),                        -- buy, sell, hold, close, skip
+    reasoning TEXT,
+    confidence DECIMAL(3,2),
+    tier VARCHAR(20),                          -- tier_1, tier_2, tier_3, none
+    data_sources JSONB,                        -- {position_monitor: {...}, market_scanner: {...}}
+    risk_check_result JSONB,                   -- Result from check_risk
+    position_id INTEGER REFERENCES positions(position_id),
+    order_id INTEGER REFERENCES orders(order_id),
+    model_used VARCHAR(100),                   -- claude-sonnet-4-20250514
+    tokens_used INTEGER,
+    cost_usd DECIMAL(10,6),
+    execution_time_ms INTEGER,                 -- Time from decision to execution
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_decisions_cycle ON agent_decisions(cycle_id);
+CREATE INDEX idx_agent_decisions_symbol ON agent_decisions(symbol);
+CREATE INDEX idx_agent_decisions_type ON agent_decisions(decision_type);
+CREATE INDEX idx_agent_decisions_created ON agent_decisions(created_at DESC);
 ```
 
 ---
@@ -618,6 +663,104 @@ CREATE TABLE IF NOT EXISTS sync_log (
 );
 ```
 
+### 3.9 transaction_learnings (NEW — Active Learning v1.0)
+
+Full-context transaction records for pattern recognition. Every entry and exit is recorded with signals, news, market context, and outcome — enabling big_bro to correlate patterns across dimensions.
+
+```sql
+CREATE TABLE IF NOT EXISTS transaction_learnings (
+    id SERIAL PRIMARY KEY,
+    transaction_type VARCHAR(10) NOT NULL,     -- ENTRY, EXIT
+    symbol VARCHAR(20) NOT NULL,
+    sector VARCHAR(50),
+    country_exposure VARCHAR(50),
+    
+    -- Entry context
+    entry_tier VARCHAR(20),
+    entry_signal JSONB,                        -- Full signal data at entry
+    entry_market_context JSONB,                -- HSI, sector performance, session
+    entry_news_context JSONB,                  -- Headlines, sentiment at entry
+    
+    -- Position data
+    entry_price DECIMAL(18,4),
+    exit_price DECIMAL(18,4),
+    quantity INTEGER,
+    hold_duration_minutes INTEGER,
+    
+    -- Outcome (populated on exit)
+    realized_pnl DECIMAL(18,4),
+    realized_pnl_pct DECIMAL(8,4),
+    max_favorable_pct DECIMAL(8,4),
+    max_adverse_pct DECIMAL(8,4),
+    exit_signal_type VARCHAR(50),
+    exit_signal_source VARCHAR(50),
+    outcome VARCHAR(20),                       -- winner, loser, scratch
+    
+    -- During hold events
+    signals_during_hold JSONB,                 -- All signals fired while held
+    news_during_hold JSONB,                    -- News events during hold
+    
+    -- Correlation tags
+    tags TEXT[],                                -- Searchable tags for pattern matching
+    
+    -- Reference
+    position_id INTEGER,
+    source_database VARCHAR(50),
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_txn_learnings_symbol ON transaction_learnings(symbol);
+CREATE INDEX idx_txn_learnings_sector ON transaction_learnings(sector);
+CREATE INDEX idx_txn_learnings_outcome ON transaction_learnings(outcome);
+CREATE INDEX idx_txn_learnings_tags ON transaction_learnings USING GIN(tags);
+CREATE INDEX idx_txn_learnings_created ON transaction_learnings(created_at DESC);
+```
+
+### 3.10 news_correlations (NEW — Active Learning v1.0)
+
+News event correlation records. Every news event is classified by scope (security/sector/country/global), tagged with affected securities, and tracked for measured price and volume impact over time.
+
+```sql
+CREATE TABLE IF NOT EXISTS news_correlations (
+    id SERIAL PRIMARY KEY,
+    headline TEXT NOT NULL,
+    source VARCHAR(100),
+    sentiment_score DECIMAL(3,2),
+    published_at TIMESTAMPTZ,
+    
+    -- Classification
+    scope VARCHAR(20) NOT NULL,                -- security, sector, country, global
+    sector VARCHAR(50),
+    country VARCHAR(50),
+    securities_affected TEXT[],
+    
+    -- Measured impact (populated over time)
+    price_impact_15m JSONB,                    -- {symbol: pct_change, ...}
+    price_impact_1hr JSONB,
+    price_impact_4hr JSONB,
+    volume_impact_15m JSONB,                   -- {symbol: volume_ratio, ...}
+    volume_impact_1hr JSONB,
+    
+    -- Trade correlation
+    triggered_entries TEXT[],                   -- Symbols where this news triggered entry
+    entry_outcomes JSONB,                      -- {symbol: outcome, ...} updated after exits
+    
+    -- Learning
+    reliability_score DECIMAL(3,2),            -- Updated over time: did impact match sentiment?
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_news_corr_scope ON news_correlations(scope);
+CREATE INDEX idx_news_corr_sector ON news_correlations(sector);
+CREATE INDEX idx_news_corr_country ON news_correlations(country);
+CREATE INDEX idx_news_corr_securities ON news_correlations USING GIN(securities_affected);
+CREATE INDEX idx_news_corr_published ON news_correlations(published_at DESC);
+```
+
 ---
 
 ## PART 4: VIEWS
@@ -755,12 +898,13 @@ $$ LANGUAGE plpgsql;
 | **Trading DBs** | securities | Stock registry |
 | | positions | Holdings (NOT orders) |
 | | orders | Order history |
-| | decisions | AI decision audit |
+| | decisions | AI decision audit (legacy) |
+| | agent_decisions | Coordinator decision audit (MCP v2.0) |
 | | scan_results | Scanner candidates |
 | | trading_cycles | Session logs |
 | | patterns | Technical patterns |
 | | **agent_logs** | **Runtime logs (interface)** |
-| | position_monitor_status | Real-time monitoring |
+| | position_monitor_status | Real-time monitoring + acknowledgment |
 | | service_health | Service heartbeats |
 | **Consciousness** | claude_state | Agent status/budget |
 | | claude_messages | Inter-agent messages |
@@ -769,6 +913,8 @@ $$ LANGUAGE plpgsql;
 | | claude_questions | Open questions |
 | | claude_conversations | Key exchanges |
 | | claude_thinking | Extended thinking |
+| | transaction_learnings | Full-context trade records (active learning) |
+| | news_correlations | News impact tracking (active learning) |
 | | sync_log | Sync tracking |
 
 ### 6.2 Key Constraints
@@ -778,6 +924,8 @@ $$ LANGUAGE plpgsql;
 | Orders ≠ Positions | Order data ONLY in orders table |
 | agent_logs interface | Trading writes, consciousness reads |
 | Lot sizes | HKEX varies by stock, US always 1 |
+| **Single-Writer Rule (MCP v2.0)** | **Only Trade Executor writes to positions table** |
+| **Acknowledgment Pattern (MCP v2.0)** | **Coordinator acknowledges recommendations after acting** |
 
 ### 6.3 Common Queries
 
@@ -814,6 +962,6 @@ SELECT * FROM v_monitor_health;
 
 ---
 
-**END OF DATABASE SCHEMA v11.0.0**
+**END OF DATABASE SCHEMA v12.0.0**
 
 *Catalyst Trading System - Craig + The Claude Family - February 2026*
