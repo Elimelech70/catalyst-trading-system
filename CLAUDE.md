@@ -1,10 +1,20 @@
 # CLAUDE.md - Catalyst Trading System
 
-**Name of Application**: Catalyst Trading System
-**Name of file**: CLAUDE.md
-**Version**: 1.2.0
-**Last Updated**: 2025-12-11
-**Purpose**: Guidelines for Claude Code operating on production droplet
+**Name of Application**: Catalyst Trading System  
+**Name of file**: CLAUDE.md  
+**Version**: 2.0.0  
+**Last Updated**: 2026-03-29  
+**Purpose**: Guidelines for Claude Code (little_bro) operating on the production droplet  
+**Replaces**: v1.2.0 (2025-12-11) — microservices era, no longer accurate
+
+---
+
+## REVISION HISTORY
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v2.0.0 | 2026-03-29 | Full rewrite — reflects brain architecture, removes all microservices references |
+| v1.2.0 | 2025-12-11 | Original — microservices era (archived) |
 
 ---
 
@@ -12,236 +22,353 @@
 
 ### The Three Questions You MUST Ask First
 
-Before touching ANY code or making ANY recommendation:
-
 1. **What is my PURPOSE right now?**
-   - 🎯 Designing? → Need architecture docs, requirements, schemas
-   - 🔧 Implementing? → Need specific design doc, authoritative sources, exact specs
-   - 🐛 Troubleshooting? → Need logs, error messages, current state, what changed
+   - 🎯 Designing? → Read architecture docs from GitHub first
+   - 🔧 Implementing? → Get the specific design doc, verify schemas, then code
+   - 🐛 Troubleshooting? → Logs first, then state, then code
 
-2. **What QUALITY information do I need?**
-   - 📚 For design: Architecture docs, database schema, functional specs
-   - 📖 For implementation: Authoritative sources (Tier 1 only!), design doc version
-   - 🔍 For troubleshooting: Recent logs, error traces, last working state
+2. **Which system am I touching?**
+   - 🧠 `catalyst-agent/` → Brain architecture (hippocampus, occipital, cerebellum, PFC)
+   - 🌏 `catalyst-trading-system/services/` → Consciousness + dev_claude
+   - ⚠️ These are separate systems. Do not conflate them.
 
 3. **Am I FOCUSED or scattered?**
-   - ✅ Focused: One clear goal, minimal information, specific outcome
-   - ❌ Scattered: Multiple goals, too much context, vague direction
+   - ✅ One clear goal, specific outcome
+   - ❌ Multiple goals, vague direction → STOP and make a list first
 
-**NEVER do a quick solution if the issue is complex.** Complex = impacts multiple services, requires architecture changes, affects database schema.
-
----
-
-## 📁 Source of Truth: GitHub Design Documents
-
-Design documents and code files live in GitHub. **ALWAYS check these FIRST.**
-
-### Design Document Naming Convention
-```
-{design-document-name}.md
-
-Examples:
-  architecture.md
-  database-schema.md
-  functional-specification.md
-```
-
-**Finding the Latest Version**: Each design document contains a **header** with version information. Always check:
-- `Version:` field in header
-- `Last Updated:` date
-- `REVISION HISTORY:` section
-
-### Service File Naming Convention
-```
-{service-name}-service.py
-
-Examples:
-  orchestration-service.py
-  scanner-service.py
-  trading-service.py
-  risk-manager-service.py
-```
-
-### Key Design Documents (Read BEFORE implementing)
-
-| Document | Purpose | Location |
-|----------|---------|----------|
-| `architecture.md` | System architecture, service matrix | GitHub: Documentation/Design/ |
-| `database-schema.md` | 3NF normalized schema, helper functions | GitHub: Documentation/Design/ |
-| `functional-specification.md` | Functional specs, MCP tools, cron jobs | GitHub: Documentation/Design/ |
-
-**IMPORTANT**: Always check the header inside each file to confirm the current version.
+**NEVER do a quick fix on complex issues.** Complex = affects Docker containers, database schema, consciousness tables, or cron schedule.
 
 ---
 
-## 🏗️ System Architecture Overview
+## 📁 Source of Truth
 
-### Current Operational Model
+**Two separate codebases. Two separate sources of truth.**
 
-**CRON runs the trading system. Claude Code generates reports. GitHub is the bridge.**
+| System | Source of Truth | Notes |
+|--------|----------------|-------|
+| `catalyst-trading-system` | GitHub repo | Design docs, consciousness, dev_claude — version controlled |
+| `catalyst-agent` | Droplet only | `/root/catalyst-agent/` — NOT in GitHub |
+
+GitHub has no visibility into `catalyst-agent/`. Brain code changes are managed directly on the droplet. Do not assume GitHub reflects what is deployed in the brain containers.
+
+The authoritative architecture document (in GitHub) is:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  CRON (PRIMARY)     →  Services execute  →  Data in Database    │
-│         ↓                                                       │
-│  Claude Code        →  Queries DB        →  Generates Reports   │
-│         ↓                                                       │
-│  GitHub             ←  Reports pushed    ←  Analysis docs       │
-│         ↓                                                       │
-│  Claude Desktop     →  Reads from GitHub →  Reviews performance │
-└─────────────────────────────────────────────────────────────────┘
+Documentation/Design/catalyst-ai-architecture.md  (v2.0, 2026-03-29)
 ```
 
-### Role Definitions
+Always check the `Version:` and `Last Updated:` header inside each document. The filename does not contain the version — the header does.
 
-| Component | Role | What It Does |
-|-----------|------|--------------|
-| **Cron** | PRIMARY Operator | Schedules and triggers all trading workflows |
-| **Claude Code** | Analysis & Reporting | Generates reports, analysis docs, pushes to GitHub |
-| **GitHub** | Central Hub | Stores design docs, reports, analysis |
-| **Claude Desktop** | Monitoring | Reads reports from GitHub (NO direct droplet connection) |
-| **Services** | Execution | Execute trading logic when triggered by cron |
+---
 
-### What Does NOT Happen (Current State)
-❌ Claude Desktop does NOT connect directly to droplet services  
-❌ Claude Code does NOT run the trading system (future state)  
-❌ No MCP protocol connection between Claude Desktop and droplet  
-❌ No Nginx/HTTPS exposure needed  
+## 🏗️ What Is Actually Running
 
-### 8-Service Microservices Architecture
+The droplet runs **two separate systems**. Understand both before touching anything.
 
-| # | Service | Port | Purpose | Triggered By |
-|---|---------|------|---------|--------------|
-| 1 | Workflow | 5006 | Orchestrates trading workflows | Cron |
-| 2 | Scanner | 5001 | Stock scanning & candidate filtering | Workflow |
-| 3 | Pattern | 5002 | Chart pattern recognition | Scanner |
-| 4 | Technical | 5003 | Technical indicators (RSI, MACD, etc.) | Scanner |
-| 5 | Risk Manager | 5004 | Position validation, emergency stops | Trading |
-| 6 | Trading | 5005 | Alpaca API execution | Workflow |
-| 7 | News | 5008 | News sentiment analysis | Scanner |
-| 8 | Reporting | 5009 | Performance reports | Cron, Claude Code |
+### System 1: The Brain (catalyst-agent)
 
-**Note**: Redis (6379) runs as infrastructure, not counted as a service.
+The v8 brain architecture. Three Docker containers + coordinator on host.
 
-### Infrastructure
-- **Droplet**: Single DigitalOcean droplet
-- **Database**: DigitalOcean Managed PostgreSQL (3NF normalized schema)
-- **Cache**: Redis (Docker container)
-- **Location**: Perth timezone (AWST) → US markets (EST)
+```
+/root/catalyst-agent/
+├── docker-compose.yml
+├── CLAUDE.md              ← Identity document (Archetype) for big_bro
+├── pfc/
+│   └── agent.py           ← Legacy PFC — being superseded by coordinator.py
+├── coordinator.py         ← THE BRAIN — runs the 6-layer cycle (v8)
+├── hippocampus/           ← Memory binding — Docker container
+├── occipital/             ← Pattern recognition — Docker container
+├── cerebellum/            ← Procedure execution — Docker container
+└── shared/                ← Shared modules (db.py, models.py, config.py)
+```
 
-## 📊 Claude Code Responsibilities
+**Running containers:**
 
-### Primary Tasks
+| Container | Image | Purpose | Health |
+|-----------|-------|---------|--------|
+| catalyst-hippocampus | catalyst-agent-hippocampus | Memory binding, combined pictures | Healthy |
+| catalyst-occipital | catalyst-agent-occipital | Candlestick + volume pattern recognition | Healthy |
+| catalyst-cerebellum | catalyst-agent-cerebellum | Procedure execution, Alpaca broker | Healthy |
 
-1. **Generate Reports** (triggered by cron or manually)
-   - Daily trading reports
-   - Weekly performance summaries
-   - Scan analysis documents
-   - Risk event reviews
+**The nervous system (SQLite on host):**
 
-2. **Push to GitHub**
-   - All reports go to `Documentation/Reports/`
-   - Analysis docs go to `Documentation/Analysis/`
-   - Design doc updates go to `Documentation/Design/`
+```
+/var/lib/catalyst/db/agent.db         # communication, pfc_state, principles
+/var/lib/catalyst/hippocampus/memory.db  # learnings, memory_bindings, combined_picture
+```
 
-3. **Database Queries**
-   - Query trading data for reports
-   - Analyze patterns and performance
-   - Extract metrics for analysis
-
-### Report Generation Commands
+**Coordinator runs on host, triggered by cron (future — not yet scheduled).** To run manually:
 
 ```bash
-# Generate daily report
-claude "Generate daily trading report for $(date +%Y-%m-%d) and push to GitHub"
-
-# Generate weekly summary
-claude "Generate weekly performance summary and push to GitHub"
-
-# Analyze specific scan
-claude "Analyze today's scan results and create analysis document"
+cd /root/catalyst-agent
+python3 coordinator.py --mode heartbeat
+python3 coordinator.py --mode scan
+python3 coordinator.py --mode trade
 ```
 
-### GitHub Repository Structure
+**The .env file is symlinked:**
+
+```bash
+/root/catalyst-agent/.env → /root/catalyst-trading-system/.env
+```
+
+⚠️ **Do NOT delete or move catalyst-trading-system/.env** — the brain loses all credentials.
+
+---
+
+### System 2: Consciousness + dev_claude (catalyst-trading-system)
+
+The consciousness framework and US sandbox agent. Runs via cron.
 
 ```
-catalyst-trading-system/
+/root/catalyst-trading-system/
+├── .env                              ← MASTER credentials file (symlinked by brain)
+├── CLAUDE.md                         ← This file
+├── services/
+│   ├── consciousness/
+│   │   ├── heartbeat_bigbro.py       ← big_bro hourly consciousness cycle
+│   │   ├── run-heartbeat.sh          ← Called by cron (every hour)
+│   │   ├── run-heartbeat-public.sh   ← public_claude heartbeat (:15 past hour)
+│   │   └── mcp_server.py             ← MCP server for Craig's desktop
+│   └── dev_claude/
+│       ├── unified_agent.py          ← US sandbox agent (Alpaca, paper trading)
+│       ├── signals.py                ← Exit signal detection
+│       └── config/
+│           └── exit_context.yaml     ← Hot-reloadable exit thresholds
 ├── Documentation/
 │   ├── Design/
-│   │   ├── architecture.md
-│   │   ├── database-schema.md
-│   │   └── functional-specification.md
+│   │   └── UNIFIED-ARCHITECTURE.md  ← Authoritative architecture (v10.6.0)
 │   ├── Reports/
-│   │   ├── daily/
-│   │   │   └── trading-report-YYYY-MM-DD.md
-│   │   └── weekly/
-│   │       └── performance-YYYY-WW.md
 │   └── Analysis/
-│       ├── patterns/
-│       └── risk/
-├── services/
 ├── scripts/
-├── CLAUDE.md
-└── docker-compose.yml
+├── archive/                          ← Retired microservices (DO NOT USE)
+└── backups/                          ← Daily DB backups
+```
+
+**Also on this droplet (separate repo):**
+
+```
+/root/claude-code-viewer/             ← Code viewer tool (Docker, running)
 ```
 
 ---
 
-## 🗄️ Database Schema Rules (3NF Normalized)
+## 📡 Cron Schedule (Active)
 
-### CRITICAL: Normalization Rules
+```
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+SHELL=/bin/bash
+HOME=/root
+CATALYST_HOME=/root/catalyst-trading-system
 
-**Rule #1: Symbol stored ONLY in `securities` table**
+# Database backup — 10:00 AWST daily
+0 10 * * 1-5   pg_dump → /root/catalyst-trading-system/backups/
+
+# Log rotation — 06:00 AWST daily
+0 6 * * *      find /var/log/catalyst -name "*.log" -mtime +7 -delete
+
+# Consciousness heartbeat — hourly (big_bro)
+0 * * * *      run-heartbeat.sh → /var/log/catalyst/heartbeat.log
+
+# Daily budget reset — 00:00 AWST
+0 0 * * *      UPDATE claude_state SET api_spend_today = 0
+
+# public_claude heartbeat — :15 past hour
+15 * * * *     run-heartbeat-public.sh → /var/log/catalyst/heartbeat-public.log
+```
+
+**Nothing in cron touches catalyst-agent directly.** PFC triggering is future work.
+
+---
+
+## 🗄️ Databases
+
+Three databases on the shared PostgreSQL instance:
+
+| Database | Purpose | Used By |
+|----------|---------|---------|
+| `catalyst_research` | Consciousness framework | big_bro, intl_claude, public_claude |
+| `catalyst_intl` | HKEX production trading | intl_claude (on INTL droplet) |
+| `catalyst_dev` | US sandbox trading | dev_claude |
+
+**Consciousness tables (catalyst_research):**
+
+| Table | Purpose |
+|-------|---------|
+| `claude_state` | Agent mode, budget, last wake |
+| `claude_messages` | Inter-agent communication |
+| `claude_observations` | Market observations |
+| `claude_learnings` | Validated learnings |
+| `claude_questions` | Open questions |
+| `claude_conversations` | Conversation history |
+| `claude_thinking` | Extended thinking sessions |
+| `consciousness_sync_log` | Sync status |
+
+**Environment variable for each database:**
+
+```bash
+$RESEARCH_DATABASE_URL   # catalyst_research (consciousness)
+$DATABASE_URL            # catalyst_dev (US sandbox)
+$INTL_DATABASE_URL       # catalyst_intl (HKEX production — on INTL droplet)
+```
+
+### Database Rules
+
+**Rule 1: Orders ≠ Positions (ARCHITECTURE-RULES — non-negotiable)**
+
+A position is a holding. An order is a transaction. They are different tables.
+
 ```sql
--- ✅ CORRECT: Use security_id everywhere
-SELECT s.symbol, th.close
-FROM trading_history th
-JOIN securities s ON s.security_id = th.security_id;
+-- CORRECT: positions table holds the holding
+-- CORRECT: orders table holds each buy/sell instruction
 
--- ❌ WRONG: No symbol column in fact tables
-SELECT symbol, close FROM trading_history;  -- ERROR!
+-- WRONG: storing order data in positions table
+-- WRONG: storing position state in orders table
 ```
 
-**Rule #2: Use Helper Functions**
-```python
-# Get or create security_id
-security_id = await db.fetchval(
-    "SELECT get_or_create_security($1)", symbol
-)
+**Rule 2: security_id FK everywhere**
 
-# Get or create time_id  
-time_id = await db.fetchval(
-    "SELECT get_or_create_time($1)", timestamp
-)
+```sql
+-- CORRECT: join through securities
+SELECT s.symbol FROM positions p JOIN securities s ON s.security_id = p.security_id;
+
+-- WRONG: symbol column in fact tables
+SELECT symbol FROM positions;  -- ERROR
 ```
 
-**Rule #3: Verify Column Names Against ACTUAL Database**
+**Rule 3: Always verify against deployed schema, not just docs**
 
-Before writing any INSERT/UPDATE:
-1. Check actual table schema: `\d table_name`
-2. Verify column names match exactly
-3. Test query against dev/paper database first
+```bash
+psql $DATABASE_URL -c "\d positions"
+psql $DATABASE_URL -c "\d orders"
+```
 
-### Known Schema Mismatches (Lessons Learned)
+---
 
-| Design Doc Column | Actual DB Column | Table |
-|------------------|------------------|-------|
-| `price_at_scan` | `price` | scan_results |
-| `volume_at_scan` | `volume` | scan_results |
-| `rank_in_scan` | `rank` | scan_results |
-| `final_candidate` | `selected_for_trading` | scan_results |
-| `cycle_date` | (removed) | trading_cycles |
-| `cycle_number` | (removed) | trading_cycles |
-| `session_mode` | `mode` | trading_cycles |
-| `scan_completed_at` | `stopped_at` | trading_cycles |
+## 🧠 Brain Architecture — How It Works
 
-**ALWAYS verify against deployed database, not just design docs.**
+The brain implements v8 architecture. Read `Documentation/Design/catalyst-ai-architecture.md` for full detail.
+
+### The 6-Layer Cycle (coordinator.py)
+
+```
+coordinator.py runs the cycle on each wake:
+│
+├── Layer 1: HEARTBEAT     — Am I alive? Are organs responding?
+├── Layer 2: STATE         — Who am I right now? Load archetype + mode
+├── Layer 3: SELF-REG      — Should I be active? Budget, market hours, risk limits
+├── Layer 4: WORKING MEM   — What have I noticed? Signals + learnings assembled
+├── Layer 5: INTER-AGENT   — How is the body? Organ health check
+├── Layer 6: VOICE         — What must Craig know? Alerts if needed
+│
+└── DECISION ENGINE        — Claude API call with full assembled context
+      └── MEMORY MANAGER   — Record outcomes, update synaptic weights
+```
+
+### Synaptic Learning (v8)
+
+```
+Trade executed → position closed → outcome recorded in pattern_outcomes
+  → Learning cycle runs
+      → LTP (win): confidence of triggering pattern increases
+      → LTD (loss): confidence decreases
+          → pattern_confidence weights updated
+              → coordinator loads updated weights each cycle
+```
+
+### Communication Table (the nervous system)
+
+All inter-component communication flows through SQLite:
+
+```bash
+# View recent signals
+sqlite3 /var/lib/catalyst/db/agent.db \
+  "SELECT id, direction, source, target, msg_type, status FROM communication ORDER BY id DESC LIMIT 10;"
+
+# View coordinator state
+sqlite3 /var/lib/catalyst/db/agent.db \
+  "SELECT agent_id, current_mode, session_count FROM pfc_state;"
+
+# View learnings
+sqlite3 /var/lib/catalyst/hippocampus/memory.db \
+  "SELECT learning_id, domain, title, confidence FROM learnings ORDER BY confidence DESC;"
+```
+
+### Coordinator Modes
+
+| Mode | What Happens |
+|------|-------------|
+| `sleeping` | Idle, waiting for trigger |
+| `heartbeat` | Health check — verify all organs online |
+| `scan` | Pattern scan via occipital |
+| `trade` | Full cycle: scan → filter → risk → execute |
+| `monitor` | Review portfolio, process results |
+| `learn` | Analyze outcomes, update synaptic weights |
+| `emergency` | Something is critically wrong |
+
+---
+
+## 🔧 Common Operations
+
+### Check Brain Status
+
+```bash
+# Are all containers running and healthy?
+cd /root/catalyst-agent && docker compose ps
+
+# Recent container logs
+docker logs catalyst-occipital --tail 30
+docker logs catalyst-cerebellum --tail 30
+docker logs catalyst-hippocampus --tail 30
+
+# Rebuild after code changes
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+### Check Consciousness
+
+```bash
+# Agent states
+psql "$RESEARCH_DATABASE_URL" -c \
+  "SELECT agent_id, current_mode, api_spend_today, status_message FROM claude_state;"
+
+# Recent messages between agents
+psql "$RESEARCH_DATABASE_URL" -c \
+  "SELECT from_agent, to_agent, message_type, created_at FROM claude_messages ORDER BY created_at DESC LIMIT 10;"
+
+# Recent learnings
+psql "$RESEARCH_DATABASE_URL" -c \
+  "SELECT agent_id, learning, confidence FROM claude_learnings ORDER BY created_at DESC LIMIT 10;"
+```
+
+### Check Cron Health
+
+```bash
+tail -50 /var/log/catalyst/heartbeat.log
+tail -50 /var/log/catalyst/heartbeat-public.log
+tail -50 /var/log/catalyst/backup.log
+```
+
+### Emergency: Stop Everything
+
+```bash
+# Stop brain containers
+cd /root/catalyst-agent && docker compose down
+
+# Disable cron
+crontab -r
+
+# Restore cron from backup
+crontab /root/catalyst-trading-system/crontab-backup-20251216-165408.txt
+```
 
 ---
 
 ## 📜 File Header Standard
 
-ALL artifacts MUST have this header:
+ALL files must have this header:
 
 ```python
 """
@@ -252,500 +379,140 @@ Last Updated: YYYY-MM-DD
 Purpose: Brief description
 
 REVISION HISTORY:
-vX.Y.Z (YYYY-MM-DD) - Description of changes
-- Specific change 1
-- Specific change 2
-
-Description:
-Extended description of what this file does.
+vX.Y.Z (YYYY-MM-DD) - Description
+- Change 1
+- Change 2
 """
 ```
 
-### Version Numbering
-- **Major (X)**: Breaking changes, architecture changes
-- **Minor (Y)**: New features, significant updates
-- **Patch (Z)**: Bug fixes, schema alignment fixes
+Version numbering:
+- **Major**: Breaking changes, architecture changes
+- **Minor**: New features
+- **Patch**: Bug fixes
 
 ---
 
-## 🔧 Implementation Workflow
+## 🚨 Lessons Learned — DO NOT REPEAT
 
-### Before ANY Code Change
+### Lesson 1: Order Side Bug — CRITICAL
 
-1. **Identify the service(s) affected**
-2. **Read the relevant design doc** from GitHub
-3. **Check current deployed version** in Docker container
-4. **Verify database schema** matches your expectations
-5. **Plan the change** - if complex, list steps in priority order
+**Problem**: "long" positions placed as SHORT sells (81 positions, Nov-Dec 2025)  
+**Root Cause**: `side == "buy"` didn't handle `side="long"`  
+**Solution**: Always use `_normalize_side()` which maps `long→buy`, `short→sell`, `buy→buy`, `sell→sell`  
+**Rule**: NEVER use a simple ternary for order side. NEVER assume only "buy"/"sell" are valid inputs.
 
-### For Troubleshooting
+### Lesson 2: Schema Mismatch
 
-1. **Check logs first**:
-   ```bash
-   docker logs catalyst-{service}-1 --tail 100
-   tail -n 100 /var/log/catalyst/{service}.log
-   ```
-
-2. **Check service health**:
-   ```bash
-   curl http://localhost:{port}/health
-   docker-compose ps
-   ```
-
-3. **Check database state**:
-   ```bash
-   psql $DATABASE_URL -c "SELECT * FROM {table} ORDER BY created_at DESC LIMIT 10;"
-   ```
-
-4. **What changed recently?**:
-   ```bash
-   git log --oneline -10
-   docker-compose logs --since 1h
-   ```
-
-### For New Implementation
-
-1. **Copy existing similar service as template**
-2. **Follow established patterns** - don't invent new ones
-3. **Test locally/paper first** before production
-4. **Update version header** in file
-5. **Commit with descriptive message**:
-   ```bash
-   git commit -m "fix(scanner): v6.0.1 - align column names with deployed schema"
-   ```
-
----
-
-## 🚨 Lessons Learned (DO NOT REPEAT)
-
-### Lesson 1: Schema Mismatch Disasters
 **Problem**: Code referenced columns that don't exist in deployed DB  
-**Solution**: ALWAYS verify schema against actual database before coding
-
-```bash
-# Check actual table structure
-psql $DATABASE_URL -c "\d scan_results"
-psql $DATABASE_URL -c "\d trading_cycles"
-```
-
-### Lesson 2: Version Sync Between Local/GitHub/Droplet
-**Problem**: Different versions in different places  
-**Solution**: After ANY fix, push to GitHub immediately
-
-```bash
-# Check version in running container
-docker exec catalyst-scanner-1 head -20 /app/scanner-service.py
-
-# Compare with GitHub
-# If different, sync immediately
-```
+**Rule**: ALWAYS run `\d table_name` against actual database before writing INSERT/UPDATE
 
 ### Lesson 3: Quick Fixes Cause More Problems
+
 **Problem**: "Quick fix" without understanding root cause  
-**Solution**: If complex, STOP and make a prioritized list
+**Rule**: If complex (multi-service, schema change, container affected) — STOP. Make a list. Then act.
 
-### Lesson 4: Missing Foreign Keys
-**Problem**: Inserting data without security_id FK  
-**Solution**: ALWAYS use `get_or_create_security(symbol)` first
+### Lesson 4: Orders ≠ Positions
 
-### Lesson 5: Time Zone Confusion
-**Problem**: Perth (AWST) vs US (EST) time calculations wrong
-**Solution**: Always store UTC, convert for display only
+**Problem**: Storing order data in the positions table  
+**Rule**: This is ARCHITECTURE-RULES Rule 1. It is non-negotiable. Ever.
 
-### Lesson 6: Order Side Bug (v1.2.0) - CRITICAL
-**Problem**: "long" positions placed as SHORT sells (81 positions affected Nov-Dec 2025)
-**Root Cause**: `side == "buy"` didn't handle `side="long"` from workflow
-**Solution**: Use `_normalize_side()` + `_validate_order_side_mapping()` in alpaca_trader.py v1.3.0
-**Prevention**: Run `python3 scripts/test_order_side.py` before trading
+### Lesson 5: The .env Symlink
 
-**Full details**: See `Documentation/Implementation/order-side-testing.md`
+**Problem**: catalyst-agent/.env is a symlink to catalyst-trading-system/.env  
+**Rule**: Never delete or move catalyst-trading-system/.env or the brain loses all credentials.
 
----
+### Lesson 6: Context Separation
 
-## 📋 Service Files Location
-
-### On Droplet (Production)
-```
-/root/catalyst-trading-mcp/
-├── services/
-│   ├── orchestration/
-│   │   └── orchestration-service.py
-│   ├── scanner/
-│   │   └── scanner-service.py
-│   ├── pattern/
-│   │   └── pattern-service.py
-│   ├── technical/
-│   │   └── technical-service.py
-│   ├── risk-manager/
-│   │   └── risk-manager-service.py
-│   ├── trading/
-│   │   └── trading-service.py
-│   ├── workflow/
-│   │   └── workflow-service.py
-│   ├── news/
-│   │   └── news-service.py
-│   └── reporting/
-│       └── reporting-service.py
-├── scripts/
-│   ├── health-check.sh
-│   └── deploy-update.sh
-├── config/
-│   └── autonomous-cron-setup.txt
-├── docker-compose.yml
-└── .env
-```
-
-### On GitHub (Source of Truth)
-```
-catalyst-trading-system/
-├── Documentation/
-│   ├── Design/
-│   │   ├── architecture.md              # Check header for version
-│   │   ├── database-schema.md           # Check header for version
-│   │   └── functional-specification.md  # Check header for version
-│   └── Implementation/
-│       └── deployment-guide.md
-└── services/
-    └── (same as droplet)
-```
-
-**Version info is inside each file's header, not in the filename.**
-
----
-
-## 🔄 Common Operations
-
-### Pre-Trading Session Checklist
-```bash
-# Run order side test (CRITICAL - see Lesson 6)
-python3 scripts/test_order_side.py
-```
-**Full checklist**: See `Documentation/Implementation/order-side-testing.md`
-
-### Check Service Status
-```bash
-docker-compose ps
-curl http://localhost:5001/health  # Scanner
-curl http://localhost:5006/health  # Workflow
-```
-
-### Restart Single Service
-```bash
-docker-compose restart scanner
-docker-compose logs scanner --tail 50
-```
-
-### Deploy Update (Zero Downtime)
-```bash
-# Update single service
-docker-compose up -d --no-deps --build scanner
-
-# Verify
-curl http://localhost:5001/health
-```
-
-### View Logs
-```bash
-# Service logs
-docker logs catalyst-scanner-1 --tail 100 -f
-
-# System logs
-tail -f /var/log/catalyst/trading.log
-```
-
-### Database Queries
-```bash
-# Quick query
-psql $DATABASE_URL -c "SELECT * FROM trading_cycles ORDER BY started_at DESC LIMIT 5;"
-
-# Interactive
-psql $DATABASE_URL
-```
-
-### Download Files from Droplet to Local
-```bash
-# From VSCode terminal (local machine)
-scp -i ~/.ssh/id_rsa root@<DROPLET_IP>:/root/catalyst-trading-mcp/services/*/*.py ./local-backup/
-```
-
----
-
-## 📈 Trading Analysis Queries
-
-These queries provide quick access to trading performance data. All queries use the `.env` file for database connection.
-
-### Setup
-```bash
-# Load environment (run once per session or add to each command)
-source /root/catalyst-trading-system/.env
-```
-
-### Quick Status Check
-```bash
-# Current US market time
-TZ=America/New_York date
-
-# Recent trading cycles
-psql "$DATABASE_URL" -c "
-SELECT cycle_id, mode, status,
-       started_at AT TIME ZONE 'America/New_York' as started_et
-FROM trading_cycles
-ORDER BY started_at DESC LIMIT 5;"
-```
-
-### Position Summary (Last 7 Days)
-```bash
-# Daily position counts by status
-psql "$DATABASE_URL" -c "
-SELECT
-    DATE(opened_at AT TIME ZONE 'America/New_York') as trade_date,
-    COUNT(*) as total,
-    COUNT(CASE WHEN metadata->>'alpaca_status' = 'accepted' THEN 1 END) as accepted,
-    COUNT(CASE WHEN metadata->>'alpaca_status' = 'filled' THEN 1 END) as filled,
-    COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
-    COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed
-FROM positions
-WHERE opened_at >= NOW() - INTERVAL '7 days'
-GROUP BY DATE(opened_at AT TIME ZONE 'America/New_York')
-ORDER BY trade_date DESC;"
-```
-
-### Recent Positions Detail
-```bash
-# Last 20 positions with key details
-psql "$DATABASE_URL" -c "
-SELECT
-    s.symbol, p.side, p.quantity, p.entry_price,
-    p.exit_price, p.realized_pnl, p.realized_pnl_pct,
-    p.status, p.metadata->>'alpaca_status' as alpaca_status,
-    p.opened_at AT TIME ZONE 'America/New_York' as opened_et
-FROM positions p
-JOIN securities s ON s.security_id = p.security_id
-WHERE p.opened_at >= NOW() - INTERVAL '7 days'
-ORDER BY p.opened_at DESC LIMIT 20;"
-```
-
-### P&L Summary
-```bash
-# Aggregate P&L for recent positions
-psql "$DATABASE_URL" -c "
-SELECT
-    COUNT(*) as total_positions,
-    COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
-    COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed,
-    COALESCE(SUM(realized_pnl), 0) as total_realized_pnl,
-    COALESCE(SUM(unrealized_pnl), 0) as total_unrealized_pnl,
-    ROUND(AVG(realized_pnl_pct), 2) as avg_pnl_percent
-FROM positions
-WHERE opened_at >= NOW() - INTERVAL '7 days';"
-```
-
-### Closed Positions with P&L
-```bash
-# Closed positions showing profit/loss
-psql "$DATABASE_URL" -c "
-SELECT
-    s.symbol, p.side, p.quantity,
-    p.entry_price, p.exit_price,
-    p.realized_pnl, p.realized_pnl_pct,
-    p.exit_reason,
-    p.closed_at AT TIME ZONE 'America/New_York' as closed_et
-FROM positions p
-JOIN securities s ON s.security_id = p.security_id
-WHERE p.status = 'closed'
-  AND p.closed_at >= NOW() - INTERVAL '7 days'
-ORDER BY p.closed_at DESC LIMIT 20;"
-```
-
-### Scan Results
-```bash
-# Recent scan candidates per cycle
-psql "$DATABASE_URL" -c "
-SELECT
-    tc.cycle_id,
-    tc.started_at AT TIME ZONE 'America/New_York' as scan_time,
-    COUNT(sr.*) as candidates_found
-FROM trading_cycles tc
-LEFT JOIN scan_results sr ON sr.cycle_id = tc.cycle_id
-WHERE tc.started_at >= NOW() - INTERVAL '3 days'
-GROUP BY tc.cycle_id, tc.started_at
-ORDER BY tc.started_at DESC LIMIT 10;"
-
-# Detailed scan results for specific cycle
-psql "$DATABASE_URL" -c "
-SELECT s.symbol, sr.price, sr.volume, sr.score, sr.selected_for_trading
-FROM scan_results sr
-JOIN securities s ON s.security_id = sr.security_id
-WHERE sr.cycle_id = '20251209-004'
-ORDER BY sr.score DESC;"
-```
-
-### Alpaca Order Status Check
-```bash
-# Check if orders are actually filling
-psql "$DATABASE_URL" -c "
-SELECT
-    metadata->>'alpaca_status' as alpaca_status,
-    COUNT(*) as count
-FROM positions
-WHERE opened_at >= NOW() - INTERVAL '7 days'
-GROUP BY metadata->>'alpaca_status'
-ORDER BY count DESC;"
-
-# Positions with Alpaca errors
-psql "$DATABASE_URL" -c "
-SELECT s.symbol, p.broker_order_id,
-       p.metadata->>'alpaca_status' as alpaca_status,
-       p.metadata->>'alpaca_error' as alpaca_error
-FROM positions p
-JOIN securities s ON s.security_id = p.security_id
-WHERE p.metadata->>'alpaca_error' IS NOT NULL
-  AND p.opened_at >= NOW() - INTERVAL '7 days';"
-```
-
-### Symbol Performance
-```bash
-# Performance by symbol (last 30 days)
-psql "$DATABASE_URL" -c "
-SELECT
-    s.symbol,
-    COUNT(*) as trades,
-    SUM(CASE WHEN p.realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-    SUM(CASE WHEN p.realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-    COALESCE(SUM(p.realized_pnl), 0) as total_pnl,
-    ROUND(AVG(p.realized_pnl_pct), 2) as avg_pnl_pct
-FROM positions p
-JOIN securities s ON s.security_id = p.security_id
-WHERE p.status = 'closed'
-  AND p.closed_at >= NOW() - INTERVAL '30 days'
-GROUP BY s.symbol
-ORDER BY total_pnl DESC LIMIT 15;"
-```
-
-### Full Trading Report Query
-```bash
-# Comprehensive 7-day summary (use for "how did trading go" questions)
-psql "$DATABASE_URL" -c "
--- Trading cycles
-SELECT 'TRADING CYCLES' as section;
-SELECT cycle_id, mode, status,
-       started_at AT TIME ZONE 'America/New_York' as started_et
-FROM trading_cycles
-WHERE started_at >= NOW() - INTERVAL '7 days'
-ORDER BY started_at DESC;
-
--- Daily summary
-SELECT 'DAILY SUMMARY' as section;
-SELECT
-    DATE(opened_at AT TIME ZONE 'America/New_York') as date,
-    COUNT(*) as positions,
-    COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
-    COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed,
-    COALESCE(SUM(realized_pnl), 0) as realized_pnl
-FROM positions
-WHERE opened_at >= NOW() - INTERVAL '7 days'
-GROUP BY DATE(opened_at AT TIME ZONE 'America/New_York')
-ORDER BY date DESC;
-
--- Recent positions
-SELECT 'RECENT POSITIONS' as section;
-SELECT s.symbol, p.side, p.quantity, p.entry_price, p.status,
-       p.metadata->>'alpaca_status' as alpaca_status,
-       p.opened_at AT TIME ZONE 'America/New_York' as opened_et
-FROM positions p
-JOIN securities s ON s.security_id = p.security_id
-WHERE p.opened_at >= NOW() - INTERVAL '3 days'
-ORDER BY p.opened_at DESC LIMIT 15;"
-```
+**Problem**: Hardcoded thresholds in Python required redeploy to tune  
+**Solution**: Keywords, thresholds, and mappings live in YAML config files (hot-reloadable)  
+**Rule**: Configuration belongs in `config/*.yaml`, not embedded in Python code.
 
 ---
 
 ## ⛔ NEVER DO THESE
 
-1. **NEVER** modify production database schema without backup
-2. **NEVER** deploy to production without testing on paper first
-3. **NEVER** ignore version headers - always update them
-4. **NEVER** assume design doc matches deployed schema
-5. **NEVER** make "quick fixes" to complex multi-service issues
-6. **NEVER** skip the three questions at the top of this file
-7. **NEVER** use symbol VARCHAR in queries - use security_id FK
-8. **NEVER** hardcode API keys - use environment variables
-9. **NEVER** use simple ternary for order side conversion - use `_normalize_side()`
-10. **NEVER** trust that "buy"/"sell" is the only valid input - always handle "long"/"short"
+1. **NEVER** touch the 8-service microservices in `/archive` — they are dead
+2. **NEVER** reference `catalyst-trading-mcp/` — that directory does not exist
+3. **NEVER** use `docker-compose` (v1 syntax) — use `docker compose` (v2)
+4. **NEVER** delete or modify `catalyst-trading-system/.env` — it's the master credential file
+5. **NEVER** conflate Orders and Positions — they are different tables, always
+6. **NEVER** use simple ternary for order side — use `_normalize_side()`
+7. **NEVER** assume design doc matches deployed schema — always verify with `\d`
+8. **NEVER** make quick fixes to complex multi-system issues
+9. **NEVER** hardcode API keys — use environment variables
+10. **NEVER** modify production DB schema without backup
 
 ---
 
 ## ✅ ALWAYS DO THESE
 
-1. **ALWAYS** read design docs before implementing
-2. **ALWAYS** verify database schema before INSERT/UPDATE
-3. **ALWAYS** update version header after changes
-4. **ALWAYS** push to GitHub after verified fixes
-5. **ALWAYS** check logs first when troubleshooting
-6. **ALWAYS** use helper functions for security_id/time_id
-7. **ALWAYS** test on paper trading before live
-8. **ALWAYS** make prioritized list for complex changes
-9. **ALWAYS** run `python3 scripts/test_order_side.py` before trading sessions
-10. **ALWAYS** verify order logs show correct side mapping (long→buy, short→sell)
+1. **ALWAYS** read `catalyst-ai-architecture.md` before any significant change
+2. **ALWAYS** check which system you're touching (brain vs consciousness)
+3. **ALWAYS** verify database schema before INSERT/UPDATE
+4. **ALWAYS** update version header after changes
+5. **ALWAYS** push to GitHub after changes to `catalyst-trading-system/` — does NOT apply to `catalyst-agent/`
+6. **ALWAYS** use `docker compose` (v2) not `docker-compose` (v1)
+7. **ALWAYS** check `docker compose ps` is healthy after container changes
+8. **ALWAYS** check logs first when troubleshooting
+9. **ALWAYS** test on paper before live
+10. **ALWAYS** write resume_instructions when ending a significant work session
 
 ---
 
-## 🎯 Quick Reference: Decision Tree
+## 🗺️ Directory Map (What Lives Where)
 
 ```
-User Request
-    │
-    ▼
-Is it a SIMPLE fix (single service, one file)?
-    │
-    ├── YES → Verify schema → Implement → Test → Deploy → Push to GitHub
-    │
-    └── NO (Complex: multi-service, architecture, schema change)
-         │
-         ▼
-    STOP! Create prioritized action list:
-         1. What services affected?
-         2. What design docs to review?
-         3. What's the rollback plan?
-         4. Test sequence (unit → integration → paper → prod)
-         5. Who needs to know?
+/root/
+├── catalyst-trading-system/      ← GitHub repo. Cron home. Credentials. Consciousness. dev_claude.
+│   ├── .env                      ← MASTER credentials (DO NOT TOUCH)
+│   ├── CLAUDE.md                 ← This file
+│   ├── services/consciousness/   ← Heartbeat scripts, MCP server
+│   ├── services/dev_claude/      ← US sandbox unified agent
+│   ├── Documentation/Design/     ← All architecture docs (source of truth)
+│   ├── archive/                  ← Dead microservices (ignore)
+│   └── backups/                  ← DB backups
+│
+├── catalyst-agent/               ← Brain architecture. Docker containers. PFC.
+│   ├── docker-compose.yml
+│   ├── .env → ../catalyst-trading-system/.env
+│   ├── pfc/agent.py              ← Run this for brain cycles
+│   ├── hippocampus/
+│   ├── occipital/
+│   └── cerebellum/
+│
+├── claude-code-viewer/           ← Code viewer tool. Running. Leave alone.
+│
+└── catalyst-backups/             ← Archived old directories
 ```
 
 ---
 
-## 📞 Emergency Procedures
+## 📋 Quick Reference — Decision Tree
 
-### If System Goes Wrong
-
-1. **Immediate Stop**:
-   ```bash
-   curl -X POST http://localhost:5004/api/v1/emergency-stop
-   ```
-
-2. **Disable Cron**:
-   ```bash
-   crontab -r  # Remove all cron jobs
-   ```
-
-3. **Stop Services**:
-   ```bash
-   docker-compose stop
-   ```
-
-4. **Review Logs**:
-   ```bash
-   tail -n 500 /var/log/catalyst/autonomous-trading.log
-   ```
-
-5. **Check Alpaca Directly**:
-   - Log into Alpaca dashboard
-   - Verify positions
-   - Manually close if needed
+```
+Task arrives
+    │
+    ├── Which system?
+    │     ├── Brain (catalyst-agent/) → Check docker compose ps first
+    │     └── Consciousness/dev_claude (catalyst-trading-system/) → Check cron + logs first
+    │
+    ├── Simple (single file, no schema change)?
+    │     └── Verify → Implement → Test → Push to GitHub
+    │
+    └── Complex (containers, schema, cron, multi-file)?
+          └── STOP
+              1. List affected components
+              2. Read relevant design doc
+              3. Plan rollback
+              4. Test sequence
+              5. Then act
+```
 
 ---
 
-## 📝 End of CLAUDE.md
+**This file lives at**: `/root/catalyst-trading-system/CLAUDE.md`  
+**Authoritative architecture**: `Documentation/Design/catalyst-ai-architecture.md` (v2.0)  
+**The mission**: *"Enable the poor through accessible algorithmic trading"*
 
-**Remember**: Design docs are the source of truth, but ALWAYS verify against the deployed database schema before writing code.
-
-**This file should be placed at**: `/root/catalyst-trading-mcp/CLAUDE.md`
+*Craig + The Claude Family*  
+*2026-03-29*
