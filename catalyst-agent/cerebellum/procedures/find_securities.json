@@ -1,0 +1,49 @@
+{
+  "name": "find_securities_to_buy",
+  "description": "Full pipeline: scan → filter by volume → check TA → risk check → execute",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "step": 1,
+      "name": "request_scan",
+      "type": "occipital_scan",
+      "target": "occipital",
+      "identifier": "scan_buy_patterns",
+      "description": "Request occipital lobe to scan for buy patterns",
+      "wait_for_result": true,
+      "timeout": 30
+    },
+    {
+      "step": 2,
+      "name": "filter_volume",
+      "type": "internal",
+      "description": "Only keep matches with volume > 1.5x average",
+      "criteria": "volume_surge",
+      "min_volume_ratio": 1.5
+    },
+    {
+      "step": 3,
+      "name": "risk_check",
+      "type": "risk_check",
+      "description": "Position sizing, exposure limits, stop loss placement",
+      "max_risk_per_trade": 0.02,
+      "max_total_exposure": 0.10,
+      "require_stop_loss": true
+    },
+    {
+      "step": 4,
+      "name": "execute_trade",
+      "type": "broker_call",
+      "description": "Execute trade via Alpaca with stop loss",
+      "broker": "alpaca",
+      "order_type": "limit",
+      "require_stop_loss": true
+    }
+  ],
+  "escalation_conditions": [
+    "Unknown pattern returned from scanner",
+    "Risk check fails on all candidates",
+    "Broker API returns unexpected error",
+    "Three consecutive failed trades in same session"
+  ]
+}

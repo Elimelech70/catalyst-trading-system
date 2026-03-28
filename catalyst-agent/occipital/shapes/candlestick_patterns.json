@@ -1,0 +1,111 @@
+{
+  "buy_patterns": {
+    "hammer": {
+      "description": "Small body at top, long lower shadow (2x+ body), little/no upper shadow",
+      "signal": "bullish reversal",
+      "reliability": 0.65,
+      "conditions": ["appears after downtrend", "volume confirmation strengthens"],
+      "rules": {
+        "lower_shadow_ratio_min": 2.0,
+        "upper_shadow_ratio_max": 0.3,
+        "body_position": "upper_third"
+      }
+    },
+    "bullish_engulfing": {
+      "description": "Green candle body fully engulfs prior red candle body",
+      "signal": "bullish reversal",
+      "reliability": 0.70,
+      "conditions": ["appears after downtrend", "larger volume on engulfing candle"],
+      "rules": {
+        "prior_candle": "bearish",
+        "current_candle": "bullish",
+        "current_open_below_prior_close": true,
+        "current_close_above_prior_open": true
+      }
+    },
+    "morning_star": {
+      "description": "Three candle pattern: large red, small body (gap down), large green (closes above midpoint of first)",
+      "signal": "bullish reversal",
+      "reliability": 0.75,
+      "conditions": ["gap between first and second candle", "third candle volume > first"],
+      "rules": {
+        "candle_count": 3,
+        "first_candle": "bearish",
+        "second_candle": "small_body",
+        "third_candle": "bullish",
+        "third_closes_above_first_midpoint": true
+      }
+    },
+    "inverted_hammer": {
+      "description": "Small body at bottom, long upper shadow (2x+ body), little/no lower shadow",
+      "signal": "bullish reversal",
+      "reliability": 0.55,
+      "conditions": ["appears after downtrend", "needs next-day confirmation"],
+      "rules": {
+        "upper_shadow_ratio_min": 2.0,
+        "lower_shadow_ratio_max": 0.3,
+        "body_position": "lower_third"
+      }
+    }
+  },
+  "sell_patterns": {
+    "gravestone_doji": {
+      "description": "Open and close at low, long upper shadow",
+      "signal": "bearish reversal",
+      "reliability": 0.60,
+      "conditions": ["appears after uptrend", "high volume strengthens signal"],
+      "rules": {
+        "body_to_range_ratio_max": 0.05,
+        "upper_shadow_ratio_min": 2.0,
+        "body_position": "lower_tenth"
+      }
+    },
+    "bearish_engulfing": {
+      "description": "Red candle body fully engulfs prior green candle body",
+      "signal": "bearish reversal",
+      "reliability": 0.70,
+      "conditions": ["appears after uptrend", "larger volume on engulfing candle"],
+      "rules": {
+        "prior_candle": "bullish",
+        "current_candle": "bearish",
+        "current_open_above_prior_close": true,
+        "current_close_below_prior_open": true
+      }
+    },
+    "evening_star": {
+      "description": "Three candle pattern: large green, small body (gap up), large red (closes below midpoint of first)",
+      "signal": "bearish reversal",
+      "reliability": 0.75,
+      "conditions": ["gap between first and second candle"],
+      "rules": {
+        "candle_count": 3,
+        "first_candle": "bullish",
+        "second_candle": "small_body",
+        "third_candle": "bearish",
+        "third_closes_below_first_midpoint": true
+      }
+    },
+    "shooting_star": {
+      "description": "Small body at bottom, long upper shadow (2x+ body), minimal lower shadow",
+      "signal": "bearish reversal",
+      "reliability": 0.60,
+      "conditions": ["appears after uptrend"],
+      "rules": {
+        "upper_shadow_ratio_min": 2.0,
+        "lower_shadow_ratio_max": 0.3,
+        "body_position": "lower_third"
+      }
+    }
+  },
+  "neutral_patterns": {
+    "doji": {
+      "description": "Open and close nearly equal, shadows present — indecision",
+      "signal": "neutral",
+      "reliability": 0.50,
+      "conditions": ["context determines meaning", "after trend = potential reversal"],
+      "rules": {
+        "body_to_range_ratio_max": 0.1
+      }
+    }
+  }
+}

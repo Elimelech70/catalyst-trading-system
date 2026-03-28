@@ -1,0 +1,17 @@
+# Credentials — never commit
+.env
+
+# SQLite nervous system — lives on droplet only
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+logs/
+*.log

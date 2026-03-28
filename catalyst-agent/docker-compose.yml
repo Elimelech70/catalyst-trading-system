@@ -1,0 +1,123 @@
+# Name of Application: Catalyst Trading System — Agent Body
+# Name of file: docker-compose.yml
+# Version: 1.0.0
+# Last Updated: 2026-03-03
+# Purpose: Container orchestration for big_bro agent body components
+#
+# Components:
+#   - occipital: Pattern recognition (the visual cortex)
+#   - cerebellum: Procedure execution (learned behaviours)
+#   - hippocampus: Memory binding (where memories live)
+#
+# NOTE: PFC (Claude Code) runs on HOST, not in Docker.
+#       Claude Code IS the PFC. The architecture IS Claude.
+
+services:
+  # =========================================================================
+  # OCCIPITAL LOBE — Pattern Recognition
+  # Watches communication table for scan tasks from PFC/cerebellum.
+  # Matches price data against its shape memories (candlestick, volume).
+  # Writes matched patterns back to communication table.
+  # =========================================================================
+  occipital:
+    build:
+      context: .
+      dockerfile: occipital/Dockerfile
+    container_name: catalyst-occipital
+    network_mode: host
+    environment:
+      AGENT_DB_PATH: /var/lib/catalyst/db/agent.db
+      ALPACA_API_KEY: ${ALPACA_API_KEY}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
+      PAPER_TRADING: ${PAPER_TRADING:-true}
+      POLL_INTERVAL: "2.0"
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - /var/lib/catalyst/db:/var/lib/catalyst/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; c=sqlite3.connect('/var/lib/catalyst/db/agent.db'); c.execute('SELECT 1'); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  # CEREBELLUM — Procedure Execution
+  # Reads task matrices from PFC. Orchestrates occipital for scanning.
+  # Runs risk checks. Executes trades via Alpaca API.
+  # The HOW to PFC's WHAT.
+  # =========================================================================
+  cerebellum:
+    build:
+      context: .
+      dockerfile: cerebellum/Dockerfile
+    container_name: catalyst-cerebellum
+    network_mode: host
+    environment:
+      AGENT_DB_PATH: /var/lib/catalyst/db/agent.db
+      ALPACA_API_KEY: ${ALPACA_API_KEY}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      ALPACA_DATA_URL: ${ALPACA_DATA_URL:-https://data.alpaca.markets}
+      PAPER_TRADING: ${PAPER_TRADING:-true}
+      DATABASE_URL: ${DATABASE_URL}
+      POLL_INTERVAL: "2.0"
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - /var/lib/catalyst/db:/var/lib/catalyst/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; c=sqlite3.connect('/var/lib/catalyst/db/agent.db'); c.execute('SELECT 1'); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  # HIPPOCAMPUS — Memory Binding
+  # Reads ALL results from communication table.
+  # Builds combined pictures for PFC consumption.
+  # Stores learnings in its own local database.
+  # Maintains memory bindings between related knowledge.
+  # PFC determines what to learn. Hippocampus holds what was learned.
+  # =========================================================================
+  hippocampus:
+    build:
+      context: .
+      dockerfile: hippocampus/Dockerfile
+    container_name: catalyst-hippocampus
+    network_mode: host
+    environment:
+      AGENT_DB_PATH: /var/lib/catalyst/db/agent.db
+      HIPPOCAMPUS_DB_PATH: /var/lib/catalyst/hippocampus/memory.db
+      POLL_INTERVAL: "2.0"
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - /var/lib/catalyst/db:/var/lib/catalyst/db
+      - /var/lib/catalyst/hippocampus:/var/lib/catalyst/hippocampus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; c=sqlite3.connect('/var/lib/catalyst/hippocampus/memory.db'); c.execute('SELECT 1'); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

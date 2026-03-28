@@ -1,0 +1,39 @@
+{
+  "surge": {
+    "description": "Volume exceeds 20-day average by 1.5x or more",
+    "signal": "attention required — something is happening",
+    "threshold_multiplier": 1.5,
+    "lookback_period": 20,
+    "reliability": 0.55
+  },
+  "dry_up": {
+    "description": "Volume drops below 50% of 20-day average",
+    "signal": "low interest — patterns less reliable, may precede breakout",
+    "threshold_multiplier": 0.5,
+    "lookback_period": 20,
+    "reliability": 0.50
+  },
+  "climax": {
+    "description": "Volume exceeds 3x 20-day average with large price range",
+    "signal": "exhaustion likely — reversal possible",
+    "threshold_multiplier": 3.0,
+    "lookback_period": 20,
+    "reliability": 0.65
+  },
+  "accumulation": {
+    "description": "Rising volume on up days, declining volume on down days over period",
+    "signal": "bullish — smart money buying",
+    "lookback_period": 10,
+    "up_day_volume_trend": "increasing",
+    "down_day_volume_trend": "decreasing",
+    "reliability": 0.60
+  },
+  "distribution": {
+    "description": "Rising volume on down days, declining volume on up days over period",
+    "signal": "bearish — smart money selling",
+    "lookback_period": 10,
+    "down_day_volume_trend": "increasing",
+    "up_day_volume_trend": "decreasing",
+    "reliability": 0.60
+  }
+}
