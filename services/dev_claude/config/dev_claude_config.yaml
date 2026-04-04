@@ -36,6 +36,22 @@ trading:
   min_price: 5.00           # Minimum stock price
   max_price: 500.00         # Maximum stock price
 
+scanner:
+  # Adaptive thresholds — relaxes automatically if zero candidates found
+  min_change_pct_tiers:
+    - 2.0    # Tier 1: strong movers
+    - 1.0    # Tier 2: moderate movers
+    - 0.5    # Tier 3: any activity
+  zero_candidate_alert_threshold: 3  # Alert after N consecutive zero-candidate scans
+  persist_results: true              # Write scan results to scan_results table
+
+learning:
+  # LTP/LTD synaptic learning parameters
+  ltp_rate: 0.05            # Confidence increase per win
+  ltd_rate: 0.03            # Confidence decrease per loss
+  min_confidence: 0.10      # Floor — never drops below
+  max_confidence: 0.95      # Ceiling — never exceeds
+
 signals:
   # Exit signal thresholds
   stop_loss_strong: -0.05

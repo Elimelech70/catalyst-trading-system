@@ -2,11 +2,20 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: unified_agent.py
-Version: 3.2.0
-Last Updated: 2026-03-28
+Version: 3.3.0
+Last Updated: 2026-04-04
 Purpose: Unified trading agent for US markets (dev_claude)
 
 REVISION HISTORY:
+v3.3.0 (2026-04-04) - Fix P2/P3 issues from trading analysis
+  - Scanner: adaptive thresholds (2%→1%→0.5%), zero-candidate alerting
+  - Scanner: persist results to scan_results table
+  - Trading cycles: persist to trading_cycles table (start + end)
+  - Position persistence: fix column name, add broker_code/currency/entry_reason
+  - Pattern learning: record pattern_outcomes on close, LTP/LTD on pattern_confidence
+  - Exit retry: 3 attempts with backoff on close failures
+  - Config: scanner thresholds moved to YAML
+
 v3.2.0 (2026-03-28) - Fix market hours detection using Alpaca clock API
   - _is_market_open() now uses broker.get_clock() as primary check
   - Eliminates host timezone dependency (was broken on AWST host)
@@ -956,14 +965,24 @@ class ToolExecutor:
             return {'error': str(e), 'success': False}
 
     async def _scan_market(self, inputs: Dict) -> Dict:
-        """Scan for trading candidates with momentum and volume analysis."""
+        """Scan for trading candidates with adaptive momentum and volume analysis.
+
+        Uses tiered thresholds: tries strict filters first, relaxes if zero
+        candidates found. Persists results to scan_results table. Alerts
+        consciousness if consecutive zero-candidate scans exceed threshold.
+        """
         limit = min(inputs.get('limit', 10), 20)
         min_volume = inputs.get('min_volume', 500000)
-        min_change_pct = inputs.get('min_change_pct', 2.0)
 
         config = self.config.get('trading', {})
+        scanner_config = self.config.get('scanner', {})
         min_price = config.get('min_price', 5.0)
         max_price = config.get('max_price', 500.0)
+
+        # Adaptive thresholds from config
+        change_tiers = scanner_config.get('min_change_pct_tiers', [2.0, 1.0, 0.5])
+        alert_threshold = scanner_config.get('zero_candidate_alert_threshold', 3)
+        persist_results = scanner_config.get('persist_results', True)
 
         # Extended watchlist of liquid US stocks
         watchlist = [
@@ -985,77 +1004,138 @@ class ToolExecutor:
             'SPY', 'QQQ', 'IWM', 'DIA'
         ]
 
-        candidates = []
+        # Fetch bars for all symbols once (reused across tiers)
+        symbol_data = {}
         scanned = 0
-
+        bars_errors = 0
         for symbol in watchlist:
-            if len(candidates) >= limit:
-                break
-
             try:
-                # Get recent bars for momentum calculation
                 bars = self.broker.get_bars(symbol, days=5)
                 if len(bars) < 2:
                     continue
-
                 scanned += 1
 
-                # Calculate metrics
                 current_close = bars[-1]['close']
                 prev_close = bars[-2]['close']
                 change_pct = ((current_close - prev_close) / prev_close) * 100
-
-                # Get today's volume (last bar)
                 volume = bars[-1]['volume']
-
-                # Calculate 5-day average volume
                 avg_volume = sum(b['volume'] for b in bars) / len(bars)
 
-                # Filter criteria
-                if current_close < min_price or current_close > max_price:
+                symbol_data[symbol] = {
+                    'current_close': current_close,
+                    'change_pct': change_pct,
+                    'volume': volume,
+                    'avg_volume': avg_volume,
+                }
+            except Exception as e:
+                bars_errors += 1
+                logger.warning(f"Error fetching bars for {symbol}: {e}")
+
+        if bars_errors > len(watchlist) * 0.5:
+            logger.error(f"IEX data feed degraded: {bars_errors}/{len(watchlist)} symbols failed")
+
+        # Adaptive tier scanning — relax thresholds if no candidates found
+        candidates = []
+        tier_used = 0
+        for tier_idx, min_change_pct in enumerate(change_tiers):
+            candidates = []
+            for symbol, data in symbol_data.items():
+                if data['current_close'] < min_price or data['current_close'] > max_price:
                     continue
-                if avg_volume < min_volume:
+                if data['avg_volume'] < min_volume:
                     continue
-                if abs(change_pct) < min_change_pct:
+                if abs(data['change_pct']) < min_change_pct:
                     continue
 
                 # Get current quote for spread analysis
-                quote = self.broker.get_quote(symbol)
-                spread_pct = 0
-                if 'error' not in quote and quote.get('mid', 0) > 0:
-                    spread_pct = (quote.get('spread', 0) / quote.get('mid', 1)) * 100
+                try:
+                    quote = self.broker.get_quote(symbol)
+                    spread_pct = 0
+                    if 'error' not in quote and quote.get('mid', 0) > 0:
+                        spread_pct = (quote.get('spread', 0) / quote.get('mid', 1)) * 100
+                except Exception:
+                    spread_pct = 0
 
-                # Calculate momentum score
-                momentum_score = abs(change_pct) * (volume / avg_volume)
+                momentum_score = abs(data['change_pct']) * (data['volume'] / max(data['avg_volume'], 1))
 
                 candidates.append({
                     'symbol': symbol,
-                    'price': round(current_close, 2),
-                    'change_pct': round(change_pct, 2),
-                    'volume': volume,
-                    'avg_volume': int(avg_volume),
-                    'volume_ratio': round(volume / avg_volume, 2),
+                    'price': round(data['current_close'], 2),
+                    'change_pct': round(data['change_pct'], 2),
+                    'volume': data['volume'],
+                    'avg_volume': int(data['avg_volume']),
+                    'volume_ratio': round(data['volume'] / max(data['avg_volume'], 1), 2),
                     'spread_pct': round(spread_pct, 3),
                     'momentum_score': round(momentum_score, 2),
-                    'direction': 'bullish' if change_pct > 0 else 'bearish'
+                    'direction': 'bullish' if data['change_pct'] > 0 else 'bearish',
+                    'tier': tier_idx + 1,
                 })
 
-            except Exception as e:
-                logger.warning(f"Error scanning {symbol}: {e}")
-                continue
+            tier_used = tier_idx + 1
+            if candidates:
+                if tier_idx > 0:
+                    logger.info(f"Scanner relaxed to tier {tier_used} (min_change={min_change_pct}%): {len(candidates)} candidates")
+                break
+            logger.info(f"Scanner tier {tier_used} (min_change={min_change_pct}%): 0 candidates, trying next tier")
 
         # Sort by momentum score descending
         candidates.sort(key=lambda x: x['momentum_score'], reverse=True)
+        candidates = candidates[:limit]
+
+        # Zero-candidate alerting
+        if not candidates:
+            if not hasattr(self, '_zero_scan_count'):
+                self._zero_scan_count = 0
+            self._zero_scan_count += 1
+            logger.warning(f"Scanner: zero candidates after all tiers ({self._zero_scan_count} consecutive)")
+
+            if self._zero_scan_count >= alert_threshold and self.consciousness:
+                try:
+                    await self.consciousness.send_message(
+                        to_agent='big_bro',
+                        subject=f'ALERT: Scanner zero candidates x{self._zero_scan_count}',
+                        body=f'dev_claude scanner found zero candidates for {self._zero_scan_count} consecutive scans. '
+                             f'Scanned {scanned} symbols, {bars_errors} IEX errors. '
+                             f'All {len(change_tiers)} threshold tiers exhausted.',
+                        priority='high',
+                        msg_type='alert'
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not send zero-candidate alert: {e}")
+        else:
+            self._zero_scan_count = 0
+
+        # Persist scan results to database
+        cycle_id = getattr(self, '_current_cycle_id', None)
+        if persist_results and candidates and self.db.pool:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    for rank, c in enumerate(candidates, 1):
+                        await conn.execute("""
+                            INSERT INTO scan_results (cycle_id, symbol, price, volume, change_pct,
+                                rank, score, composite_score, relative_volume, selected_for_trading,
+                                scan_data)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10::jsonb)
+                        """, cycle_id, c['symbol'], c['price'], c['volume'],
+                        c['change_pct'], rank, c['momentum_score'],
+                        c['volume_ratio'], rank <= 3,
+                        json.dumps({'tier': c['tier'], 'direction': c['direction'], 'spread_pct': c['spread_pct']}))
+                logger.info(f"Persisted {len(candidates)} scan results to DB")
+            except Exception as e:
+                logger.warning(f"Could not persist scan results: {e}")
 
         return {
             'candidates_found': len(candidates),
             'stocks_scanned': scanned,
-            'candidates': candidates[:limit],
+            'bars_errors': bars_errors,
+            'tier_used': tier_used,
+            'candidates': candidates,
             'filters': {
                 'min_volume': min_volume,
-                'min_change_pct': min_change_pct,
+                'min_change_pct': change_tiers[tier_used - 1] if tier_used else change_tiers[0],
                 'min_price': min_price,
-                'max_price': max_price
+                'max_price': max_price,
+                'adaptive_tiers': change_tiers,
             },
             'timestamp': datetime.now(ET).isoformat()
         }
@@ -1233,21 +1313,23 @@ class ToolExecutor:
         if 'error' not in result:
             self.trades_executed += 1
 
+            cycle_id = getattr(self, '_current_cycle_id', None)
             if self.db.pool:
                 try:
                     async with self.db.pool.acquire() as conn:
+                        # Normalize order side for orders table (buy/sell)
+                        order_side = 'buy' if side.lower() in ['buy', 'long'] else 'sell'
+
                         # Log to orders table
                         await conn.execute("""
-                            INSERT INTO orders (symbol, side, quantity, order_type, status, broker_order_id, order_purpose, notes)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        """, symbol, side, quantity, 'market', result.get('status', 'submitted'),
+                            INSERT INTO orders (cycle_id, symbol, side, quantity, order_type, status, broker_order_id, order_purpose, notes)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        """, cycle_id, symbol, order_side, quantity, 'market',
+                        result.get('status', 'submitted'),
                         result.get('order_id'), 'entry', reason)
 
-                        # Persist position to positions table
-                        if side.lower() in ['buy', 'long']:
-                            position_side = 'long'
-                        else:
-                            position_side = 'short'
+                        # Normalize position side (long/short)
+                        position_side = 'long' if side.lower() in ['buy', 'long'] else 'short'
 
                         # Get entry price from broker if available
                         entry_price = None
@@ -1257,25 +1339,29 @@ class ToolExecutor:
                         except Exception:
                             pass
 
+                        # Persist position — explicit broker_code/currency for US market
                         await conn.execute("""
-                            INSERT INTO positions (symbol, side, quantity, entry_price, stop_loss, take_profit, status, broker_position_id, notes)
-                            VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)
-                        """, symbol, position_side, quantity,
+                            INSERT INTO positions (cycle_id, symbol, side, quantity, entry_price,
+                                stop_loss, take_profit, status, broker_order_id, broker_code,
+                                currency, entry_reason, notes)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, 'ALPACA', 'USD', $9, $9)
+                        """, cycle_id, symbol, position_side, quantity,
                         entry_price or 0,
                         stop_loss,
                         take_profit,
                         result.get('order_id'),
                         reason)
-                        logger.info(f"Position persisted to DB: {position_side} {quantity} {symbol}")
+                        logger.info(f"Position persisted to DB: {position_side} {quantity} {symbol} @ {entry_price}")
                 except Exception as e:
                     logger.warning(f"Could not persist trade to DB: {e}")
 
         return result
 
     async def _close_position(self, inputs: Dict) -> Dict:
-        """Close a position and update database."""
+        """Close a position with retry logic and pattern outcome recording."""
         symbol = inputs['symbol'].upper()
         reason = inputs.get('reason', 'No reason provided')
+        max_retries = 3
 
         logger.info(f"Closing position: {symbol} - {reason}")
 
@@ -1287,15 +1373,41 @@ class ToolExecutor:
         except Exception:
             pass
 
-        result = self.broker.close_position(symbol)
+        # Retry loop with backoff
+        result = None
+        for attempt in range(1, max_retries + 1):
+            result = self.broker.close_position(symbol)
+            if result.get('success'):
+                break
+            error_msg = result.get('error', '')
+            if attempt < max_retries:
+                logger.warning(f"Close attempt {attempt}/{max_retries} failed for {symbol}: {error_msg} — retrying in {attempt}s")
+                import time as _time
+                _time.sleep(attempt)  # Linear backoff: 1s, 2s
+                # Re-cancel stale orders before retry (close_position already does this,
+                # but an explicit second pass catches race conditions)
+                try:
+                    self.broker.cancel_orders_for_symbol(symbol)
+                except Exception:
+                    pass
+            else:
+                logger.error(f"Close FAILED after {max_retries} attempts for {symbol}: {error_msg}")
 
-        if result.get('success'):
+        if result and result.get('success'):
             self.trades_executed += 1
 
-            # Update position in database
+            # Update position in database + record pattern outcome
             if self.db.pool:
                 try:
                     async with self.db.pool.acquire() as conn:
+                        # Get position data before closing for pattern outcome
+                        pos_row = await conn.fetchrow("""
+                            SELECT position_id, entry_price, entry_time, side, quantity, metadata
+                            FROM positions WHERE symbol = $1 AND status = 'open'
+                            ORDER BY entry_time DESC LIMIT 1
+                        """, symbol)
+
+                        # Close position
                         await conn.execute("""
                             UPDATE positions SET
                                 status = 'closed',
@@ -1318,14 +1430,135 @@ class ToolExecutor:
                                         END
                                     ELSE NULL
                                 END,
+                                closed_at = NOW(),
                                 updated_at = NOW()
                             WHERE symbol = $3 AND status = 'open'
                         """, exit_price, reason, symbol)
                         logger.info(f"Position closed in DB: {symbol} @ {exit_price} - {reason}")
+
+                        # Record pattern outcome + update confidence (LTP/LTD)
+                        if pos_row and exit_price and pos_row['entry_price'] > 0:
+                            await self._record_pattern_outcome(conn, pos_row, exit_price, reason)
+
                 except Exception as e:
                     logger.warning(f"Could not update position close in DB: {e}")
 
         return result
+
+    async def _record_pattern_outcome(self, conn, pos_row, exit_price: float, exit_reason: str):
+        """Record pattern outcome and run LTP/LTD confidence update.
+
+        Called after a position is closed. Determines outcome (win/loss),
+        records to pattern_outcomes, and adjusts pattern_confidence weights.
+        """
+        entry_price = float(pos_row['entry_price'])
+        side = pos_row['side']
+        quantity = pos_row['quantity']
+
+        # Calculate P&L
+        if side == 'long':
+            pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            pnl_usd = (exit_price - entry_price) * quantity
+        else:
+            pnl_pct = ((entry_price - exit_price) / entry_price) * 100
+            pnl_usd = (entry_price - exit_price) * quantity
+
+        outcome = 'win' if pnl_pct > 0 else 'loss'
+
+        # Determine pattern type from metadata or exit reason
+        metadata = pos_row['metadata'] or {}
+        pattern_type = metadata.get('pattern_type', 'momentum')  # Default to momentum
+
+        # Determine exit trigger from reason keywords
+        exit_trigger = 'manual'
+        reason_lower = exit_reason.lower()
+        if 'stop' in reason_lower or 'loss' in reason_lower:
+            exit_trigger = 'stop_loss'
+        elif 'profit' in reason_lower or 'target' in reason_lower:
+            exit_trigger = 'take_profit'
+        elif 'eod' in reason_lower or 'close' in reason_lower or 'end of day' in reason_lower:
+            exit_trigger = 'eod_close'
+        elif 'rsi' in reason_lower or 'overbought' in reason_lower:
+            exit_trigger = 'signal'
+
+        # Get current confidence for this pattern
+        conf_row = await conn.fetchrow("""
+            SELECT confidence, sample_count, win_count, loss_count, avg_win_pct, avg_loss_pct
+            FROM pattern_confidence WHERE pattern_type = $1
+        """, pattern_type)
+
+        confidence_before = float(conf_row['confidence']) if conf_row else 0.5
+
+        # LTP/LTD calculation
+        learning_config = self.config.get('learning', {})
+        ltp_rate = learning_config.get('ltp_rate', 0.05)
+        ltd_rate = learning_config.get('ltd_rate', 0.03)
+        min_conf = learning_config.get('min_confidence', 0.10)
+        max_conf = learning_config.get('max_confidence', 0.95)
+
+        if outcome == 'win':
+            confidence_after = min(confidence_before + ltp_rate, max_conf)
+        else:
+            confidence_after = max(confidence_before - ltd_rate, min_conf)
+
+        strength_delta = confidence_after - confidence_before
+
+        # Record pattern outcome
+        try:
+            await conn.execute("""
+                INSERT INTO pattern_outcomes (pattern_type, symbol, position_id, entry_time,
+                    exit_time, pnl_pct, pnl_usd, outcome, exit_trigger,
+                    confidence_before, confidence_after, strength_delta)
+                VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, $11)
+            """, pattern_type, pos_row['symbol'] if hasattr(pos_row, '__getitem__') else '',
+            pos_row['position_id'], pos_row['entry_time'],
+            round(pnl_pct, 4), round(pnl_usd, 2), outcome, exit_trigger,
+            round(confidence_before, 4), round(confidence_after, 4), round(strength_delta, 4))
+
+            logger.info(f"Pattern outcome recorded: {pattern_type} → {outcome} "
+                       f"({pnl_pct:+.2f}%), confidence {confidence_before:.2f} → {confidence_after:.2f}")
+        except Exception as e:
+            logger.warning(f"Could not record pattern outcome: {e}")
+            return
+
+        # Update pattern_confidence (LTP/LTD)
+        try:
+            if conf_row:
+                new_sample = (conf_row['sample_count'] or 0) + 1
+                new_wins = (conf_row['win_count'] or 0) + (1 if outcome == 'win' else 0)
+                new_losses = (conf_row['loss_count'] or 0) + (1 if outcome == 'loss' else 0)
+                # Running average of win/loss percentages
+                old_avg_win = float(conf_row['avg_win_pct'] or 0)
+                old_avg_loss = float(conf_row['avg_loss_pct'] or 0)
+                if outcome == 'win':
+                    new_avg_win = ((old_avg_win * (new_wins - 1)) + pnl_pct) / new_wins if new_wins > 0 else pnl_pct
+                    new_avg_loss = old_avg_loss
+                else:
+                    new_avg_win = old_avg_win
+                    new_avg_loss = ((old_avg_loss * (new_losses - 1)) + abs(pnl_pct)) / new_losses if new_losses > 0 else abs(pnl_pct)
+
+                await conn.execute("""
+                    UPDATE pattern_confidence SET
+                        confidence = $1, sample_count = $2, win_count = $3,
+                        loss_count = $4, avg_win_pct = $5, avg_loss_pct = $6,
+                        last_updated = NOW()
+                    WHERE pattern_type = $7
+                """, round(confidence_after, 4), new_sample, new_wins, new_losses,
+                round(new_avg_win, 4), round(new_avg_loss, 4), pattern_type)
+            else:
+                # Insert new pattern type
+                await conn.execute("""
+                    INSERT INTO pattern_confidence (pattern_type, confidence, sample_count,
+                        win_count, loss_count, avg_win_pct, avg_loss_pct, last_updated)
+                    VALUES ($1, $2, 1, $3, $4, $5, $6, NOW())
+                """, pattern_type, round(confidence_after, 4),
+                1 if outcome == 'win' else 0, 1 if outcome == 'loss' else 0,
+                round(pnl_pct, 4) if outcome == 'win' else 0,
+                round(abs(pnl_pct), 4) if outcome == 'loss' else 0)
+
+            logger.info(f"Pattern confidence updated: {pattern_type} = {confidence_after:.4f}")
+        except Exception as e:
+            logger.warning(f"Could not update pattern confidence: {e}")
 
     async def _close_all(self, inputs: Dict) -> Dict:
         """Close all positions."""
@@ -1566,6 +1799,23 @@ Always explain your reasoning using log_decision.
         cycle_id = datetime.now(ET).strftime('%Y%m%d-%H%M%S')
         logger.info(f"Starting cycle {cycle_id} in {mode} mode")
 
+        # Persist cycle to trading_cycles table
+        if self.db.pool:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO trading_cycles (cycle_id, date, mode, status)
+                        VALUES ($1, $2, $3, 'active')
+                    """, cycle_id, datetime.now(ET).date(), mode)
+                logger.info(f"Trading cycle {cycle_id} recorded in DB")
+            except Exception as e:
+                logger.warning(f"Could not persist trading cycle: {e}")
+
+        # Make cycle_id available to executor for FK references
+        self._current_cycle_id = cycle_id
+        if self.executor:
+            self.executor._current_cycle_id = cycle_id
+
         # Wake up consciousness
         budget_remaining = self.daily_budget
         wake_result = {'messages': []}
@@ -1726,6 +1976,27 @@ Always explain your reasoning using log_decision.
         })
 
         logger.info(f"Cycle complete: {self.tracker.get_progress_bar()}")
+
+        # Update trading_cycles record with results
+        if self.db.pool:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    await conn.execute("""
+                        UPDATE trading_cycles SET
+                            status = 'completed',
+                            ended_at = NOW(),
+                            positions_opened = $1,
+                            positions_closed = $2,
+                            api_calls = $3,
+                            api_cost = $4,
+                            notes = $5
+                        WHERE cycle_id = $6
+                    """, summary.get('trades_executed', 0), 0,
+                    iterations, round(api_spend, 4),
+                    f"Mode: {mode}, Tools: {summary.get('tools_called', 0)}",
+                    cycle_id)
+            except Exception as e:
+                logger.warning(f"Could not update trading cycle: {e}")
 
         return {
             'status': 'complete',
