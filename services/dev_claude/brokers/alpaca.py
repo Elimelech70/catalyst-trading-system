@@ -2,11 +2,20 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: alpaca.py
-Version: 1.0.1
-Last Updated: 2026-01-20
+Version: 1.2.0
+Last Updated: 2026-03-28
 Purpose: Alpaca broker client for US markets via Alpaca API
 
 REVISION HISTORY:
+v1.2.0 (2026-03-28) - Add get_clock() for market hours detection
+  - Returns is_open, next_open, next_close from Alpaca clock API
+  - Used by unified_agent to replace timezone-dependent market check
+
+v1.1.0 (2026-03-28) - Cancel stale orders before position close
+  - Added cancel_orders_for_symbol() method
+  - close_position() now cancels pending orders first
+  - Prevents "shares held for orders" exit failures
+
 v1.0.1 (2026-01-20) - Switch to IEX data feed
   - Changed from SIP to IEX feed for all market data requests
   - Fixes "subscription does not permit querying recent SIP data" error
@@ -226,6 +235,31 @@ class AlpacaClient:
         """Check connection status."""
         return self._connected
     
+    # =========================================================================
+    # MARKET CLOCK
+    # =========================================================================
+
+    def get_clock(self) -> Dict[str, Any]:
+        """Get market clock from Alpaca API.
+
+        Returns:
+            Dict with 'is_open' (bool), 'next_open', 'next_close' timestamps.
+        """
+        if not self._connected:
+            raise RuntimeError("Not connected to Alpaca")
+
+        try:
+            clock = self.trading_client.get_clock()
+            return {
+                'is_open': clock.is_open,
+                'next_open': str(clock.next_open),
+                'next_close': str(clock.next_close),
+                'timestamp': str(clock.timestamp),
+            }
+        except Exception as e:
+            logger.error(f"Failed to get market clock: {e}")
+            raise
+
     # =========================================================================
     # MARKET DATA
     # =========================================================================
@@ -592,22 +626,58 @@ class AlpacaClient:
                 message=str(e),
             )
     
+    def cancel_orders_for_symbol(self, symbol: str) -> int:
+        """Cancel all open orders for a symbol before closing.
+
+        Prevents "shares held for orders" failures when stale bracket
+        orders (stop-loss/take-profit) are still pending on Alpaca.
+
+        Args:
+            symbol: Stock symbol
+
+        Returns:
+            Number of orders cancelled
+        """
+        cancelled = 0
+        try:
+            request = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                symbols=[symbol]
+            )
+            open_orders = self.trading_client.get_orders(filter=request)
+            for order in open_orders:
+                try:
+                    self.trading_client.cancel_order_by_id(order.id)
+                    cancelled += 1
+                    logger.info(f"Cancelled stale order {order.id} for {symbol}")
+                except Exception:
+                    pass  # Order may have already filled/cancelled
+            if cancelled:
+                import time
+                time.sleep(0.5)  # Brief pause for cancellations to settle
+        except Exception as e:
+            logger.warning(f"Could not check/cancel orders for {symbol}: {e}")
+        return cancelled
+
     def close_position(self, symbol: str, reason: str = "") -> OrderResult:
-        """Close a specific position.
-        
+        """Close a specific position, cancelling stale orders first.
+
         Args:
             symbol: Stock symbol to close
             reason: Reason for closing (logged)
-            
+
         Returns:
             OrderResult with status
         """
         if not self._connected:
             raise RuntimeError("Not connected to Alpaca")
-        
+
         logger.info(f"Closing position: {symbol} - {reason}")
-        
+
         try:
+            # Cancel stale orders first to prevent "shares held for orders"
+            self.cancel_orders_for_symbol(symbol)
+
             # Close position via API
             order = self.trading_client.close_position(symbol)
             

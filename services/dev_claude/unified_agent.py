@@ -2,11 +2,24 @@
 """
 Name of Application: Catalyst Trading System
 Name of file: unified_agent.py
-Version: 3.0.1
-Last Updated: 2026-01-21
+Version: 3.2.0
+Last Updated: 2026-03-28
 Purpose: Unified trading agent for US markets (dev_claude)
 
 REVISION HISTORY:
+v3.2.0 (2026-03-28) - Fix market hours detection using Alpaca clock API
+  - _is_market_open() now uses broker.get_clock() as primary check
+  - Eliminates host timezone dependency (was broken on AWST host)
+  - Falls back to timezone-based check only if API call fails
+  - Added get_clock() method to AlpacaClient
+
+v3.1.0 (2026-03-28) - Fix position persistence and stale order blocking
+  - Added position INSERT to _execute_trade() — positions now saved to DB
+  - Added position UPDATE to _close_position() — exit price, P&L calculated
+  - Added cancel_orders_for_symbol() — cancels stale orders before closing
+  - close_position() now clears pending orders first, preventing "shares held" errors
+  - Imported GetOrdersRequest/QueryOrderStatus for order management
+
 v3.0.1 (2026-01-21) - Fix position sync dict/object mismatch
   - Fixed sync_positions_with_broker() to use dict notation
   - Internal AlpacaClient returns dicts, not Position objects
@@ -358,10 +371,16 @@ class AlpacaClient:
         except ImportError:
             logger.warning("Alpaca news client not available")
 
+        # Import order management classes
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+
         # Store imports for later use
         self._MarketOrderRequest = MarketOrderRequest
         self._OrderSide = OrderSide
         self._TimeInForce = TimeInForce
+        self._GetOrdersRequest = GetOrdersRequest
+        self._QueryOrderStatus = QueryOrderStatus
         self._StockLatestQuoteRequest = StockLatestQuoteRequest
         self._StockBarsRequest = StockBarsRequest
         self._TimeFrame = TimeFrame
@@ -477,9 +496,35 @@ class AlpacaClient:
             'submitted_at': order.submitted_at.isoformat() if order.submitted_at else None,
         }
 
-    def close_position(self, symbol: str) -> Dict[str, Any]:
-        """Close a position."""
+    def cancel_orders_for_symbol(self, symbol: str) -> int:
+        """Cancel all open orders for a symbol. Returns count cancelled."""
+        cancelled = 0
         try:
+            request = self._GetOrdersRequest(
+                status=self._QueryOrderStatus.OPEN,
+                symbols=[symbol]
+            )
+            open_orders = self.trading_client.get_orders(filter=request)
+            for order in open_orders:
+                try:
+                    self.trading_client.cancel_order_by_id(order.id)
+                    cancelled += 1
+                    logger.info(f"Cancelled stale order {order.id} for {symbol}")
+                except Exception:
+                    pass  # Order may have already filled/cancelled
+            if cancelled:
+                import time
+                time.sleep(0.5)  # Brief pause for cancellations to settle
+        except Exception as e:
+            logger.warning(f"Could not check/cancel orders for {symbol}: {e}")
+        return cancelled
+
+    def close_position(self, symbol: str) -> Dict[str, Any]:
+        """Close a position, cancelling any stale orders first."""
+        try:
+            # Cancel stale orders first to prevent "shares held for orders"
+            self.cancel_orders_for_symbol(symbol)
+
             order = self.trading_client.close_position(symbol)
             return {
                 'success': True,
@@ -1167,11 +1212,13 @@ class ToolExecutor:
         }
 
     async def _execute_trade(self, inputs: Dict) -> Dict:
-        """Execute a trade."""
+        """Execute a trade and persist position to database."""
         symbol = inputs['symbol'].upper()
         side = inputs['side']
         quantity = inputs['quantity']
         reason = inputs.get('reason', 'No reason provided')
+        stop_loss = inputs.get('stop_loss')
+        take_profit = inputs.get('take_profit')
 
         logger.info(f"Executing trade: {side} {quantity} {symbol} - {reason}")
 
@@ -1186,31 +1233,97 @@ class ToolExecutor:
         if 'error' not in result:
             self.trades_executed += 1
 
-            # Log to database
             if self.db.pool:
                 try:
                     async with self.db.pool.acquire() as conn:
+                        # Log to orders table
                         await conn.execute("""
                             INSERT INTO orders (symbol, side, quantity, order_type, status, broker_order_id, order_purpose, notes)
                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                         """, symbol, side, quantity, 'market', result.get('status', 'submitted'),
                         result.get('order_id'), 'entry', reason)
+
+                        # Persist position to positions table
+                        if side.lower() in ['buy', 'long']:
+                            position_side = 'long'
+                        else:
+                            position_side = 'short'
+
+                        # Get entry price from broker if available
+                        entry_price = None
+                        try:
+                            quote = self.broker.get_quote(symbol)
+                            entry_price = quote.get('last') or quote.get('ask')
+                        except Exception:
+                            pass
+
+                        await conn.execute("""
+                            INSERT INTO positions (symbol, side, quantity, entry_price, stop_loss, take_profit, status, broker_position_id, notes)
+                            VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)
+                        """, symbol, position_side, quantity,
+                        entry_price or 0,
+                        stop_loss,
+                        take_profit,
+                        result.get('order_id'),
+                        reason)
+                        logger.info(f"Position persisted to DB: {position_side} {quantity} {symbol}")
                 except Exception as e:
-                    logger.warning(f"Could not log order to DB: {e}")
+                    logger.warning(f"Could not persist trade to DB: {e}")
 
         return result
 
     async def _close_position(self, inputs: Dict) -> Dict:
-        """Close a position."""
+        """Close a position and update database."""
         symbol = inputs['symbol'].upper()
         reason = inputs.get('reason', 'No reason provided')
 
         logger.info(f"Closing position: {symbol} - {reason}")
 
+        # Get current price before closing for exit_price record
+        exit_price = None
+        try:
+            quote = self.broker.get_quote(symbol)
+            exit_price = quote.get('last') or quote.get('bid')
+        except Exception:
+            pass
+
         result = self.broker.close_position(symbol)
 
         if result.get('success'):
             self.trades_executed += 1
+
+            # Update position in database
+            if self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        await conn.execute("""
+                            UPDATE positions SET
+                                status = 'closed',
+                                exit_price = $1,
+                                exit_time = NOW(),
+                                exit_reason = $2,
+                                realized_pnl = CASE
+                                    WHEN entry_price > 0 AND $1 IS NOT NULL THEN
+                                        CASE WHEN side = 'long'
+                                            THEN ($1 - entry_price) * quantity
+                                            ELSE (entry_price - $1) * quantity
+                                        END
+                                    ELSE NULL
+                                END,
+                                realized_pnl_pct = CASE
+                                    WHEN entry_price > 0 AND $1 IS NOT NULL THEN
+                                        CASE WHEN side = 'long'
+                                            THEN (($1 - entry_price) / entry_price) * 100
+                                            ELSE ((entry_price - $1) / entry_price) * 100
+                                        END
+                                    ELSE NULL
+                                END,
+                                updated_at = NOW()
+                            WHERE symbol = $3 AND status = 'open'
+                        """, exit_price, reason, symbol)
+                        logger.info(f"Position closed in DB: {symbol} @ {exit_price} - {reason}")
+                except Exception as e:
+                    logger.warning(f"Could not update position close in DB: {e}")
 
         return result
 
@@ -1378,18 +1491,27 @@ class UnifiedAgent:
         logger.info("Agent shutdown complete")
 
     def _is_market_open(self) -> bool:
-        """Check if US market is open."""
-        now = datetime.now(ET)
+        """Check if US market is open using Alpaca clock API.
 
-        # Weekend check
+        Uses the broker's authoritative clock endpoint which accounts for
+        weekends, holidays, and early closes. Falls back to timezone-based
+        check only if the API call fails.
+        """
+        # Primary: ask Alpaca directly (timezone-proof)
+        try:
+            clock = self.broker.get_clock()
+            is_open = clock['is_open']
+            logger.info(f"Alpaca clock: is_open={is_open}, next_close={clock.get('next_close', 'N/A')}")
+            return is_open
+        except Exception as e:
+            logger.warning(f"Alpaca clock check failed, using timezone fallback: {e}")
+
+        # Fallback: timezone-based check
+        now = datetime.now(ET)
         if now.weekday() >= 5:
             return False
-
         current_time = now.time()
-        market_open = time(9, 30)
-        market_close = time(16, 0)
-
-        return market_open <= current_time < market_close
+        return time(9, 30) <= current_time < time(16, 0)
 
     def _get_system_prompt(self, mode: str) -> str:
         """Get system prompt for Claude."""
