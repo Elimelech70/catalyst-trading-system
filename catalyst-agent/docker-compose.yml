@@ -1,21 +1,31 @@
-# Name of Application: Catalyst Trading System — Agent Body
+# Name of Application: Catalyst Trading System -- Agent Body
 # Name of file: docker-compose.yml
-# Version: 1.0.0
-# Last Updated: 2026-03-03
+# Version: 3.0.0
+# Last Updated: 2026-04-08
 # Purpose: Container orchestration for big_bro agent body components
+#
+# v2.4 Architecture:
+#   - coordinator.py runs on HOST (the brain -- 6-layer cycle)
+#   - Organ scripts run in Docker (the body -- execute, reflex, report)
+#   - Tool agents run on HOST alongside coordinator
+#   - ONNX models mounted for cerebellum/neural inference
 #
 # Components:
 #   - occipital: Pattern recognition (the visual cortex)
 #   - cerebellum: Procedure execution (learned behaviours)
 #   - hippocampus: Memory binding (where memories live)
+#   - monitor: Position monitoring / proprioception (reflexive signals)
+#   - neural: ONNX model inference (candle model + fused model)
 #
-# NOTE: PFC (Claude Code) runs on HOST, not in Docker.
-#       Claude Code IS the PFC. The architecture IS Claude.
+# HOST components (not in Docker):
+#   - coordinator.py: The brain (6-layer cycle, Attention State Machine)
+#   - Tool agents: Position Monitor, Stop Loss Enforcer, Risk Aggregator
+#   - PFC (Claude Code): big_bro -- called by coordinator for novel situations
 
 services:
   # =========================================================================
-  # OCCIPITAL LOBE — Pattern Recognition
-  # Watches communication table for scan tasks from PFC/cerebellum.
+  # OCCIPITAL LOBE -- Pattern Recognition
+  # Watches communication table for scan tasks from coordinator/cerebellum.
   # Matches price data against its shape memories (candlestick, volume).
   # Writes matched patterns back to communication table.
   # =========================================================================
@@ -29,6 +39,7 @@ services:
       AGENT_DB_PATH: /var/lib/catalyst/db/agent.db
       ALPACA_API_KEY: ${ALPACA_API_KEY}
       ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
+      BROKER_TYPE: ${BROKER_TYPE:-alpaca}
       PAPER_TRADING: ${PAPER_TRADING:-true}
       POLL_INTERVAL: "2.0"
       LOG_LEVEL: INFO
@@ -49,10 +60,10 @@ services:
         max-file: "3"
 
   # =========================================================================
-  # CEREBELLUM — Procedure Execution
-  # Reads task matrices from PFC. Orchestrates occipital for scanning.
-  # Runs risk checks. Executes trades via Alpaca API.
-  # The HOW to PFC's WHAT.
+  # CEREBELLUM -- Procedure Execution
+  # Reads task matrices from coordinator. Orchestrates occipital for scanning.
+  # Runs risk checks. Executes trades via broker (Alpaca/Moomoo).
+  # The HOW to coordinator's WHAT.
   # =========================================================================
   cerebellum:
     build:
@@ -62,12 +73,55 @@ services:
     network_mode: host
     environment:
       AGENT_DB_PATH: /var/lib/catalyst/db/agent.db
+      BROKER_TYPE: ${BROKER_TYPE:-alpaca}
       ALPACA_API_KEY: ${ALPACA_API_KEY}
       ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
       ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
       ALPACA_DATA_URL: ${ALPACA_DATA_URL:-https://data.alpaca.markets}
+      MOOMOO_API_KEY: ${MOOMOO_API_KEY:-}
+      MOOMOO_SECRET_KEY: ${MOOMOO_SECRET_KEY:-}
+      MOOMOO_BASE_URL: ${MOOMOO_BASE_URL:-}
       PAPER_TRADING: ${PAPER_TRADING:-true}
       DATABASE_URL: ${DATABASE_URL}
+      POLL_INTERVAL: "2.0"
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - /var/lib/catalyst/db:/var/lib/catalyst/db
+      - /var/lib/catalyst/models:/var/lib/catalyst/models:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; c=sqlite3.connect('/var/lib/catalyst/db/agent.db'); c.execute('SELECT 1'); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  # MONITOR -- Position Monitoring / Proprioception
+  # Tracks open positions, P&L, and risk exposure.
+  # Publishes reflexive signals: stop-loss trigger, risk warnings,
+  # near-close flag, position change notifications.
+  # Does NOT decide strategy. Feels pain and reports it.
+  # =========================================================================
+  monitor:
+    build:
+      context: .
+      dockerfile: monitor/Dockerfile
+    container_name: catalyst-monitor
+    network_mode: host
+    environment:
+      AGENT_DB_PATH: /var/lib/catalyst/db/agent.db
+      BROKER_TYPE: ${BROKER_TYPE:-alpaca}
+      ALPACA_API_KEY: ${ALPACA_API_KEY}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      PAPER_TRADING: ${PAPER_TRADING:-true}
       POLL_INTERVAL: "2.0"
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: 1
@@ -87,12 +141,12 @@ services:
         max-file: "3"
 
   # =========================================================================
-  # HIPPOCAMPUS — Memory Binding
+  # HIPPOCAMPUS -- Memory Binding
   # Reads ALL results from communication table.
-  # Builds combined pictures for PFC consumption.
+  # Builds combined pictures for coordinator consumption.
   # Stores learnings in its own local database.
   # Maintains memory bindings between related knowledge.
-  # PFC determines what to learn. Hippocampus holds what was learned.
+  # Coordinator determines what to learn. Hippocampus holds what was learned.
   # =========================================================================
   hippocampus:
     build:
@@ -116,6 +170,46 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  # NEURAL CORTEX -- ONNX Model Inference
+  # Runs Candle Model + Fused CatalystNet for CPU inference.
+  # Candle Model: direction classification + confidence + predicted returns
+  # Fused Model: 5-horizon forward return prediction (5m, 15m, 1h, 4h, 1d)
+  # Trained on laptop (RTX 4050), deployed here for production.
+  # Models are broker-agnostic -- same ONNX works on US and Intl deployments.
+  # =========================================================================
+  neural:
+    build:
+      context: .
+      dockerfile: neural/Dockerfile
+    container_name: catalyst-neural
+    network_mode: host
+    environment:
+      AGENT_DB_PATH: /var/lib/catalyst/db/agent.db
+      CANDLE_MODEL_PATH: /var/lib/catalyst/models/candle_model.onnx
+      FUSED_MODEL_PATH: /var/lib/catalyst/models/catalyst_net.onnx
+      NEWS_MODEL_PATH: /var/lib/catalyst/models/news_model.onnx
+      BROKER_TYPE: ${BROKER_TYPE:-alpaca}
+      MARKET: ${MARKET:-US}
+      POLL_INTERVAL: "2.0"
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - /var/lib/catalyst/db:/var/lib/catalyst/db
+      - /var/lib/catalyst/models:/var/lib/catalyst/models:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; c=sqlite3.connect('/var/lib/catalyst/db/agent.db'); c.execute('SELECT 1'); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     logging:
       driver: "json-file"
       options:
