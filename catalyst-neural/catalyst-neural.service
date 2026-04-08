@@ -1,0 +1,19 @@
+[Unit]
+Description=Catalyst Neural — Market-Aware Data Collection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/craig/catalyst/catalyst-neural
+ExecStart=/home/craig/catalyst/catalyst-neural/venv/bin/python run.py watch
+Restart=on-failure
+RestartSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=catalyst-neural
+
+[Install]
+WantedBy=default.target

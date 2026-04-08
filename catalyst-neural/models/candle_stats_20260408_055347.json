@@ -1,0 +1,65 @@
+{
+  "run_id": "20260408_055347",
+  "model_type": "candle",
+  "overall_direction_accuracy": 37.74527952610144,
+  "horizon_stats": [
+    {
+      "name": "5m",
+      "samples": 16206,
+      "model_mae": "0.1644291",
+      "baseline_mae": "0.1603367",
+      "improvement": "-2.552376",
+      "r_squared": "-0.012423873",
+      "mean_error": -0.006430960260331631,
+      "std_error": 0.3201962113380432
+    },
+    {
+      "name": "15m",
+      "samples": 16088,
+      "model_mae": "0.29211396",
+      "baseline_mae": "0.28812864",
+      "improvement": "-1.3831723",
+      "r_squared": "-0.0021470785",
+      "mean_error": -0.025771401822566986,
+      "std_error": 0.539125382900238
+    },
+    {
+      "name": "1h",
+      "samples": 15557,
+      "model_mae": "0.6578333",
+      "baseline_mae": "0.6424611",
+      "improvement": "-2.3926985",
+      "r_squared": "-0.012489915",
+      "mean_error": -0.12883874773979187,
+      "std_error": 1.072109580039978
+    }
+  ],
+  "dataset_info": {
+    "train_samples": 64823,
+    "val_samples": 16206,
+    "lookback": 60,
+    "securities_5m": 59,
+    "securities_15m": 59,
+    "direction_balance": {
+      "bullish": "28637 (35.3%)",
+      "bearish": "29317 (36.2%)",
+      "neutral": "23075 (28.5%)"
+    },
+    "direction_threshold": "\u00b10.05%"
+  },
+  "config": {
+    "lookback_candles": 60,
+    "forward_horizons": [
+      5,
+      15,
+      60,
+      240,
+      1440
+    ],
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "epochs": 50,
+    "validation_split": 0.2,
+    "device": "cuda"
+  }
+}

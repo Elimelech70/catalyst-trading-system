@@ -75,3 +75,10 @@ credentials/
 backups/
 *.bak
 venv/
+
+# Neural models and checkpoints
+*.onnx
+*.onnx.data
+*.pt
+*.db
+checkpoints/

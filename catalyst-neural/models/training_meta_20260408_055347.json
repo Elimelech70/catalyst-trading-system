@@ -1,0 +1,37 @@
+{
+  "run_id": "20260408_055347",
+  "model_type": "candle",
+  "config": {
+    "lookback_candles": 60,
+    "forward_horizons": [
+      5,
+      15,
+      60,
+      240,
+      1440
+    ],
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "epochs": 50,
+    "validation_split": 0.2,
+    "device": "cuda"
+  },
+  "total_parameters": 132103,
+  "encoder_parameters": {
+    "encoder_5m": 40448,
+    "encoder_15m": 40448,
+    "fusion": 50304,
+    "direction_head": 387,
+    "return_head": 387,
+    "confidence_head": 129
+  },
+  "best_val_loss": 1.5793503729377205,
+  "epochs_trained": 17,
+  "final_train_loss": 1.3214218387961858,
+  "final_val_loss": 1.627214130923504,
+  "final_dir_acc": 39.27557694680983,
+  "final_val_mae": 0.39123094578584033,
+  "training_time_seconds": 141.64570212364197,
+  "device": "cuda",
+  "checkpoint": "/home/craig/catalyst/catalyst-neural/models/candle_model_20260408_055347.pt"
+}

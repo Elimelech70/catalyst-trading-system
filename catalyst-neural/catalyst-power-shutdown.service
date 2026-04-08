@@ -1,0 +1,11 @@
+[Unit]
+Description=Catalyst Neural — Set RTC wake alarm before shutdown
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/catalyst-power set-alarm
+
+[Install]
+WantedBy=shutdown.target reboot.target halt.target

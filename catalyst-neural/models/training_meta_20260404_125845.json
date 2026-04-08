@@ -1,0 +1,33 @@
+{
+  "run_id": "20260404_125845",
+  "config": {
+    "lookback_candles": 60,
+    "forward_horizons": [
+      5,
+      15,
+      60,
+      240,
+      1440
+    ],
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "epochs": 100,
+    "validation_split": 0.2,
+    "device": "cuda"
+  },
+  "total_parameters": 1657350,
+  "encoder_parameters": {
+    "time_series": 48704,
+    "news": 1381248,
+    "macro": 10560,
+    "fusion": 216838
+  },
+  "best_val_loss": 1.834145211952104,
+  "epochs_trained": 16,
+  "final_train_loss": 0.6068651410395449,
+  "final_val_loss": 1.8377987457695755,
+  "final_val_mae": 1.1916399151086807,
+  "training_time_seconds": 121.19235968589783,
+  "device": "cuda",
+  "checkpoint": "/home/craig/catalyst/catalyst-neural/models/catalyst_net_20260404_125845.pt"
+}

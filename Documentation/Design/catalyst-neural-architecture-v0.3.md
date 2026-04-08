@@ -3,8 +3,8 @@
 > *"Don't tell the network what to see. Show it what happened. Let it find what matters."*
 > *"You will know them by their fruits."* — Matthew 7:16
 
-**Version:** 0.3.0
-**Date:** 2026-04-07
+**Version:** 0.3.1
+**Date:** 2026-04-08
 **Authors:** Craig + Claude
 **Hardware:** Ubuntu laptop, RTX 4050 (6GB VRAM), 16GB RAM, CUDA
 **Type:** Architecture Document
@@ -19,6 +19,7 @@
 | 0.1.0 | 2026-04-04 | Initial document — data collection pipeline, single model concept |
 | 0.2.0 | 2026-04-06 | Three-path learning loop; fruit test continuous validation; Phase plan formalised |
 | 0.3.0 | 2026-04-07 | Two-model split clarified (Candle Model + News-to-Security Model); Phase 1 scope tightened; macro/news collected but not trained Phase 1; context discovery formalised; adversarial data labelling added; four-phase alignment with Strategy Roadmap |
+| 0.3.1 | 2026-04-08 | Dual-droplet deployment: US droplet (68.183.177.11) + International droplet (209.38.87.27); deployment pipeline updated for both environments; architecture diagram corrected |
 
 ---
 
@@ -47,34 +48,34 @@ Phase 1 deploys the first two. Macro data is collected from Day 1 but training b
 ## Architecture
 
 ```
-DROPLET (DigitalOcean)                    LAPTOP (Training Station)
+US DROPLET (68.183.177.11)                LAPTOP (Training Station)
 ┌─────────────────────┐                   ┌──────────────────────────────┐
-│                     │                   │                              │
+│ v8 Agent Body       │                   │                              │
 │  US Scanner ────────┼──── picks ──────▶│  Security Registry           │
-│  HKEX Scanner ──────┤                   │    │                        │
-│                     │                   │    ▼                        │
-│  Consciousness DB ──┼──── context ────▶│  Multi-Resolution Collector  │
-│                     │                   │    │                        │
+│  SQLite agent.db    │                   │    │                        │
+│  Signal Bus         │                   │    ▼                        │
+│  Neural Container ◀─┼── deploy ────────│  Multi-Resolution Collector  │
+│  (standalone ONNX)  │                   │    │                        │
 └─────────────────────┘                   │    ├── Candle Collector     │
                                           │    │   (1m, 5m, 15m)       │
-External APIs                             │    │                        │
+INTL DROPLET (209.38.87.27)              │    │                        │
 ┌─────────────────────┐                   │    ├── Macro Collector      │
-│ Alpaca (US candles) │──── stream ─────▶│    │   (currencies, yields, │
-│ Yahoo Finance       │                   │    │    VIX, sector ETFs)   │
-│ NewsAPI / Finnhub   │──── news ───────▶│    │                        │
-│ FRED (econ data)    │──── macro ──────▶│    └── News Collector       │
-│                     │                   │        (headline + source   │
-└─────────────────────┘                   │         tier + timestamp)   │
-                                          │                              │
-                                          │    ▼                        │
+│ MCP Architecture    │                   │    │   (currencies, yields, │
+│  HKEX Scanner ──────┼──── picks ──────▶│    │    VIX, sector ETFs)   │
+│  PostgreSQL + Redis │                   │    │                        │
+│  Moomoo/OpenD       │                   │    └── News Collector       │
+│  Coordinator ◀──────┼── deploy ────────│        (headline + source   │
+│  (cerebellum.py     │                   │         tier + timestamp)   │
+│   embedded ONNX)    │                   │                              │
+└─────────────────────┘                   │    ▼                        │
                                           │  SQLite Storage             │
-                                          │  (time-aligned, raw)        │
-                                          │                              │
-                                          │    ▼                        │
-                                          │  Label Generator            │
-                                          │  (forward returns, offline) │
-                                          │                              │
-                                          │    ▼                        │
+External APIs                             │  (time-aligned, raw)        │
+┌─────────────────────┐                   │                              │
+│ Alpaca (US candles) │──── stream ─────▶│    ▼                        │
+│ Yahoo Finance       │                   │  Label Generator            │
+│ NewsAPI / Finnhub   │──── news ───────▶│  (forward returns, offline) │
+│ FRED (econ data)    │──── macro ──────▶│                              │
+└─────────────────────┘                   │    ▼                        │
                                           │  Training Pipeline          │
                                           │  (PyTorch + CUDA)           │
                                           │    │                        │
@@ -91,7 +92,8 @@ External APIs                             │    │                        │
                                           │  Trained Models (.onnx)     │
                                           │    │                        │
                                           │    ▼  (deploy via SCP)      │
-                                          │  → Droplet (CPU inference)  │
+                                          │  → US Droplet (neural ctr)  │
+                                          │  → Intl Droplet (cerebellum)│
                                           └──────────────────────────────┘
 ```
 
@@ -104,7 +106,7 @@ External APIs                             │    │                        │
 - Collects all data streams (candles, news, macro, big mover securities)
 - Trains models on GPU
 - Exports models as ONNX
-- Deploys to droplet via SCP
+- Deploys to both droplets via SCP (US + International)
 - Measures production fruit (prediction vs actual outcome via positions table)
 - Clusters failures by context (news category, sector, geography, time of day)
 - Investigates adversarial anomalies
@@ -261,18 +263,23 @@ When context discovery reveals systematic failures by context type, separate can
 5. Storage writes everything to SQLite with microsecond timestamps
 6. Label Generator (offline, end of day) computes forward returns
 7. Training Pipeline (PyTorch + CUDA) trains Candle Model and News-to-Security Model
-8. Export to ONNX → SCP to droplet → coordinator loads into Layer 4
+8. Export to ONNX → deploy to both droplets (US: neural container, Intl: cerebellum in coordinator)
 
 ---
 
 ## Deployment Pipeline
 
+Models deploy to **two environments** with different architectures:
+
+| Environment | IP | Architecture | Neural Integration |
+|---|---|---|---|
+| **US Droplet** | 68.183.177.11 | v8 Agent Body (SQLite, signal bus) | Standalone Docker container (`catalyst-neural`) polls agent.db |
+| **Intl Droplet** | 209.38.87.27 | MCP (PostgreSQL, Redis, Moomoo/OpenD) | `cerebellum.py` embedded in coordinator process |
+
 **Train on laptop:**
 ```bash
-python train_candle.py --epochs 50 --output candle_model.pt
-python train_news.py --epochs 30 --output news_model.pt
-python export_onnx.py --input candle_model.pt --output candle_model.onnx
-python export_onnx.py --input news_model.pt --output news_model.onnx
+python run.py train candle --epochs 50
+python run.py export candle checkpoints/candle_model_XXXX.pt
 ```
 
 **Validate before deploy:**
@@ -282,17 +289,39 @@ python validate.py --model candle_model.onnx --test_data holdout_set
 # big_bro approves deployment to production
 ```
 
-**Deploy to droplet:**
+**Deploy to US Droplet (automated):**
 ```bash
-scp candle_model.onnx user@droplet-ip:/catalyst/models/
-scp news_model.onnx user@droplet-ip:/catalyst/models/
+./deploy/deploy-neural.sh
+# Copies ONNX models + cortex.py, builds/restarts catalyst-neural container
+# Models dir: /root/catalyst-agent/neural/model/
+# Env vars: CANDLE_MODEL_PATH, FUSED_MODEL_PATH
 ```
 
-**Inference on droplet (coordinator Layer 4):**
+**Deploy to International Droplet (manual):**
+```bash
+SSH_KEY=~/.ssh/Catalyst-Linux-Claude
+INTL=root@209.38.87.27
+MODELS_DIR=/root/Catalyst-Trading-System-International/catalyst-international/models
+
+scp -i $SSH_KEY models/candle_model.onnx $INTL:$MODELS_DIR/
+scp -i $SSH_KEY models/candle_model.onnx.data $INTL:$MODELS_DIR/
+# Update cerebellum.py if model interface changed
+# Update model_version.json
+ssh -i $SSH_KEY $INTL 'cd /root/Catalyst-Trading-System-International/catalyst-international && \
+  docker compose build coordinator && docker compose up -d coordinator'
+```
+
+**Inference — US Droplet (cortex.py in neural container):**
 ```python
 import onnxruntime as rt
-candle_session = rt.InferenceSession('/catalyst/models/candle_model.onnx')
-news_session = rt.InferenceSession('/catalyst/models/news_model.onnx')
+candle_session = rt.InferenceSession('/app/neural/model/candle_model.onnx')
+fused_session = rt.InferenceSession('/app/neural/model/catalyst_net.onnx')
+```
+
+**Inference — Intl Droplet (cerebellum.py in coordinator):**
+```python
+import onnxruntime as rt
+candle_session = rt.InferenceSession('/app/models/candle_model.onnx')
 ```
 
 ---
@@ -382,7 +411,7 @@ If majority of checks suggest manufactured move:
 
 **Data collection:** All streams running (candles, news, macro)
 **Training:** Candle Model + News-to-Security Model
-**Deployment:** Both models via ONNX → droplet
+**Deployment:** Both models via ONNX → US droplet + Intl droplet
 **Success:** >65% direction accuracy, positive trade expectancy, stop loss rate declining
 
 - [x] Security registry
@@ -394,8 +423,8 @@ If majority of checks suggest manufactured move:
 - [ ] Forward returns labels generated
 - [ ] Candle Model trained + validated
 - [ ] News-to-Security Model trained + validated
-- [ ] Both models deployed to droplet
-- [ ] Coordinator Layer 4 reading both neural signals
+- [ ] Both models deployed to US droplet (neural container) + Intl droplet (cerebellum)
+- [ ] Coordinator Layer 4 reading both neural signals (both environments)
 - [ ] Attention State Machine live (Mode 1 / Mode 2)
 - [ ] Tool agents deployed (Position Monitor, Stop Loss Enforcer, Risk Aggregator)
 - [ ] Feedback loop operational (exit_type recorded per trade)
@@ -431,7 +460,7 @@ If majority of checks suggest manufactured move:
 2. **Forward returns are the only ground truth.** Price went up or down. That's what matters.
 3. **Source provenance is a feature.** Who said it matters as much as what was said.
 4. **Collect everything, train incrementally.** Don't wait for perfect data. Collect now, train in phases.
-5. **Train on laptop, infer on droplet.** GPU for training. CPU-speed ONNX inference is sufficient for trading timeframes.
+5. **Train on laptop, infer on both droplets.** GPU for training. CPU-speed ONNX inference is sufficient for trading timeframes. Deploy to US droplet (standalone neural container) and International droplet (cerebellum in coordinator).
 6. **The model earns its deployment.** Production accuracy against positions table. No proof = no deployment. big_bro approves.
 7. **Stop loss exits are the highest-value training signal.** Each one is a lesson the model failed to learn in time.
 8. **Context shapes behaviour.** The same candle in different contexts may need different models.
@@ -447,11 +476,11 @@ If majority of checks suggest manufactured move:
 | Catalyst Strategy Roadmap | v1.0 | Strategy | Four-phase plan — objectives, sequencing, fruit tests |
 | AI Agent Architecture | v8.0 | Architecture | General biological pattern |
 | Catalyst AI Architecture | v2.3 | Architecture | Implementation — coordinator, 6-layer cycle, tool agents |
-| Catalyst Neural Architecture (this doc) | v0.3.0 | Architecture | ML pipeline — collection, training, deployment |
+| Catalyst Neural Architecture (this doc) | v0.3.1 | Architecture | ML pipeline — collection, training, deployment |
 | Neural Cortex Configuration | (pending) | Configuration | Deployed ONNX service — model versions, paths, schedules |
 
 ---
 
 *"For just as each of us has one body with many members, and these members do not all have the same function, so in Christ we, though many, form one body."* — Romans 12:4-5
 
-*Catalyst Neural Architecture v0.3.0 — Craig + Claude — 2026-04-07*
+*Catalyst Neural Architecture v0.3.1 — Craig + Claude — 2026-04-08*

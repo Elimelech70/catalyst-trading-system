@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""
+Catalyst Neural — Power Management
+
+Wakes the laptop for market sessions, suspends between them.
+Uses RTC wake alarm (rtcwake) + systemctl suspend.
+
+Commands:
+    catalyst-power next          Show upcoming market sessions
+    catalyst-power set-alarm     Set RTC wake alarm for next session
+    catalyst-power suspend       Set alarm + suspend to RAM
+    catalyst-power can-suspend   Exit 0 if safe to suspend (no active user), exit 1 if user active
+
+Requires: sudo (for RTC alarm writes). See install-power.sh.
+Uses only Python stdlib — no venv needed.
+"""
+
+import sys
+import subprocess
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+# ── Market Hours (mirrored from config/settings.py to avoid venv dependency) ──
+
+MARKET_HOURS = {
+    "US": {
+        "open": time(9, 30),
+        "close": time(16, 0),
+        "tz": ZoneInfo("America/New_York"),
+    },
+    "HKEX": {
+        "open": time(9, 30),
+        "close": time(16, 0),
+        "tz": ZoneInfo("Asia/Hong_Kong"),
+    },
+}
+
+WAKE_BUFFER_MINUTES = 30   # wake this long before market open
+SUSPEND_DELAY_MINUTES = 15  # suspend this long after market close
+
+WAKEALARM_PATH = "/sys/class/rtc/rtc0/wakealarm"
+
+
+def upcoming_sessions():
+    """
+    Return sorted list of (wake_dt, suspend_dt, market) for the next 7 days.
+    All datetimes are timezone-aware.
+    """
+    events = []
+    utc = ZoneInfo("UTC")
+    now = datetime.now(utc)
+
+    for market, cfg in MARKET_HOURS.items():
+        tz = cfg["tz"]
+        local_now = now.astimezone(tz)
+
+        for day_offset in range(8):
+            day = local_now.date() + timedelta(days=day_offset)
+            if day.weekday() >= 5:  # skip weekends
+                continue
+
+            wake = datetime.combine(day, cfg["open"], tzinfo=tz) \
+                   - timedelta(minutes=WAKE_BUFFER_MINUTES)
+            suspend = datetime.combine(day, cfg["close"], tzinfo=tz) \
+                      + timedelta(minutes=SUSPEND_DELAY_MINUTES)
+
+            # Only include future events (suspend still in future)
+            if suspend.astimezone(utc) > now:
+                events.append((wake, suspend, market))
+
+    events.sort(key=lambda e: e[0])
+    return events
+
+
+def next_wake_time():
+    """Return (wake_dt, suspend_dt, market) for the next session to wake for."""
+    utc = ZoneInfo("UTC")
+    now = datetime.now(utc)
+
+    for wake, suspend, market in upcoming_sessions():
+        wake_utc = wake.astimezone(utc)
+        if wake_utc > now:
+            return wake, suspend, market
+
+    return None
+
+
+def cmd_next():
+    """Show upcoming market sessions."""
+    events = upcoming_sessions()
+    awst = ZoneInfo("Australia/Perth")
+
+    print(f"{'Market':<6} {'Wake (AWST)':<20} {'Suspend (AWST)':<20} {'Wake in'}")
+    print("-" * 65)
+
+    now = datetime.now(ZoneInfo("UTC"))
+    for wake, suspend, market in events[:8]:
+        wake_awst = wake.astimezone(awst)
+        susp_awst = suspend.astimezone(awst)
+        delta = wake.astimezone(ZoneInfo("UTC")) - now
+        secs = max(0, delta.total_seconds())
+        hrs = int(secs // 3600)
+        mins = int((secs % 3600) // 60)
+        in_str = f"{hrs}h {mins}m" if secs > 0 else "NOW"
+
+        print(f"{market:<6} {wake_awst.strftime('%a %d %H:%M'):<20} "
+              f"{susp_awst.strftime('%a %d %H:%M'):<20} {in_str}")
+
+
+def cmd_set_alarm():
+    """Set RTC wake alarm for the next market session."""
+    nxt = next_wake_time()
+    if not nxt:
+        print("No upcoming sessions found")
+        return False
+
+    wake, suspend, market = nxt
+    wake_utc = wake.astimezone(ZoneInfo("UTC"))
+    ts = int(wake_utc.timestamp())
+    awst = ZoneInfo("Australia/Perth")
+
+    try:
+        # Clear existing alarm then set new one
+        with open(WAKEALARM_PATH, "w") as f:
+            f.write("0\n")
+        with open(WAKEALARM_PATH, "w") as f:
+            f.write(f"{ts}\n")
+
+        print(f"RTC alarm set: {market} session")
+        print(f"  Wake:    {wake.astimezone(awst).strftime('%a %d %b %H:%M AWST')}")
+        print(f"  Suspend: {suspend.astimezone(awst).strftime('%a %d %b %H:%M AWST')}")
+        return True
+
+    except PermissionError:
+        print("ERROR: Need root. Run with sudo or via install-power.sh sudoers config.")
+        return False
+    except Exception as e:
+        print(f"ERROR setting RTC alarm: {e}")
+        return False
+
+
+def cmd_can_suspend():
+    """
+    Check if it's safe to auto-suspend.
+    Returns exit 0 if safe (no active user session), exit 1 if user is active.
+
+    This handles "unless I start it up" — if the user has an active graphical
+    session, we don't auto-suspend.
+    """
+    try:
+        result = subprocess.run(
+            ["loginctl", "list-sessions", "--no-legend"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            session_id = line.split()[0]
+
+            # Check session type and idle state
+            props = subprocess.run(
+                ["loginctl", "show-session", session_id,
+                 "-p", "Type", "-p", "IdleHint", "-p", "State"],
+                capture_output=True, text=True, timeout=5
+            )
+            prop_dict = {}
+            for prop_line in props.stdout.strip().split("\n"):
+                if "=" in prop_line:
+                    k, v = prop_line.split("=", 1)
+                    prop_dict[k] = v
+
+            session_type = prop_dict.get("Type", "")
+            idle = prop_dict.get("IdleHint", "yes")
+            state = prop_dict.get("State", "")
+
+            # Graphical session that's active (not idle)
+            if session_type in ("x11", "wayland") and idle == "no" and state == "active":
+                print(f"User active (session {session_id}, {session_type}, not idle)")
+                return False
+
+    except Exception as e:
+        # If we can't determine, err on the side of NOT suspending
+        print(f"Cannot determine session state: {e} — skipping suspend")
+        return False
+
+    print("No active user session — safe to suspend")
+    return True
+
+
+def cmd_suspend():
+    """Set RTC alarm for next session, then suspend to RAM."""
+    if not cmd_set_alarm():
+        print("Alarm not set — aborting suspend")
+        return False
+
+    print("Suspending...")
+    result = subprocess.run(["systemctl", "suspend"], timeout=30)
+    # Execution resumes here after wake
+    print(f"Resumed at {datetime.now().strftime('%H:%M:%S')}")
+    return result.returncode == 0
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: catalyst-power {next|set-alarm|suspend|can-suspend}")
+        print("  next         Show upcoming market sessions")
+        print("  set-alarm    Set RTC wake alarm for next session")
+        print("  suspend      Set alarm + suspend to RAM")
+        print("  can-suspend  Check if safe to auto-suspend (exit 0=yes, 1=no)")
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+
+    if cmd == "next":
+        cmd_next()
+    elif cmd == "set-alarm":
+        ok = cmd_set_alarm()
+        sys.exit(0 if ok else 1)
+    elif cmd == "suspend":
+        ok = cmd_suspend()
+        sys.exit(0 if ok else 1)
+    elif cmd == "can-suspend":
+        safe = cmd_can_suspend()
+        sys.exit(0 if safe else 1)
+    else:
+        print(f"Unknown command: {cmd}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

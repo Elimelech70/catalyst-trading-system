@@ -1,0 +1,84 @@
+{
+  "run_id": "20260406_005205",
+  "horizon_stats": [
+    {
+      "name": "5m",
+      "samples": 17604,
+      "model_mae": "0.17151752",
+      "baseline_mae": "0.16814308",
+      "improvement": "-2.0068874",
+      "r_squared": "-0.0055121183",
+      "mean_error": "0.005581914",
+      "std_error": "0.33225822",
+      "direction_accuracy": 49.460349920472616
+    },
+    {
+      "name": "15m",
+      "samples": 17486,
+      "model_mae": "0.31146836",
+      "baseline_mae": "0.30438894",
+      "improvement": "-2.3257818",
+      "r_squared": "-0.009111166",
+      "mean_error": "0.0118117165",
+      "std_error": "0.56346124",
+      "direction_accuracy": 50.291661900949336
+    },
+    {
+      "name": "1h",
+      "samples": 16955,
+      "model_mae": "0.70401347",
+      "baseline_mae": "0.65459406",
+      "improvement": "-7.5496254",
+      "r_squared": "-0.0670774",
+      "mean_error": "0.007144567",
+      "std_error": "1.1192993",
+      "direction_accuracy": 51.3299911530522
+    },
+    {
+      "name": "4h",
+      "samples": 14831,
+      "model_mae": "1.7765348",
+      "baseline_mae": "1.5817906",
+      "improvement": "-12.311631",
+      "r_squared": "-0.22980571",
+      "mean_error": "-0.20804666",
+      "std_error": "2.4463203",
+      "direction_accuracy": 51.736228170723486
+    },
+    {
+      "name": "1d",
+      "samples": 1056,
+      "model_mae": "3.2372289",
+      "baseline_mae": "4.3692055",
+      "improvement": "25.908066",
+      "r_squared": "0.24765646",
+      "mean_error": "-1.9621156",
+      "std_error": "3.3840036",
+      "direction_accuracy": 83.52272727272727
+    }
+  ],
+  "dataset_info": {
+    "train_samples": 70415,
+    "val_samples": 17604,
+    "timeframe": "5m",
+    "lookback": 60,
+    "securities": 59,
+    "macro_instruments": 15,
+    "news_articles": 0
+  },
+  "config": {
+    "lookback_candles": 60,
+    "forward_horizons": [
+      5,
+      15,
+      60,
+      240,
+      1440
+    ],
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "epochs": 20,
+    "validation_split": 0.2,
+    "device": "cuda"
+  }
+}

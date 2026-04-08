@@ -1,0 +1,4 @@
+aiosqlite>=0.20.0
+onnxruntime>=1.16.0
+yfinance>=0.2.36
+numpy>=1.26.0
