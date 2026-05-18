@@ -1,3 +1,4 @@
+
 # Catalyst Repo Hygiene — Multi-Host Setup Checklist
 
 **Name of Application:** Catalyst Trading System
