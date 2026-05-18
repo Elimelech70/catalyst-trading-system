@@ -1,1 +1,0 @@
-psql postgresql://catalyst_user:catalyst_dev_password@localhost:5432/catalyst_trading_dev
