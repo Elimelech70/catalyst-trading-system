@@ -25,6 +25,8 @@ Usage:
     python run.py train candle       # Train CandleModel v0.3
     python run.py train fused        # Train fused CatalystNet (original)
     python run.py export candle <checkpoint.pt>  # Export to ONNX
+    python run.py pipeline           # Full: labels → train → export → deploy both droplets
+    python run.py pipeline --skip-deploy  # Train + export only (no deploy)
 """
 
 import sys
@@ -225,6 +227,79 @@ def cmd_export(model_type, checkpoint_path, output_path=None):
         print(f"ERROR: Unknown model type '{model_type}'. Use 'candle' or 'fused'.")
 
 
+def cmd_pipeline(skip_deploy=False, epochs=None, force=False):
+    """Full pipeline: labels → train → export → deploy to both droplets."""
+    init_db()
+    deploy_dir = Path(__file__).parent / "deploy"
+
+    print(f"\n{'='*60}")
+    print(f"Catalyst Neural — Automated Pipeline")
+    print(f"{'='*60}\n")
+
+    # Step 1: Compute forward return labels
+    print(">>> Step 1/6: Computing forward return labels...")
+    compute_labels("5m")
+
+    # Step 2: Train CandleModel
+    print("\n>>> Step 2/6: Training CandleModel...")
+    overrides = {}
+    if epochs:
+        overrides["epochs"] = epochs
+    result = train_candle_model(overrides if overrides else None)
+
+    # Step 3: Find the checkpoint from this training run
+    print("\n>>> Step 3/6: Locating best checkpoint...")
+    models_dir = Path(__file__).parent / "models"
+    checkpoints = sorted(models_dir.glob("candle_model_*.pt"), key=lambda p: p.stat().st_mtime)
+    if not checkpoints:
+        print("ERROR: No checkpoint found after training. Aborting.")
+        return
+    latest_checkpoint = checkpoints[-1]
+    print(f"    Using: {latest_checkpoint.name}")
+
+    # Step 4: Export to ONNX
+    print("\n>>> Step 4/6: Exporting to ONNX...")
+    from training.export_onnx import export_candle_model
+    export_candle_model(str(latest_checkpoint))
+
+    if skip_deploy:
+        print("\n>>> Skipping deployment (--skip-deploy)")
+        print(f"\n{'='*60}")
+        print(f"Pipeline complete (local only)")
+        print(f"{'='*60}")
+        return
+
+    # Step 5: Deploy to US droplet
+    print("\n>>> Step 5/6: Deploying to US droplet (68.183.177.11)...")
+    us_script = deploy_dir / "deploy-neural.sh"
+    us_result = subprocess.run(
+        ["bash", str(us_script)],
+        cwd=str(deploy_dir),
+        timeout=300
+    )
+    if us_result.returncode != 0:
+        print("WARNING: US deployment failed — continuing to international...")
+
+    # Step 6: Deploy to International droplet
+    print("\n>>> Step 6/6: Deploying to International droplet (209.38.87.27)...")
+    intl_script = deploy_dir / "deploy-intl.sh"
+    intl_result = subprocess.run(
+        ["bash", str(intl_script)],
+        cwd=str(deploy_dir),
+        timeout=300
+    )
+    if intl_result.returncode != 0:
+        print("WARNING: International deployment failed.")
+
+    print(f"\n{'='*60}")
+    print(f"Pipeline complete!")
+    print(f"  Checkpoint: {latest_checkpoint.name}")
+    print(f"  ONNX:       models/candle_model.onnx")
+    print(f"  US deploy:  {'OK' if us_result.returncode == 0 else 'FAILED'}")
+    print(f"  Intl deploy: {'OK' if intl_result.returncode == 0 else 'FAILED'}")
+    print(f"{'='*60}")
+
+
 def _sleep_interruptible(seconds):
     """Sleep for N seconds, checking graceful shutdown every second."""
     global running
@@ -406,6 +481,16 @@ Examples:
     export_parser.add_argument("checkpoint", help="Path to .pt checkpoint")
     export_parser.add_argument("--output", default=None, help="Output ONNX path")
 
+    # pipeline
+    pipeline_parser = subparsers.add_parser("pipeline",
+                                             help="Full: labels → train → export → deploy")
+    pipeline_parser.add_argument("--skip-deploy", action="store_true",
+                                  help="Train + export only, skip deployment")
+    pipeline_parser.add_argument("--epochs", type=int, default=None,
+                                  help="Override max epochs")
+    pipeline_parser.add_argument("--force", action="store_true",
+                                  help="Run even if insufficient new data")
+
     args = parser.parse_args()
     
     if not args.command:
@@ -444,6 +529,8 @@ Examples:
                   overrides if overrides else None, args.dry_run)
     elif args.command == "export":
         cmd_export(args.model_type, args.checkpoint, args.output)
+    elif args.command == "pipeline":
+        cmd_pipeline(args.skip_deploy, args.epochs, args.force)
 
 
 if __name__ == "__main__":

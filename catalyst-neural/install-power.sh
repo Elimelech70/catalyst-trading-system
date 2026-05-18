@@ -9,6 +9,7 @@
 #   2. Adds passwordless sudo for catalyst-power (for RTC alarm access)
 #   3. Installs shutdown hook (sets next wake alarm before poweroff)
 #   4. Installs catalyst-neural user service (collection daemon)
+#   5. Installs catalyst-pipeline weekly timer (train + deploy)
 
 set -e
 
@@ -38,15 +39,22 @@ systemctl daemon-reload
 systemctl enable catalyst-power-shutdown.service
 echo "  Enabled catalyst-power-shutdown.service"
 
-# 4. User service for collection daemon
-echo "[4/4] Installing catalyst-neural user service..."
+# 4. User services for collection daemon + pipeline timer
+echo "[4/5] Installing catalyst-neural user service..."
 USER_SERVICE_DIR="/home/$USER/.config/systemd/user"
 mkdir -p "$USER_SERVICE_DIR"
 cp "$SCRIPT_DIR/catalyst-neural.service" "$USER_SERVICE_DIR/"
 chown -R "$USER:$USER" "$USER_SERVICE_DIR"
-# Enable as the user (not root)
 su - "$USER" -c "systemctl --user daemon-reload && systemctl --user enable catalyst-neural.service"
-echo "  Enabled catalyst-neural.service (user service)"
+echo "  Enabled catalyst-neural.service (collection daemon)"
+
+# 5. Weekly pipeline timer (train + export + deploy)
+echo "[5/5] Installing catalyst-pipeline timer..."
+cp "$SCRIPT_DIR/catalyst-pipeline.service" "$USER_SERVICE_DIR/"
+cp "$SCRIPT_DIR/catalyst-pipeline.timer" "$USER_SERVICE_DIR/"
+chown "$USER:$USER" "$USER_SERVICE_DIR/catalyst-pipeline.service" "$USER_SERVICE_DIR/catalyst-pipeline.timer"
+su - "$USER" -c "systemctl --user daemon-reload && systemctl --user enable catalyst-pipeline.timer"
+echo "  Enabled catalyst-pipeline.timer (weekly Sunday 20:00)"
 
 echo ""
 echo "=== Setup Complete ==="
@@ -54,13 +62,15 @@ echo ""
 echo "Verify:"
 echo "  catalyst-power next              # show upcoming sessions"
 echo "  sudo catalyst-power set-alarm    # test RTC alarm"
-echo "  cat /sys/class/rtc/rtc0/wakealarm"
+echo "  systemctl --user list-timers     # check pipeline timer"
 echo ""
-echo "Start collection now:"
-echo "  systemctl --user start catalyst-neural"
+echo "Start now:"
+echo "  systemctl --user start catalyst-neural   # start collection"
+echo "  systemctl --user start catalyst-pipeline # run pipeline once now"
 echo ""
 echo "The machine will now:"
 echo "  - Wake before each market session (HKEX + NYSE)"
 echo "  - Collect data during trading hours"
 echo "  - Suspend between sessions to save power"
 echo "  - Stay awake if you're actively using it"
+echo "  - Retrain + deploy models every Sunday at 20:00"
