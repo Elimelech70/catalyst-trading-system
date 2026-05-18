@@ -2,10 +2,10 @@
 
 **Name of Application:** Catalyst Trading System
 **Name of file:** catalyst-research-v1-implementation.md
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Created:** 2026-05-18
 **Updated by:** Craig + Claude
-**Companion to:** `Documentation/Design/catalyst-research-architecture-v1.md` (v1.1.0, 2026-04-26)
+**Companion to:** `Documentation/Design/catalyst-research-architecture-v1.md` (v1.2.0, 2026-05-18)
 **Purpose:** Buildable specification for v1 of the catalyst-research system. Translates the architecture document into concrete artefacts: full DDL, ingestion job specs, archetype orchestration design, folder layout, and cron schedule. This is the document the v1 build executes against.
 
 ---
@@ -15,6 +15,7 @@
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
 | 1.0.0 | 2026-05-18 | Craig + Claude | Initial guide. Spec drawn from architecture v1.1.0. |
+| 1.1.0 | 2026-05-18 | Craig + Claude | Schema home moved to the dedicated `catalyst_research` database (matching architecture v1.2.0). `` table prefix dropped — namespace isolation now comes from the DB. Phase 0.3, Phase 1, Phase 2 writes-to column, Phase 4.3 env vars, and Phase 4.5 cleanup updated accordingly. |
 
 ---
 
@@ -25,7 +26,7 @@ This guide assumes the architecture document has been read. It does not restate 
 The build is staged in four phases that map to Migration Steps 2–6 in the architecture:
 
 - **Phase 0** — preparation: credential rotation, DB snapshot, agent decommissioning confirmation
-- **Phase 1** — schema: full DDL applied to `catalyst_intl` alongside existing tables
+- **Phase 1** — schema: full DDL applied to the dedicated `catalyst_research` database
 - **Phase 2** — ingestion: country-by-country build of Layer 1–5 ingestion jobs
 - **Phase 3** — archetypes: orchestration of the four analytical Claude Code instances
 - **Phase 4** — operations: folder layout, cron schedule, inspection utilities, cleanup of old agent tables
@@ -40,12 +41,12 @@ Each phase has explicit entry and exit criteria. A phase is not complete until i
 
 ### 0.1 Snapshot the databases
 
-DigitalOcean managed PostgreSQL snapshot of `catalyst_intl` and `catalyst_research` taken before any DDL runs. The snapshot is insurance against schema mistakes during Phase 1.
+DigitalOcean managed PostgreSQL snapshot of `catalyst_research` taken before any DDL runs. The snapshot is insurance against the Phase 0.3 legacy-table drops and against schema mistakes during Phase 1. `catalyst_intl` is not modified by this build so does not strictly need a fresh snapshot, but one is cheap and prudent.
 
 ```bash
 # Triggered via DigitalOcean control panel or doctl:
-doctl databases backups list catalyst-intl
 doctl databases backups list catalyst-research
+doctl databases backups list catalyst-intl  # prudent, not required
 # Confirm a backup exists from today before proceeding.
 ```
 
@@ -57,18 +58,38 @@ The following credentials were known-exposed during the agent era and are rotate
 |---|---|---|
 | Anthropic API key (agent-era) | Revoke | — |
 | Anthropic API key (archetypes) | Provision new | `.env` → `ANTHROPIC_API_KEY` |
-| PostgreSQL password (catalyst_intl) | Rotate via DO panel | `.env` → `INTL_DATABASE_URL` |
+| PostgreSQL password (catalyst_research) | Rotate via DO panel | `.env` → `RESEARCH_DATABASE_URL` |
 | Alpaca paper/live keys | Revoke (US droplet decommissioned) | — |
 | Moomoo trade-unlock password | Rotate (kept; intl still uses Moomoo for data) | intl droplet `.env` |
 | GitHub token | Confirm current (rotated 2026-03-29 per memory) | local only |
 
-### 0.3 Decide on the database
+### 0.3 Prepare the target database
 
-Architecture Section 6 specifies `catalyst_intl` is repurposed. `catalyst_research` (the consciousness DB) is deprecated. v1 builds in `catalyst_intl`. After Phase 4, `catalyst_research` and `catalyst_dev` may be dropped.
+Architecture Section 6 (v1.2.0) specifies the dedicated `catalyst_research` database — the cluster DB originally provisioned for this purpose, currently holding only legacy consciousness-era tables. Phase 0 drops those legacy tables so Phase 1 lands in a clean DB.
 
-> ⚠️ The database is shared with running `catalyst-international` trading workloads. All Phase 1 DDL adds new tables only. No existing intl trading tables (`positions`, `orders`, `signals`, etc.) are modified by Phase 1.
+Identify the legacy tables (they vary slightly by deployment history) and confirm with `psql`:
 
-**Exit criteria:** snapshot exists, credentials rotated, target database confirmed.
+```bash
+psql "$RESEARCH_DATABASE_URL" -c "\dt"
+```
+
+Expected legacy candidates include `observations`, `learnings`, `messages`, and any consciousness-cycle artefacts. None of these share names with the new schema, so the drop is safe relative to the new build. Confirm against the snapshot from 0.1 before issuing the drops.
+
+```sql
+-- Wrapped in a transaction; abort if anything unexpected appears.
+BEGIN;
+DROP TABLE IF EXISTS observations CASCADE;
+DROP TABLE IF EXISTS learnings CASCADE;
+DROP TABLE IF EXISTS messages CASCADE;
+-- ...one DROP per legacy table identified at audit time...
+COMMIT;
+```
+
+> ⚠️ The `catalyst_intl` trading database is **not touched** by this build. Research and intl trading live in separate databases on the same cluster.
+
+`catalyst_dev` remains deprecated and may be dropped at Migration Step 6 (Phase 4.5).
+
+**Exit criteria:** snapshot exists, credentials rotated, `catalyst_research` legacy tables dropped, `RESEARCH_DATABASE_URL` set in the droplet `.env`.
 
 ---
 
@@ -82,11 +103,11 @@ The full DDL lives in a single migration file:
 catalyst-research/sql/001_initial_schema.sql
 ```
 
-It is applied to `catalyst_intl` as a single transaction. If any statement fails, the entire migration rolls back and the snapshot stays as fallback.
+It is applied to `catalyst_research` as a single transaction. If any statement fails, the entire migration rolls back and the snapshot stays as fallback.
 
 ### 1.1 Naming and discipline rules
 
-- All new table names are prefixed `cr_` (catalyst-research) to keep them distinct from intl trading tables in the shared database. Final table names below are shown with the prefix.
+- Table names are unprefixed. The dedicated `catalyst_research` database provides namespace isolation; no prefix is needed.
 - Every fact-bearing table carries: `event_date` (or `period_start` + `period_end`), `source`, `recorded_at`, `backfill`.
 - Facts are never updated in place. Revisions append a new row with the same business key and a later `recorded_at`. "Current best estimate" is a query, not a stored value.
 - Indexes are time-first on every fact table.
@@ -97,7 +118,7 @@ It is applied to `catalyst_intl` as a single transaction. If any statement fails
 
 ```sql
 -- catalyst-research/sql/001_initial_schema.sql
--- Applied to catalyst_intl. Adds catalyst-research tables alongside intl trading tables.
+-- Applied to the dedicated catalyst_research database (legacy tables already dropped in Phase 0.3).
 -- Run inside a single transaction.
 
 BEGIN;
@@ -106,7 +127,7 @@ BEGIN;
 -- Reference and entity tables
 -- ============================================================
 
-CREATE TABLE cr_countries (
+CREATE TABLE countries (
     country_code      char(3)        PRIMARY KEY,
     name              varchar(128)   NOT NULL,
     region            varchar(64),
@@ -115,43 +136,43 @@ CREATE TABLE cr_countries (
     created_at        timestamptz    NOT NULL DEFAULT now()
 );
 
-CREATE TABLE cr_sectors (
+CREATE TABLE sectors (
     id                bigserial      PRIMARY KEY,
     code              varchar(32)    NOT NULL,
     name              varchar(128)   NOT NULL,
-    country_code      char(3)        REFERENCES cr_countries(country_code),  -- NULL means 'global'
-    parent_sector_id  bigint         REFERENCES cr_sectors(id),
+    country_code      char(3)        REFERENCES countries(country_code),  -- NULL means 'global'
+    parent_sector_id  bigint         REFERENCES sectors(id),
     notes             text,
     created_at        timestamptz    NOT NULL DEFAULT now(),
     UNIQUE (code, country_code)
 );
 
-CREATE TABLE cr_themes (
+CREATE TABLE themes (
     id                bigserial      PRIMARY KEY,
     name              varchar(128)   NOT NULL UNIQUE,
     description       text,
     created_at        timestamptz    NOT NULL DEFAULT now()
 );
 
-CREATE TABLE cr_securities (
+CREATE TABLE securities (
     id                bigserial      PRIMARY KEY,
     symbol            varchar(32)    NOT NULL,
     exchange          varchar(16)    NOT NULL,
     name              varchar(256),
-    listing_country   char(3)        REFERENCES cr_countries(country_code),
-    primary_sector_id bigint         REFERENCES cr_sectors(id),
+    listing_country   char(3)        REFERENCES countries(country_code),
+    primary_sector_id bigint         REFERENCES sectors(id),
     notes             text,
     created_at        timestamptz    NOT NULL DEFAULT now(),
     UNIQUE (symbol, exchange)
 );
 
-CREATE TABLE cr_security_themes (
-    security_id  bigint  NOT NULL REFERENCES cr_securities(id) ON DELETE CASCADE,
-    theme_id     bigint  NOT NULL REFERENCES cr_themes(id) ON DELETE CASCADE,
+CREATE TABLE security_themes (
+    security_id  bigint  NOT NULL REFERENCES securities(id) ON DELETE CASCADE,
+    theme_id     bigint  NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
     PRIMARY KEY (security_id, theme_id)
 );
 
-CREATE TABLE cr_commodities (
+CREATE TABLE commodities (
     id                bigserial      PRIMARY KEY,
     name              varchar(64)    NOT NULL UNIQUE,
     category          varchar(32)    NOT NULL,  -- energy, industrial_metals, critical_minerals, precious_metals, agricultural
@@ -165,9 +186,9 @@ CREATE TABLE cr_commodities (
 -- Layer 1: Country macro indicators
 -- ============================================================
 
-CREATE TABLE cr_country_indicators (
+CREATE TABLE country_indicators (
     id             bigserial     PRIMARY KEY,
-    country_code   char(3)       NOT NULL REFERENCES cr_countries(country_code),
+    country_code   char(3)       NOT NULL REFERENCES countries(country_code),
     indicator_name varchar(64)   NOT NULL,        -- e.g. 'debt_to_gdp', 'military_spending_pct_gdp'
     dalio_power    varchar(32),                   -- education|innovation|competitiveness|military|trade|output|financial_center|reserve_currency|cycle|NULL
     value          numeric        NOT NULL,
@@ -182,11 +203,11 @@ CREATE TABLE cr_country_indicators (
 );
 
 CREATE INDEX idx_country_indicators_lookup
-    ON cr_country_indicators (country_code, indicator_name, period_end DESC, recorded_at DESC);
+    ON country_indicators (country_code, indicator_name, period_end DESC, recorded_at DESC);
 
-CREATE TABLE cr_country_cycle_estimates (
+CREATE TABLE country_cycle_estimates (
     id                    bigserial     PRIMARY KEY,
-    country_code          char(3)       NOT NULL REFERENCES cr_countries(country_code),
+    country_code          char(3)       NOT NULL REFERENCES countries(country_code),
     as_of_date            date          NOT NULL,
     composite_power_score numeric       NOT NULL CHECK (composite_power_score BETWEEN 0 AND 1),
     cycle_phase           varchar(32)   NOT NULL
@@ -203,13 +224,13 @@ CREATE TABLE cr_country_cycle_estimates (
 );
 
 CREATE INDEX idx_cycle_estimates_lookup
-    ON cr_country_cycle_estimates (country_code, as_of_date DESC, recorded_at DESC);
+    ON country_cycle_estimates (country_code, as_of_date DESC, recorded_at DESC);
 
 -- ============================================================
 -- Layer 2: Markets and commodities
 -- ============================================================
 
-CREATE TABLE cr_market_prices (
+CREATE TABLE market_prices (
     id          bigserial   PRIMARY KEY,
     series_id   varchar(64) NOT NULL,             -- e.g. 'index.HSI', 'fx.USDHKD', 'commodity.iron_ore', 'yield.US10Y'
     series_type varchar(16) NOT NULL CHECK (series_type IN ('index','fx','yield','commodity')),
@@ -225,11 +246,11 @@ CREATE TABLE cr_market_prices (
 );
 
 CREATE INDEX idx_market_prices_lookup
-    ON cr_market_prices (series_id, trade_date DESC, recorded_at DESC);
+    ON market_prices (series_id, trade_date DESC, recorded_at DESC);
 
-CREATE TABLE cr_security_prices (
+CREATE TABLE security_prices (
     id           bigserial   PRIMARY KEY,
-    security_id  bigint      NOT NULL REFERENCES cr_securities(id),
+    security_id  bigint      NOT NULL REFERENCES securities(id),
     trade_date   date        NOT NULL,
     open         numeric,
     high         numeric,
@@ -243,13 +264,13 @@ CREATE TABLE cr_security_prices (
 );
 
 CREATE INDEX idx_security_prices_lookup
-    ON cr_security_prices (security_id, trade_date DESC, recorded_at DESC);
+    ON security_prices (security_id, trade_date DESC, recorded_at DESC);
 
 -- ============================================================
 -- Layer 3: News and events
 -- ============================================================
 
-CREATE TABLE cr_news_events (
+CREATE TABLE news_events (
     id             bigserial   PRIMARY KEY,
     source         varchar(64) NOT NULL,        -- e.g. 'HKEX_disclosure'
     external_id    varchar(128),                -- source-side unique id, for dedup
@@ -263,17 +284,17 @@ CREATE TABLE cr_news_events (
     UNIQUE (source, external_id)
 );
 
-CREATE INDEX idx_news_events_time ON cr_news_events (event_date DESC);
+CREATE INDEX idx_news_events_time ON news_events (event_date DESC);
 
-CREATE TABLE cr_news_securities (
-    news_event_id bigint NOT NULL REFERENCES cr_news_events(id) ON DELETE CASCADE,
-    security_id   bigint NOT NULL REFERENCES cr_securities(id) ON DELETE CASCADE,
+CREATE TABLE news_securities (
+    news_event_id bigint NOT NULL REFERENCES news_events(id) ON DELETE CASCADE,
+    security_id   bigint NOT NULL REFERENCES securities(id) ON DELETE CASCADE,
     PRIMARY KEY (news_event_id, security_id)
 );
 
-CREATE TABLE cr_news_themes (
-    news_event_id bigint NOT NULL REFERENCES cr_news_events(id) ON DELETE CASCADE,
-    theme_id      bigint NOT NULL REFERENCES cr_themes(id) ON DELETE CASCADE,
+CREATE TABLE news_themes (
+    news_event_id bigint NOT NULL REFERENCES news_events(id) ON DELETE CASCADE,
+    theme_id      bigint NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
     PRIMARY KEY (news_event_id, theme_id)
 );
 
@@ -281,10 +302,10 @@ CREATE TABLE cr_news_themes (
 -- Layer 4: Bilateral relationships
 -- ============================================================
 
-CREATE TABLE cr_country_pair_observations (
+CREATE TABLE country_pair_observations (
     id           bigserial   PRIMARY KEY,
-    country_a    char(3)     NOT NULL REFERENCES cr_countries(country_code),  -- alphabetically first
-    country_b    char(3)     NOT NULL REFERENCES cr_countries(country_code),  -- alphabetically second
+    country_a    char(3)     NOT NULL REFERENCES countries(country_code),  -- alphabetically first
+    country_b    char(3)     NOT NULL REFERENCES countries(country_code),  -- alphabetically second
     dimension    varchar(64) NOT NULL,
     value        numeric     NOT NULL,
     unit         varchar(32) NOT NULL,
@@ -298,13 +319,13 @@ CREATE TABLE cr_country_pair_observations (
 );
 
 CREATE INDEX idx_pair_observations_lookup
-    ON cr_country_pair_observations (country_a, country_b, dimension, event_date DESC, recorded_at DESC);
+    ON country_pair_observations (country_a, country_b, dimension, event_date DESC, recorded_at DESC);
 
 -- ============================================================
 -- Layer 5: Financial infrastructure
 -- ============================================================
 
-CREATE TABLE cr_financial_infra_observations (
+CREATE TABLE financial_infra_observations (
     id           bigserial   PRIMARY KEY,
     infra_type   varchar(64) NOT NULL,            -- e.g. 'cofer_reserve_composition', 'hkex_listing'
     entity_id    varchar(64),                     -- e.g. 'CNY', 'HKEX'
@@ -321,13 +342,13 @@ CREATE TABLE cr_financial_infra_observations (
 );
 
 CREATE INDEX idx_infra_observations_lookup
-    ON cr_financial_infra_observations (infra_type, metric_name, event_date DESC, recorded_at DESC);
+    ON financial_infra_observations (infra_type, metric_name, event_date DESC, recorded_at DESC);
 
 -- ============================================================
 -- Theses and learning plans
 -- ============================================================
 
-CREATE TABLE cr_learning_plans (
+CREATE TABLE learning_plans (
     id                    bigserial   PRIMARY KEY,
     name                  varchar(128) NOT NULL UNIQUE,
     question              text         NOT NULL,
@@ -343,7 +364,7 @@ CREATE TABLE cr_learning_plans (
     updated_at            timestamptz  NOT NULL DEFAULT now()
 );
 
-CREATE TABLE cr_investment_theses (
+CREATE TABLE investment_theses (
     id                    bigserial   PRIMARY KEY,
     name                  varchar(128) NOT NULL UNIQUE,
     description           text         NOT NULL,
@@ -357,21 +378,21 @@ CREATE TABLE cr_investment_theses (
     updated_at            timestamptz  NOT NULL DEFAULT now()
 );
 
-CREATE TABLE cr_thesis_history (
+CREATE TABLE thesis_history (
     id            bigserial   PRIMARY KEY,
-    thesis_id     bigint      NOT NULL REFERENCES cr_investment_theses(id) ON DELETE CASCADE,
+    thesis_id     bigint      NOT NULL REFERENCES investment_theses(id) ON DELETE CASCADE,
     snapshot      jsonb       NOT NULL,            -- full thesis row at this moment
     change_reason text,
     recorded_at   timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_thesis_history_thesis ON cr_thesis_history (thesis_id, recorded_at DESC);
+CREATE INDEX idx_thesis_history_thesis ON thesis_history (thesis_id, recorded_at DESC);
 
 -- ============================================================
 -- Archetype analysis
 -- ============================================================
 
-CREATE TABLE cr_archetype_analyses (
+CREATE TABLE archetype_analyses (
     id                      bigserial   PRIMARY KEY,
     archetype               varchar(16) NOT NULL
         CHECK (archetype IN ('historian','strategist','macro_theorist','skeptic')),
@@ -387,21 +408,21 @@ CREATE TABLE cr_archetype_analyses (
 );
 
 CREATE INDEX idx_archetype_analyses_lookup
-    ON cr_archetype_analyses (archetype, run_date DESC);
+    ON archetype_analyses (archetype, run_date DESC);
 
-CREATE TABLE cr_archetype_peer_reviews (
+CREATE TABLE archetype_peer_reviews (
     id                   bigserial   PRIMARY KEY,
     reviewer_archetype   varchar(16) NOT NULL,
-    reviewed_analysis_id bigint      NOT NULL REFERENCES cr_archetype_analyses(id) ON DELETE CASCADE,
+    reviewed_analysis_id bigint      NOT NULL REFERENCES archetype_analyses(id) ON DELETE CASCADE,
     agreement            varchar(16) NOT NULL
         CHECK (agreement IN ('strong_agree','agree','disagree','strong_disagree')),
     critique             text        NOT NULL,
     recorded_at          timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_peer_reviews_reviewed ON cr_archetype_peer_reviews (reviewed_analysis_id);
+CREATE INDEX idx_peer_reviews_reviewed ON archetype_peer_reviews (reviewed_analysis_id);
 
-CREATE TABLE cr_model_proposals (
+CREATE TABLE model_proposals (
     id                   bigserial   PRIMARY KEY,
     proposing_archetype  varchar(16) NOT NULL,
     pattern_description  text        NOT NULL,
@@ -414,9 +435,9 @@ CREATE TABLE cr_model_proposals (
     created_at           timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE cr_models_trained (
+CREATE TABLE models_trained (
     id                           bigserial   PRIMARY KEY,
-    proposal_id                  bigint      REFERENCES cr_model_proposals(id),
+    proposal_id                  bigint      REFERENCES model_proposals(id),
     name                         varchar(128) NOT NULL UNIQUE,
     training_dataset_description text,
     validation_results           jsonb,
@@ -436,7 +457,7 @@ Immediately after the migration, a separate idempotent seed script (`catalyst-re
 - The four v1 commodities (iron_ore, copper, gold, brent_crude).
 - A starter set of v1 themes: `yuan_internationalization`, `critical_minerals`, `chinese_demand`, `financial_infrastructure_east`, `reserve_diversification`.
 - The 20–30 HKEX security rows (final list selected at implementation time per architecture Section 8).
-- The three v1 learning plans as `cr_learning_plans` rows (full text from architecture Section 7).
+- The three v1 learning plans as `learning_plans` rows (full text from architecture Section 7).
 
 The seed script uses `INSERT ... ON CONFLICT DO NOTHING` so re-running it is safe.
 
@@ -444,7 +465,7 @@ The seed script uses `INSERT ... ON CONFLICT DO NOTHING` so re-running it is saf
 
 - `001_initial_schema.sql` applied cleanly inside a transaction.
 - `002_seed_v1.sql` applied; the four countries, four commodities, and three learning plans exist.
-- A read-only smoke query (`SELECT count(*) FROM cr_countries;` etc.) returns expected counts.
+- A read-only smoke query (`SELECT count(*) FROM countries;` etc.) returns expected counts.
 
 ---
 
@@ -460,17 +481,17 @@ Each job is a single Python entry point in `catalyst-research/ingestion/`, invok
 
 | Layer | Job | Source | Cadence | Cron | Writes to |
 |---|---|---|---|---|---|
-| 1 | `ingest_country_indicators_imf` | IMF WEO + IMF datamapper API | Quarterly (after release dates) | `0 6 1 1,4,7,10 *` | `cr_country_indicators` |
-| 1 | `ingest_country_indicators_worldbank` | World Bank Indicators API | Quarterly | `0 7 1 1,4,7,10 *` | `cr_country_indicators` |
-| 1 | `ingest_country_indicators_national` | BEA (US), NBS (CN), HKMA (HK), RBA/ABS (AU) | Quarterly (staggered) | per-country | `cr_country_indicators` |
-| 2 | `ingest_market_prices_daily` | Yahoo Finance + Stooq fallback | Daily, post-close | `30 22 * * 1-5` UTC | `cr_market_prices` |
-| 2 | `ingest_commodity_prices_daily` | Yahoo Finance + Investing.com | Daily, post-close | `45 22 * * 1-5` UTC | `cr_market_prices` |
-| 2/3 | `ingest_security_prices_daily` | Moomoo OpenD (reused from intl) | Daily, post-HKEX-close | `30 8 * * 1-5` UTC (HKEX 16:00 HKT close) | `cr_security_prices` |
-| 3 | `ingest_hkex_disclosure_feed` | HKEX disclosure feed | Continuous (poll every 15 min during HKEX hours) | `*/15 1-9 * * 1-5` UTC | `cr_news_events`, `cr_news_securities` |
-| 4 | `ingest_un_comtrade` | UN Comtrade API | Monthly (with ~3 month lag) | `0 8 5 * *` | `cr_country_pair_observations` |
-| 4 | `ingest_un_voting_alignment` | Voeten UN voting dataset | Annual | `0 8 1 6 *` | `cr_country_pair_observations` |
-| 5 | `ingest_imf_cofer` | IMF COFER | Quarterly (with ~6 month lag) | `0 9 5 1,4,7,10 *` | `cr_financial_infra_observations` |
-| 5 | `ingest_hkex_listing_stats` | HKEX monthly listing statistics | Monthly | `0 9 7 * *` | `cr_financial_infra_observations` |
+| 1 | `ingest_country_indicators_imf` | IMF WEO + IMF datamapper API | Quarterly (after release dates) | `0 6 1 1,4,7,10 *` | `country_indicators` |
+| 1 | `ingest_country_indicators_worldbank` | World Bank Indicators API | Quarterly | `0 7 1 1,4,7,10 *` | `country_indicators` |
+| 1 | `ingest_country_indicators_national` | BEA (US), NBS (CN), HKMA (HK), RBA/ABS (AU) | Quarterly (staggered) | per-country | `country_indicators` |
+| 2 | `ingest_market_prices_daily` | Yahoo Finance + Stooq fallback | Daily, post-close | `30 22 * * 1-5` UTC | `market_prices` |
+| 2 | `ingest_commodity_prices_daily` | Yahoo Finance + Investing.com | Daily, post-close | `45 22 * * 1-5` UTC | `market_prices` |
+| 2/3 | `ingest_security_prices_daily` | Moomoo OpenD (reused from intl) | Daily, post-HKEX-close | `30 8 * * 1-5` UTC (HKEX 16:00 HKT close) | `security_prices` |
+| 3 | `ingest_hkex_disclosure_feed` | HKEX disclosure feed | Continuous (poll every 15 min during HKEX hours) | `*/15 1-9 * * 1-5` UTC | `news_events`, `news_securities` |
+| 4 | `ingest_un_comtrade` | UN Comtrade API | Monthly (with ~3 month lag) | `0 8 5 * *` | `country_pair_observations` |
+| 4 | `ingest_un_voting_alignment` | Voeten UN voting dataset | Annual | `0 8 1 6 *` | `country_pair_observations` |
+| 5 | `ingest_imf_cofer` | IMF COFER | Quarterly (with ~6 month lag) | `0 9 5 1,4,7,10 *` | `financial_infra_observations` |
+| 5 | `ingest_hkex_listing_stats` | HKEX monthly listing statistics | Monthly | `0 9 7 * *` | `financial_infra_observations` |
 
 Cron times in UTC. The intl droplet already runs in UTC.
 
@@ -540,7 +561,7 @@ claude --print --output-format=json \
        > catalyst-research/archetypes/runs/<archetype>_<date>.json
 ```
 
-The wrapper script `catalyst-research/archetypes/run.py` orchestrates this — it builds the context bundle, invokes Claude Code, and writes the resulting analysis row into `cr_archetype_analyses`.
+The wrapper script `catalyst-research/archetypes/run.py` orchestrates this — it builds the context bundle, invokes Claude Code, and writes the resulting analysis row into `archetype_analyses`.
 
 The archetype has access (via its working directory and a small read-only DB adapter) to:
 
@@ -549,7 +570,7 @@ The archetype has access (via its working directory and a small read-only DB ada
 - Previous analyses from all four archetypes (so it sees historical context).
 - The learning plans currently active.
 
-It writes its output as a single structured JSON document with the fields required by `cr_archetype_analyses` (conclusions, uncertainties, supporting_observations). The wrapper validates and inserts.
+It writes its output as a single structured JSON document with the fields required by `archetype_analyses` (conclusions, uncertainties, supporting_observations). The wrapper validates and inserts.
 
 ### 3.2 The four archetypes
 
@@ -572,13 +593,13 @@ The system prompts are deliberately not over-engineered. The architecture's disc
 
 ### 3.3 Peer review cycle
 
-After the four independent analyses for a given period are written, a second cron job runs the peer-review cycle. Each archetype reads the others' analyses (loaded into context) and produces a review row per analysis reviewed, written to `cr_archetype_peer_reviews`.
+After the four independent analyses for a given period are written, a second cron job runs the peer-review cycle. Each archetype reads the others' analyses (loaded into context) and produces a review row per analysis reviewed, written to `archetype_peer_reviews`.
 
 The Skeptic's peer-review runs last and is given an explicit instruction in its system prompt to look hardest at the consensus emerging from the other three.
 
 ### 3.4 Model proposals
 
-When an archetype identifies a pattern it believes worth attempting to learn, it writes a row to `cr_model_proposals` via the wrapper. Proposals are reviewed manually before any training runs; this is not automated in v1. The training pipeline itself is deferred to v1.5 — for v1, the architecture's commitment is only that the *capture* mechanism exists.
+When an archetype identifies a pattern it believes worth attempting to learn, it writes a row to `model_proposals` via the wrapper. Proposals are reviewed manually before any training runs; this is not automated in v1. The training pipeline itself is deferred to v1.5 — for v1, the architecture's commitment is only that the *capture* mechanism exists.
 
 ### 3.5 Archetype run schedule
 
@@ -704,7 +725,7 @@ MAILTO=""
 Added to the droplet's `.env`:
 
 ```
-INTL_DATABASE_URL=postgres://...           # reused — research writes to catalyst_intl
+RESEARCH_DATABASE_URL=postgres://...       # dedicated catalyst_research DB
 ANTHROPIC_API_KEY=...                      # archetype-only key, scoped budget
 HKEX_FEED_URL=...
 UN_COMTRADE_API_KEY=...                    # if/when registered
@@ -726,9 +747,9 @@ The system has no dashboard in v1. Inspection is via SQL and three small scripts
 Once Phases 1–4 are running and producing weekly reports cleanly for at least four consecutive weeks:
 
 1. Drop the old agent-era tables from `catalyst_dev` (and optionally drop the `catalyst_dev` database itself).
-2. Drop the consciousness tables from `catalyst_research` (and optionally drop the `catalyst_research` database, freeing its DO allocation).
+2. The legacy consciousness tables in `catalyst_research` were already dropped in Phase 0.3; the DB itself is now in active use and stays.
 3. Archive `catalyst-agent/` per repo-root CLAUDE.md — already partially done as `catalyst-agent.old-20260518/`. Confirm the live tree is removed once the research system is stable.
-4. Update repo-root `CLAUDE.md` to mark catalyst-research as **Running** and remove the "Planned" status. Update the implementation table in Section 2.
+4. Update repo-root `CLAUDE.md` to mark catalyst-research as **Running** and remove the "Planned" status. Update the implementation table in Section 2, and the database table in Section 3.2 to show `catalyst_research` as "Active — catalyst-research v1".
 5. Reclaim droplet disk: prune Docker images, orphaned volumes, build cache (architecture Section 9 estimates ~21 GB recoverable).
 
 ### 4.6 Phase 4 exit criteria

@@ -2,9 +2,9 @@
 
 **Name of Application:** Catalyst Trading System
 **Name of file:** catalyst-research-architecture-v1.md
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Created:** 2026-04-25
-**Last Updated:** 2026-04-26
+**Last Updated:** 2026-05-18
 **Updated by:** Craig + Claude (collaborative design)
 
 **Purpose:** Defines the target architecture for the Catalyst system as a long-horizon research and investment platform tracking the West-to-East structural transition through layered observation, multi-archetype analysis, and evidence-based thesis development. Specifies both the full architecture target and the v1 thin-slice implementation scope.
@@ -15,6 +15,7 @@
 |---------|------|--------|---------|
 | 1.0.0 | 2026-04-25 | Craig + Claude | Initial design. Pivot from agent-based trading system to research-first architecture. |
 | 1.1.0 | 2026-04-26 | Craig + Claude | Added automation principle and analytical archetypes (Section 3.5). Collection and analysis become automated; Craig reviews conclusions and disagreements rather than performing analysis manually. Four archetypes (Historian, Strategist, Macro Theorist, Skeptic) interpret data through distinct lenses, peer-review each other, and propose model-training experiments. Updated review cadences (Section 10) to reflect automation. |
+| 1.2.0 | 2026-05-18 | Craig + Claude | Schema home moved from `catalyst_intl` to the dedicated `catalyst_research` database (reversing the v1.1 decision to consolidate into intl). Sections 6 and 9 updated to match. |
 
 ---
 
@@ -189,7 +190,7 @@ That is the entire temporal architecture. Three timestamp fields per fact-bearin
 
 The schema is sketched here at the level of tables and key columns. Full DDL with constraints, indexes, and foreign keys is the work of a companion implementation file written when the v1 build begins.
 
-The database is PostgreSQL, repurposed from the existing `catalyst_intl` infrastructure. The `catalyst_research` consciousness DB and the `catalyst_dev` US trading DB are deprecated and may be archived or dropped after the migration completes.
+The database is PostgreSQL: the existing `catalyst_research` cluster database, which was originally provisioned for this purpose and is currently holding only legacy consciousness-era tables. Those legacy tables are dropped before the new schema is applied. Sharing a database with `catalyst-international` was considered (and was the v1.1 plan) but rejected — research and trading have different access patterns, different access controls, and different operational risks; keeping them in separate databases on the same cluster is cleaner. The `catalyst_dev` US trading DB remains deprecated and may be archived or dropped after the migration completes.
 
 ### Reference and Entity Tables
 
@@ -603,7 +604,7 @@ This is sunk cost. It served its purpose by clarifying what does not work. Keepi
 ### What Is Repurposed
 
 - The Moomoo client and OpenD integration — directly reusable for HKEX market data ingestion in Layer 2 and Layer 3, even though we are not trading. The same connection that places orders can pull quotes and historical bars.
-- The `catalyst_intl` PostgreSQL database — the database itself stays, repurposed. Existing tables that fit the new architecture are renamed and extended; tables that do not are dropped.
+- The `catalyst_research` PostgreSQL database — the database itself stays, dedicated to this system. Its legacy consciousness-era tables are dropped; the new schema replaces them. The intl trading database (`catalyst_intl`) is untouched by the research build.
 - The existing `securities` table — extended with theme tags and country exposure metadata.
 - The lot-sizing, symbol-normalization, and OpenD-reconnect logic — reusable utilities, kept.
 - The document control discipline (version headers, dated revisions, revision history tables) — applied to all new documentation.
@@ -628,7 +629,7 @@ The sequence matters. Each step is reversible until the next begins; nothing is 
 
 **Step 2.** Snapshot the current `catalyst_intl` and `catalyst_research` databases. These are insurance.
 
-**Step 3.** Build the new schema in `catalyst_intl` alongside the existing tables. New tables coexist with old; nothing is dropped yet.
+**Step 3.** Drop the legacy consciousness-era tables from `catalyst_research`. Build the new schema in `catalyst_research`. The new tables share no names with the legacy ones, so this is a clean replacement rather than a coexistence migration.
 
 **Step 4.** Build and test ingestion jobs against the new schema, country by country, layer by layer. Australia first (your home, easy data), then US (deepest data, validates the schema's handling of dense series), then China (validates handling of mixed-quality data), then Hong Kong.
 
