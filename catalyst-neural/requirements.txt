@@ -5,6 +5,9 @@
 yfinance>=0.2.36          # Yahoo Finance (candles, macro, sectors) — free, no API key
 requests>=2.31.0          # HTTP client for news APIs
 
+# ── Configuration ──
+python-dotenv>=1.0.0      # load .env file
+
 # ── Storage ──
 # sqlite3 is built into Python — no extra dependency
 

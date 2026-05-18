@@ -1,8 +1,8 @@
 """
 Catalyst Neural — Configuration
 
-Data sources, API keys, collection parameters.
-Update API keys before running collectors.
+All settings loaded from environment variables (with .env file support).
+Copy .env.template to .env and fill in your API keys.
 """
 
 import os
@@ -10,16 +10,46 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# ── Paths ──
+from dotenv import load_dotenv
+
+# Load .env from project root
 PROJECT_ROOT = Path(__file__).parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
+
+# ── Paths ──
 DATA_DIR = PROJECT_ROOT / "data"
 MODELS_DIR = PROJECT_ROOT / "models"
+DEPLOY_DIR = PROJECT_ROOT / "deploy"
 
-# ── Droplet Connection ──
-# The Catalyst consciousness API on your DigitalOcean droplet
-DROPLET_IP = os.getenv("CATALYST_DROPLET_IP", "68.183.177.11")
+# ── Deployment Droplets ──
+US_DROPLET_IP = os.getenv("CATALYST_US_DROPLET_IP", "68.183.177.11")
+INTL_DROPLET_IP = os.getenv("CATALYST_INTL_DROPLET_IP", "209.38.87.27")
+SSH_KEY = os.getenv("CATALYST_SSH_KEY", "~/.ssh/Catalyst-Linux-Claude")
+
+# Backward compat — old code references DROPLET_IP
+DROPLET_IP = US_DROPLET_IP
 DROPLET_MCP_PORT = 5000
 CONSCIOUSNESS_URL = f"http://{DROPLET_IP}:{DROPLET_MCP_PORT}"
+
+# Deployment paths on each droplet
+DEPLOYMENT = {
+    "US": {
+        "ip": US_DROPLET_IP,
+        "ssh": f"ssh -i {SSH_KEY} root@{US_DROPLET_IP}",
+        "project_dir": "/root/catalyst-agent",
+        "models_dir": "/root/catalyst-agent/neural/model",
+        "neural_integration": "standalone container (catalyst-neural)",
+        "deploy_script": str(DEPLOY_DIR / "deploy-neural.sh"),
+    },
+    "INTL": {
+        "ip": INTL_DROPLET_IP,
+        "ssh": f"ssh -i {SSH_KEY} root@{INTL_DROPLET_IP}",
+        "project_dir": "/root/Catalyst-Trading-System-International/catalyst-international",
+        "models_dir": "/root/Catalyst-Trading-System-International/catalyst-international/models",
+        "neural_integration": "cerebellum.py embedded in coordinator",
+        "deploy_script": str(DEPLOY_DIR / "deploy-intl.sh"),
+    },
+}
 
 # ── Market Data APIs ──
 
@@ -146,11 +176,11 @@ FRED_SERIES = {
 TRAINING = {
     "lookback_candles": 60,       # how many candles the network sees
     "forward_horizons": [5, 15, 60, 240, 1440],  # minutes
-    "batch_size": 64,
-    "learning_rate": 1e-3,
-    "epochs": 100,
+    "batch_size": int(os.getenv("TRAINING_BATCH_SIZE", "64")),
+    "learning_rate": float(os.getenv("TRAINING_LR", "0.001")),
+    "epochs": int(os.getenv("TRAINING_EPOCHS", "100")),
     "validation_split": 0.2,
-    "device": "cuda",             # RTX 4050
+    "device": os.getenv("TRAINING_DEVICE", "cuda"),  # RTX 4050
 }
 
 # ── Market Hours ──

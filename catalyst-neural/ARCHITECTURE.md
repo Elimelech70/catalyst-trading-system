@@ -1,178 +1,216 @@
-# Catalyst Neural — Data Collection & Training System
+# Catalyst Neural — Architecture
 
-**Purpose:** Collect raw, unbiased market data at multiple resolutions. Train neural networks to discover patterns from data — not from human labels.
+> *"Don't tell the network what to see. Show it what happened. Let it find what matters."*
+> *"You will know them by their fruits."* — Matthew 7:16
 
-**Version:** 0.1.0
-**Date:** 2026-04-04
+**Version:** 0.3.1
+**Updated:** 2026-04-20
 **Authors:** Craig + Claude
-**Hardware:** Ubuntu laptop, RTX 4050 (6GB VRAM), 16GB RAM, CUDA 13.0
+**Hardware:** Ubuntu laptop, RTX 4050 (6GB VRAM), 16GB RAM, CUDA
 
 ---
 
 ## Principle
 
-> Don't tell the network what to see. Show it what happened. Let it find what matters.
-> "You will know them by their fruits." — Matthew 7:16
-
 No pattern labels. No human interpretation at collection time. Raw data in. Forward returns as truth labels. The network discovers its own representations.
+
+**Collect everything. Train incrementally. Deploy what is proven.**
+
+---
+
+## The Two-Model Structure
+
+| Model | Job | Input | Output | Status |
+|---|---|---|---|---|
+| **Candle Model** | When to trade | OHLCV at 5m + 15m (dual-timeframe) | Direction + confidence + forward returns | Deployed |
+| **News-to-Security Model** | What to trade | Headline + source tier + timestamp | Security + direction + confidence | Planned |
+| **Macro Model** | What regime | Currencies, yields, VIX, sectors | Regime classification | Phase 4 |
 
 ---
 
 ## Architecture
 
 ```
-DROPLET (DigitalOcean)                    LAPTOP (Training Station)
+US DROPLET (68.183.177.11)                LAPTOP (Training Station)
 ┌─────────────────────┐                   ┌──────────────────────────────┐
-│                     │                   │                              │
+│ v8 Agent Body       │                   │                              │
 │  US Scanner ────────┼──── picks ──────▶│  Security Registry           │
-│  HKEX Scanner ──────┤                   │    │                        │
-│                     │                   │    ▼                        │
-│  Consciousness DB ──┼──── context ────▶│  Multi-Resolution Collector  │
-│                     │                   │    │                        │
+│  SQLite agent.db    │                   │    │                        │
+│  Signal Bus         │                   │    ▼                        │
+│  Neural Container ◀─┼── deploy ────────│  Multi-Resolution Collector  │
+│  (standalone ONNX)  │                   │    │                        │
 └─────────────────────┘                   │    ├── Candle Collector     │
-                                          │    │   (micro: 1m,5m,15m)  │
-External APIs                             │    │                        │
-┌─────────────────────┐                   │    ├── Sector/Index         │
-│ Alpaca (US candles) │──── stream ─────▶│    │   (meso: hourly)      │
-│ Yahoo Finance       │                   │    │                        │
-│ NewsAPI / Finnhub   │──── news ───────▶│    ├── Macro Collector      │
-│ FRED (econ data)    │──── macro ──────▶│    │   (currencies, yields) │
-│                     │                   │    │                        │
-└─────────────────────┘                   │    └── News Collector       │
-                                          │        (headlines + source) │
-                                          │                              │
-                                          │    ▼                        │
+                                          │    │   (1m, 5m, 15m)       │
+INTL DROPLET (209.38.87.27)              │    │                        │
+┌─────────────────────┐                   │    ├── Macro Collector      │
+│ MCP Architecture    │                   │    │   (currencies, yields, │
+│  HKEX Scanner ──────┼──── picks ──────▶│    │    VIX, sector ETFs)   │
+│  PostgreSQL + Redis │                   │    │                        │
+│  Moomoo/OpenD       │                   │    └── News Collector       │
+│  Coordinator ◀──────┼── deploy ────────│        (headline + source   │
+│  (cerebellum.py     │                   │         tier + timestamp)   │
+│   embedded ONNX)    │                   │                              │
+└─────────────────────┘                   │    ▼                        │
                                           │  SQLite Storage             │
-                                          │  (time-aligned, raw)        │
-                                          │                              │
+External APIs                             │  (time-aligned, raw)        │
+┌─────────────────────┐                   │                              │
+│ Yahoo Finance       │──── candles ────▶│    ▼                        │
+│ NewsAPI / Finnhub   │──── news ───────▶│  Label Generator            │
+│ FRED (econ data)    │──── macro ──────▶│  (forward returns, offline) │
+└─────────────────────┘                   │                              │
                                           │    ▼                        │
                                           │  Training Pipeline          │
                                           │  (PyTorch + CUDA)           │
                                           │    │                        │
-                                          │    ├── Time-Series Encoder  │
-                                          │    ├── News Encoder         │
-                                          │    ├── Fusion Network       │
+                                          │    ├── Candle Model (v0.3)  │
+                                          │    │   132K params, deployed │
                                           │    │                        │
+                                          │    ├── News-to-Security     │
+                                          │    │   (planned)            │
+                                          │    │                        │
+                                          │    └── Macro Model          │
+                                          │        (Phase 4)            │
+                                          │                              │
                                           │    ▼                        │
-                                          │  Trained Models (.pt)       │
-                                          │    │                        │
-                                          │    ▼  (deploy)              │
-                                          │  → Droplet (CPU inference)  │
+                                          │  ONNX Export + Deploy       │
+                                          │    ├── → US Droplet         │
+                                          │    └── → Intl Droplet       │
                                           └──────────────────────────────┘
 ```
 
 ---
 
-## Data Schema — The Recorder
+## CandleModel v0.3 — Current Production Model
 
-All data stored WITHOUT interpretation. The recorder captures what happened, who said what, when. Nothing more.
+**132,103 parameters. <1ms CPU inference. Deployed to both droplets.**
+
+```
+Input:  candles_5m  (batch, 5, 60)    ─┐
+                                        ├─ MultiResolutionEncoder ─── Fusion MLP ─┬─ direction_head  → (batch, 3)
+Input:  candles_15m (batch, 5, 60)    ─┘     (2 × TimeSeriesEncoder)   (residual)  ├─ return_head     → (batch, 3)
+                                              40K params each           50K params  └─ confidence_head → (batch, 1)
+```
+
+| Component | Parameters |
+|-----------|-----------|
+| TimeSeriesEncoder (5m) | 40,448 |
+| TimeSeriesEncoder (15m) | 40,448 |
+| Fusion MLP | 50,304 |
+| Direction head (3-class softmax) | 387 |
+| Return head (5m, 15m, 1h regression) | 387 |
+| Confidence head (sigmoid) | 129 |
+| **Total** | **132,103** |
+
+**Training:**
+- Loss: CrossEntropy(direction) + MaskedMSE(returns) + 0.1 × Confidence
+- Early stopping: patience 15, tracks validation loss
+- Direction labels: >+0.05% = bullish, <-0.05% = bearish, else neutral
+- Data: 97K+ training samples, 24K+ validation, 63 securities (US + HKEX)
+
+---
+
+## Automation Pipeline
+
+Everything runs automatically via systemd:
+
+```
+┌─────────────────────────────────────────────────┐
+│  catalyst-neural.service (continuous)            │
+│  Runs: python run.py watch                       │
+│  Collects: candles, macro, news during market hrs│
+│  Suspends: between sessions (power management)   │
+└─────────────────────────────────────────────────┘
+                    │
+                    ▼ (data accumulates in SQLite)
+┌─────────────────────────────────────────────────┐
+│  catalyst-pipeline.timer (weekly, Sunday 20:00)  │
+│  Runs: python run.py pipeline                    │
+│  Steps:                                          │
+│    1. Compute forward return labels              │
+│    2. Train CandleModel (GPU, early stopping)    │
+│    3. Export to ONNX                             │
+│    4. Deploy to US droplet (catalyst-neural)     │
+│    5. Deploy to Intl droplet (cerebellum.py)     │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+## Deployment Targets
+
+| Environment | IP | Architecture | Neural Integration | Deploy Script |
+|---|---|---|---|---|
+| **US Droplet** | 68.183.177.11 | v8 Agent Body, SQLite, signal bus | Standalone Docker container | `deploy/deploy-neural.sh` |
+| **Intl Droplet** | 209.38.87.27 | MCP, PostgreSQL, Redis, Moomoo/OpenD | cerebellum.py in coordinator | `deploy/deploy-intl.sh` |
+
+---
+
+## Data Schema
+
+All data stored WITHOUT interpretation. Labels computed offline.
 
 ### Multi-Resolution Layers
 
 | Layer | Data | Resolution | Source |
 |-------|------|------------|--------|
-| Micro | OHLCV candles per security | 1min, 5min, 15min | Alpaca, Yahoo |
-| Meso | Sector ETFs, correlated indices | 5min, 15min | Yahoo Finance |
-| Macro | Currency pairs, bond yields, VIX | 1min - daily | Yahoo, FRED |
-| Events | News headlines + source + timestamp | Event-driven | NewsAPI, Finnhub |
-| Releases | GDP, rates, employment, CPI | Scheduled | FRED API |
+| Micro | OHLCV candles per security | 1m, 5m, 15m | Yahoo Finance |
+| Meso | Sector ETFs (11 sectors) | Daily | Yahoo Finance |
+| Macro | Currencies, yields, VIX, commodities | Daily | Yahoo Finance |
+| Events | News headlines + source tier | Event-driven | NewsAPI, Finnhub |
 
-### Truth Labels (computed, not collected)
+### Truth Labels
 
-For any point in time, compute forward returns:
-- 5 minutes forward
-- 15 minutes forward
-- 1 hour forward
-- 4 hours forward
-- 1 day forward
-
-These are the ONLY labels. No pattern names. No sentiment scores. Just: what did the price actually do after this moment?
+Forward returns computed offline — the ONLY labels:
+- 5 minutes, 15 minutes, 1 hour, 4 hours, 1 day
+- Direction: bullish (>+0.05%), bearish (<-0.05%), neutral
 
 ---
 
-## Data Flow
+## Configuration
 
-1. **Droplet scanners** identify big movers (US + HKEX) — pushed to laptop via API or polled
-2. **Security Registry** maintains the current watch list
-3. **Candle Collector** streams/polls OHLCV for all watched securities
-4. **News Collector** captures headlines for watched securities with source metadata
-5. **Macro Collector** streams currency pairs, yields, VIX continuously
-6. **Storage** writes everything to SQLite with microsecond timestamps
-7. **Label Generator** (offline) computes forward returns for each timestamp
-8. **Training Pipeline** reads storage, builds multi-resolution samples, trains networks
+All runtime config loaded from `.env` file via `python-dotenv`:
 
----
-
-## Network Architecture (Target)
-
-### Time-Series Encoder (Cerebellum)
-- Input: window of N candles (OHLCV) at multiple timeframes
-- Architecture: 1D CNN or Temporal Transformer
-- Output: learned representation of price state
-- Size: ~100K-500K parameters
-- Inference: <1ms on CPU
-
-### News Encoder (Sensory Association)
-- Input: recent news headlines + source tier + relative timestamp
-- Architecture: small transformer or bag-of-embeddings + source embedding
-- Output: learned representation of information state
-- Size: ~500K-2M parameters
-
-### Macro Context Encoder
-- Input: current state of currencies, yields, VIX, recent macro releases
-- Architecture: MLP or small transformer
-- Output: learned representation of macro regime
-- Size: ~50K-200K parameters
-
-### Fusion Network (Integration)
-- Input: concatenated outputs of all encoders
-- Architecture: MLP with residual connections
-- Output: predicted forward returns (5m, 15m, 1h, 4h, 1d) + confidence
-- Size: ~200K-1M parameters
-
-### Total: ~1M-4M parameters
-- Training VRAM: <500MB (RTX 4050 has 6GB — plenty of headroom)
-- Training time: minutes per epoch on thousands of samples
-- Inference: <5ms total on CPU (droplet-deployable)
+| Category | Variables | Where |
+|----------|-----------|-------|
+| Droplets | `CATALYST_US_DROPLET_IP`, `CATALYST_INTL_DROPLET_IP`, `CATALYST_SSH_KEY` | `.env` |
+| APIs | `NEWSAPI_KEY`, `FINNHUB_KEY`, `ALPACA_API_KEY`, `FRED_API_KEY` | `.env` |
+| Training | `TRAINING_DEVICE`, `TRAINING_EPOCHS`, `TRAINING_BATCH_SIZE`, `TRAINING_LR` | `.env` |
+| Markets | Market hours, instruments, sector ETFs, news tiers | `config/settings.py` |
 
 ---
 
 ## Phase Plan
 
-### Phase 1 — Data Collection Infrastructure
-- [ ] Security registry (poll droplet scanners)
-- [ ] Candle collector (Alpaca + Yahoo Finance)
-- [ ] Storage schema (SQLite)
-- [ ] Basic macro collector (DXY, VIX, US10Y, currency pairs)
-- [ ] News collector with source provenance
+### Phase 1 — Day Trading Accuracy ← CURRENT
 
-### Phase 2 — Data Accumulation
-- [ ] Run collectors for minimum 2-4 weeks
-- [ ] Validate data quality and time alignment
-- [ ] Generate forward return labels
-- [ ] Build training dataset loader
+- [x] Security registry + candle collector
+- [x] SQLite storage + macro collector
+- [x] News collector with source provenance
+- [x] Forward return labels
+- [x] CandleModel v0.3 trained (132K params, direction + returns + confidence)
+- [x] ONNX export + deployed to both droplets
+- [x] Automated collection (systemd service)
+- [x] Automated pipeline (weekly timer: train → export → deploy)
+- [ ] News-to-Security Model trained
+- [ ] >65% direction accuracy (currently ~43%)
+- [ ] Feedback loop (production outcomes → retraining)
 
-### Phase 3 — First Network (Candle Only)
-- [ ] Time-series encoder on candle data only
-- [ ] Train to predict forward returns
-- [ ] Evaluate: does it find anything?
-- [ ] Compare against random baseline
+### Phase 2 — Adaptive Context
+- [ ] Context classifier (news category, sector, volatility regime)
+- [ ] Candle sub-models per failure context
+- [ ] Coordinator routes to appropriate sub-model
 
-### Phase 4 — Add News + Macro
-- [ ] News encoder
-- [ ] Macro encoder
-- [ ] Fusion network
-- [ ] Train on combined data
-- [ ] Compare: does multi-resolution improve prediction?
+### Phase 3 — Adversarial Detection
+- [ ] Anomaly detection for manufactured moves
+- [ ] Source trust model
 
-### Phase 5 — Deploy to Droplet
-- [ ] Export trained models as .pt or ONNX
-- [ ] Integrate into coordinator.py signal processing layer
-- [ ] Neural network outputs become signals in the 6-layer cycle
-- [ ] Claude API only called when network flags low confidence
+### Phase 4 — Macro Positioning
+- [ ] Macro Regime Model
+- [ ] Sector Rotation Model
+- [ ] Cross-Asset Correlation Model
 
 ---
 
 *"The prudent see danger and take refuge, but the simple keep going and pay the penalty."* — Proverbs 27:12
 
-*Catalyst Neural v0.1.0 — Craig + Claude — 2026-04-04*
+*Catalyst Neural Architecture v0.3.1 — Craig + Claude — 2026-04-20*
