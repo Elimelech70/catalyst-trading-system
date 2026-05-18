@@ -1,0 +1,9 @@
+{
+    "version": "0.3.0",
+    "deployed_at": "2026-04-08T06:25:00Z",
+    "candle_model": "candle_model.onnx (v0.3 — multi-timeframe 5m+15m, 132K params, direction+returns+confidence)",
+    "news_model": "not deployed",
+    "trained_on": "91K 5m candles, 30K 15m candles, 59 securities, 21 days",
+    "direction_accuracy": "39.5% (vs 33.3% random)",
+    "note": "CandleModel v0.3: bullish/bearish/neutral classification + 5m/15m/1h return prediction"
+}

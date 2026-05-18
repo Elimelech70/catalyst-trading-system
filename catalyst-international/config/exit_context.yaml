@@ -1,0 +1,296 @@
+# ============================================================================
+# EXIT CONTEXT CONFIGURATION
+# ============================================================================
+#
+# Name of Application: Catalyst Trading System
+# Name of file: exit_context.yaml
+# Version: 1.0.0
+# Last Updated: 2026-01-24
+# Purpose: Configurable exit strategy thresholds and rules
+#
+# REVISION HISTORY:
+# v1.0.0 (2026-01-24) - Initial creation
+#   - P&L thresholds (stop loss, take profit, trailing stop)
+#   - Pattern deterioration rules
+#   - Hold conditions for letting winners run
+#   - Market-specific overrides (HKEX/US)
+#   - AI consultation rules
+#
+# INSTRUCTIONS:
+# - Edit this file to tune exit strategy
+# - Changes are hot-reloaded (no restart needed)
+# - Test changes in paper trading first
+# - Commit changes to git for version control
+#
+# ============================================================================
+
+version: "1.0.0"
+last_updated: "2026-01-24"
+author: "Craig + Claude"
+
+# ============================================================================
+# P&L THRESHOLDS
+# ============================================================================
+# These control when to exit based on profit/loss percentage
+
+thresholds:
+  # Stop Loss - Cut losses early
+  stop_loss:
+    strong: -0.03        # -3% = IMMEDIATE EXIT
+    moderate: -0.02      # -2% = Consult Haiku
+    weak: -0.01          # -1% = Monitor closely
+
+  # Take Profit - Lock in gains
+  take_profit:
+    strong: 0.10         # +10% = Consider exit (but check pattern)
+    moderate: 0.06       # +6% = Trail stop tighter
+    weak: 0.03           # +3% = Healthy, monitor
+
+  # Trailing Stop - Protect gains from high
+  trailing_stop:
+    activation_pct: 0.03   # Activate after +3% profit
+    drop_pct: 0.025        # Exit on 2.5% drop from high
+
+  # Time Stop - Flat positions
+  time_stop:
+    minutes_flat: 120      # 2 hours with no movement = re-evaluate
+
+# ============================================================================
+# TECHNICAL INDICATOR THRESHOLDS
+# ============================================================================
+
+technical:
+  rsi:
+    overbought_strong: 85    # STRONG exit signal
+    overbought_moderate: 75  # MODERATE - consult AI
+    oversold_strong: 15      # For shorts: STRONG exit
+    oversold_moderate: 25    # For shorts: MODERATE
+    healthy_low: 40          # Below this = pullback zone
+    healthy_high: 65         # Above this = extended
+
+  macd:
+    bearish_cross_weight: 0.3  # Weight for MACD bearish cross
+    divergence_periods: 5      # Look back periods for divergence
+
+  volume:
+    collapse_strong: 0.25      # <25% of entry = STRONG exit
+    collapse_moderate: 0.40    # <40% of entry = MODERATE
+    healthy_min: 0.80          # >80% of entry = healthy
+    strong_min: 1.20           # >120% of entry = STRONG hold
+
+  moving_averages:
+    ema_fast: 9
+    ema_slow: 20
+    sma_short: 10
+    sma_medium: 20
+
+# ============================================================================
+# PATTERN DETERIORATION RULES
+# ============================================================================
+# When the entry pattern structure breaks
+
+pattern_exit_rules:
+  # Lower High Detection
+  lower_high:
+    enabled: true
+    consecutive_required: 2    # 2 consecutive lower highs
+    min_drop_pct: 0.005       # 0.5% lower than previous high
+    signal_strength: "MODERATE"
+    description: "Momentum weakening - price making lower highs"
+
+  # Pattern Support Breakdown
+  pattern_breakdown:
+    enabled: true
+    support_break_pct: 0.02   # 2% below pattern support = broken
+    signal_strength: "STRONG"
+    description: "Entry pattern support violated"
+
+  # MACD Bearish Divergence
+  macd_divergence:
+    enabled: true
+    price_higher_high: true    # Price making higher high
+    macd_lower_high: true      # But MACD making lower high
+    lookback_periods: 5
+    signal_strength: "MODERATE"
+    description: "Hidden weakness - price up but momentum down"
+
+  # EMA Cross Down
+  ema_cross_down:
+    enabled: true
+    fast_period: 9
+    slow_period: 20
+    signal_strength: "MODERATE"
+    description: "Short-term trend reversal"
+
+  # Failed Breakout Retest
+  failed_retest:
+    enabled: true
+    retest_tolerance_pct: 0.01  # Within 1% of breakout level
+    failure_drop_pct: 0.02      # Then drops 2%
+    signal_strength: "STRONG"
+    description: "Breakout rejected on retest"
+
+  # Consolidation Too Long
+  consolidation_stall:
+    enabled: true
+    max_range_pct: 0.02        # Trading in <2% range
+    max_periods: 10            # For 10+ periods
+    signal_strength: "WEAK"
+    description: "Momentum stalled - sideways too long"
+
+# ============================================================================
+# HOLD CONDITIONS
+# ============================================================================
+# When to let winners run instead of taking profit
+
+hold_conditions:
+  # Higher Lows Pattern
+  higher_lows:
+    enabled: true
+    consecutive_required: 2    # 2+ higher lows
+    min_rise_pct: 0.005       # Each low 0.5%+ higher
+    signal_strength: "STRONG"
+    description: "Healthy uptrend structure - accumulation"
+
+  # Price Above Key MAs
+  above_moving_averages:
+    enabled: true
+    require_above_ema9: true
+    require_above_sma20: true
+    signal_strength: "MODERATE"
+    description: "Price above key moving averages - trend intact"
+
+  # Volume Confirmation
+  volume_confirmation:
+    enabled: true
+    up_volume_ratio: 1.2      # Up candle volume > down candle volume
+    lookback_periods: 5
+    signal_strength: "MODERATE"
+    description: "Buying pressure stronger than selling"
+
+  # MACD Histogram Growing
+  macd_expansion:
+    enabled: true
+    growth_periods: 3          # Growing for 3+ periods
+    signal_strength: "MODERATE"
+    description: "Momentum accelerating"
+
+  # RSI in Sweet Spot
+  rsi_healthy:
+    enabled: true
+    min_rsi: 45
+    max_rsi: 70
+    signal_strength: "WEAK"
+    description: "RSI in healthy zone - room to run"
+
+  # Above VWAP
+  above_vwap:
+    enabled: true
+    min_above_pct: 0.01       # At least 1% above VWAP
+    signal_strength: "MODERATE"
+    description: "Trading above average price - bullish"
+
+# ============================================================================
+# MARKET-SPECIFIC OVERRIDES
+# ============================================================================
+# Different settings for different markets
+
+market_overrides:
+  hkex:
+    # HKEX tends to have wider swings
+    thresholds:
+      stop_loss:
+        strong: -0.035       # -3.5% for HKEX
+      take_profit:
+        strong: 0.12         # +12% for HKEX
+      trailing_stop:
+        drop_pct: 0.03       # 3% trailing for HKEX
+
+    # HKEX lunch break handling
+    time_rules:
+      lunch_exit_warning: "11:50"  # HKT
+      lunch_start: "12:00"
+      lunch_end: "13:00"
+      market_close_warning: "15:45"
+      market_close: "16:00"
+
+  us:
+    # US market - tighter stops, no lunch break
+    thresholds:
+      stop_loss:
+        strong: -0.05        # -5% for US (more volatile)
+        moderate: -0.03
+      take_profit:
+        strong: 0.10
+      trailing_stop:
+        activation_pct: 0.04 # Activate after +4%
+        drop_pct: 0.03       # 3% trailing
+
+    time_rules:
+      market_close_warning: "15:45"  # ET
+      market_close: "16:00"
+      power_hour_start: "15:00"      # Volatility increases
+
+# ============================================================================
+# AI CONSULTATION RULES
+# ============================================================================
+# When to ask Haiku for exit decision
+
+ai_consultation:
+  enabled: true
+  model: "claude-3-5-haiku-20241022"
+  max_calls_per_position: 10
+  cost_per_call: 0.05
+
+  # Consult AI when:
+  consult_conditions:
+    - "MODERATE exit signal detected"
+    - "Conflicting signals (exit + hold)"
+    - "Near take profit but pattern healthy"
+    - "Time stop approaching"
+
+  # Don't consult AI when:
+  skip_conditions:
+    - "STRONG exit signal (exit immediately)"
+    - "All STRONG hold signals (keep holding)"
+    - "Position < 1 hour old (too early)"
+
+# ============================================================================
+# SIGNAL WEIGHTS
+# ============================================================================
+# For scoring when multiple signals conflict
+
+signal_weights:
+  exit_signals:
+    stop_loss_hit: 1.0           # Highest priority
+    pattern_breakdown: 0.9
+    trailing_stop_hit: 0.8
+    rsi_overbought: 0.7
+    failed_retest: 0.7
+    volume_collapse: 0.6
+    macd_divergence: 0.5
+    lower_high: 0.4
+    ema_cross_down: 0.4
+    consolidation_stall: 0.2
+
+  hold_signals:
+    higher_lows: 0.8
+    above_moving_averages: 0.6
+    volume_confirmation: 0.6
+    macd_expansion: 0.5
+    above_vwap: 0.4
+    rsi_healthy: 0.3
+
+# ============================================================================
+# BRACKET ORDER BACKUP
+# ============================================================================
+# Wide brackets as catastrophic backstop
+
+bracket_orders:
+  # These are WIDER than AI monitoring - only hit if AI fails
+  stop_loss_pct: -0.08         # -8% catastrophic stop
+  take_profit_pct: 0.15        # +15% extreme take profit
+
+  # AI should exit BEFORE these trigger
+  expected_ai_exit_loss: -0.02  # AI exits at -2%
+  expected_ai_exit_gain: 0.08   # AI trails gains

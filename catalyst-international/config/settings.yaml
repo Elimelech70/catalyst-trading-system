@@ -1,0 +1,148 @@
+# Catalyst Trading System International - Configuration
+# HKEX Trading via Interactive Brokers
+
+# Exchange Configuration
+exchange:
+  code: HKEX
+  name: "Hong Kong Stock Exchange"
+  currency: HKD
+  timezone: Asia/Hong_Kong
+  lot_size: 100  # Board lot size
+
+  # Trading Sessions
+  morning_open: "09:30"
+  morning_close: "12:00"
+  afternoon_open: "13:00"
+  afternoon_close: "16:00"
+
+  # Indices to scan
+  indices:
+    - HSI      # Hang Seng Index
+    - HSCEI    # Hang Seng China Enterprises Index
+    - HSTECH   # Hang Seng Tech Index
+
+# Broker Configuration
+# Using IBGA Docker container (heshiming/ibga) with ib_async socket API
+broker:
+  name: IBKR
+  host: "${IBKR_HOST:-127.0.0.1}"
+  port: ${IBKR_PORT:-4000}  # IBGA port (4000=paper/live)
+  client_id: ${IBKR_CLIENT_ID:-1}
+  timeout: 30
+
+  # Order settings
+  order_types:
+    - market
+    - limit
+  default_tif: DAY  # Time in force
+
+# Risk Management
+risk:
+  # Position limits
+  max_positions: 15
+  max_position_pct: 0.20          # 20% of portfolio per position
+  min_position_value: 2000        # Minimum HKD per trade
+
+  # Loss limits
+  max_daily_loss_pct: 0.02        # 2% daily loss triggers emergency close
+  warning_loss_pct: 0.015         # 1.5% triggers conservative mode
+  max_trade_loss_pct: 0.01        # 1% max loss per trade
+
+  # Trade limits
+  max_daily_trades: 10
+  min_risk_reward: 2.0            # Minimum 2:1 reward to risk
+
+  # Stop loss
+  stop_loss_atr_multiple: 1.5     # Stop loss at 1.5x ATR
+  max_stop_loss_pct: 0.05         # Maximum 5% stop loss
+
+# Claude API Configuration
+claude:
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 4096
+  max_iterations: 35              # Max tool call iterations per cycle (increased from 20)
+  temperature: 0.1                # Low temperature for consistency
+
+# Entry Criteria (all must be met)
+entry:
+  min_volume_ratio: 1.5           # Volume > 1.5x average
+  rsi_min: 40
+  rsi_max: 70
+  min_pattern_confidence: 0.7     # 70% pattern confidence
+  required_catalyst: true         # Must have news catalyst
+
+  # Pattern types to look for
+  patterns:
+    - bull_flag
+    - cup_handle
+    - ascending_triangle
+    - ABCD
+    - breakout
+
+# Exit Rules
+exit:
+  take_profit_multiple: 2.5       # Take profit at 2.5x risk
+  time_stop_minutes: 60           # Close if flat after 60 min
+  close_before_lunch: true        # Close positions before lunch break
+  trailing_stop_enabled: true
+  trailing_stop_pct: 0.02         # 2% trailing stop
+
+# Alerts Configuration
+alerts:
+  email: "${ALERT_EMAIL}"
+  smtp_host: "${SMTP_HOST:-smtp.gmail.com}"
+  smtp_port: ${SMTP_PORT:-587}
+  smtp_user: "${SMTP_USER}"
+  smtp_pass: "${SMTP_PASS}"
+
+  # Alert triggers
+  on_trade: true
+  on_daily_loss_warning: true
+  on_emergency_close: true
+  on_error: true
+
+# Database (DigitalOcean Managed PostgreSQL - International)
+database:
+  host: "${DB_HOST}"
+  port: ${DB_PORT:-5432}
+  name: "${DB_NAME:-catalyst_trading}"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  ssl_mode: require
+  pool_size: 5
+
+# Logging
+logging:
+  level: INFO
+  file: logs/agent.log
+  max_size_mb: 10
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Market Data
+market_data:
+  # Technical indicators
+  sma_periods: [9, 20, 50, 200]
+  ema_periods: [9, 21]
+  rsi_period: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  atr_period: 14
+
+  # Timeframes
+  default_timeframe: "15m"
+  available_timeframes:
+    - "5m"
+    - "15m"
+    - "1h"
+    - "1d"
+
+# News/Sentiment
+news:
+  lookback_hours: 24
+  min_sentiment_score: 0.3        # Minimum positive sentiment
+  sources:
+    - reuters
+    - bloomberg
+    - scmp

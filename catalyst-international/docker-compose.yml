@@ -1,0 +1,214 @@
+# =============================================================================
+# Name of Application: Catalyst Trading System
+# Name of file: docker-compose.yml
+# Version: 2.1.0
+# Last Updated: 2026-02-28
+# Purpose: Multi-Agent MCP Architecture - Docker Compose configuration
+#
+# Architecture:
+#   coordinator -> position-monitor (:8001/sse)
+#               -> market-scanner   (:8002/sse)
+#               -> trade-executor   (:8003/sse)
+#
+# Network: All agent containers use host networking so they can reach
+# OpenD on 127.0.0.1:11111 (Moomoo requires localhost for unencrypted trade).
+# Coordinator uses localhost URLs in mcp_config.json.
+#
+# Usage:
+#   docker compose up -d                    # Start all agents
+#   docker compose up position-monitor      # Start phase 1 only
+#   docker compose logs -f coordinator      # Follow coordinator logs
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Infrastructure
+  # ===========================================================================
+
+  # PostgreSQL Database (self-hosted, for local dev)
+  postgres:
+    image: postgres:16-alpine
+    container_name: catalyst-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-catalyst}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-catalyst_password}
+      POSTGRES_DB: ${DB_NAME:-catalyst_trading}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./sql/position_monitor_service_schema.sql:/docker-entrypoint-initdb.d/02-monitor-schema.sql:ro
+      - ./sql/002-feedback-loop.sql:/docker-entrypoint-initdb.d/03-feedback-loop.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-catalyst} -d ${DB_NAME:-catalyst_trading}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - catalyst-network
+
+  # Redis Cache (optional, for future use)
+  redis:
+    image: redis:7-alpine
+    container_name: catalyst-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - catalyst-network
+
+  # ===========================================================================
+  # MCP Agent: Position Monitor (Eyes - watches positions)
+  # ===========================================================================
+  position-monitor:
+    build:
+      context: .
+      dockerfile: agents/position-monitor/Dockerfile
+    container_name: catalyst-position-monitor
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      MOOMOO_HOST: 127.0.0.1
+      MOOMOO_PORT: ${MOOMOO_DOCKER_PORT:-11111}
+      MONITOR_CHECK_INTERVAL: ${MONITOR_CHECK_INTERVAL:-300}
+      PORT: 8001
+      TZ: Asia/Hong_Kong
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ===========================================================================
+  # MCP Agent: Market Scanner (Eyes - reads market data)
+  # ===========================================================================
+  market-scanner:
+    build:
+      context: .
+      dockerfile: agents/market-scanner/Dockerfile
+    container_name: catalyst-market-scanner
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MOOMOO_HOST: 127.0.0.1
+      MOOMOO_PORT: ${MOOMOO_DOCKER_PORT:-11111}
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY:-}
+      PORT: 8002
+      TZ: Asia/Hong_Kong
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ===========================================================================
+  # MCP Agent: Trade Executor (Hands - SINGLE WRITER for positions)
+  # ===========================================================================
+  trade-executor:
+    build:
+      context: .
+      dockerfile: agents/trade-executor/Dockerfile
+    container_name: catalyst-trade-executor
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-25060}
+      DB_NAME: ${DB_NAME:-catalyst_intl}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      MOOMOO_HOST: 127.0.0.1
+      MOOMOO_PORT: ${MOOMOO_DOCKER_PORT:-11111}
+      MOOMOO_TRADE_PWD: ${MOOMOO_TRADE_PWD:-}
+      PORT: 8003
+      TZ: Asia/Hong_Kong
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ===========================================================================
+  # Coordinator (Brain - Claude AI decision maker)
+  # ===========================================================================
+  coordinator:
+    build:
+      context: .
+      dockerfile: agents/coordinator/Dockerfile
+    container_name: catalyst-coordinator
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      position-monitor:
+        condition: service_healthy
+      market-scanner:
+        condition: service_healthy
+      trade-executor:
+        condition: service_healthy
+    volumes:
+      - ./CLAUDE.md:/app/memory/CLAUDE.md:ro
+      - ./CLAUDE-LEARNINGS.md:/app/memory/CLAUDE-LEARNINGS.md:ro
+      - ./CLAUDE-FOCUS.md:/app/memory/CLAUDE-FOCUS.md:ro
+      - ./models:/app/models:ro
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-5-20250929}
+      FORCE_MARKET_OPEN: ${FORCE_MARKET_OPEN:-}
+      TZ: Asia/Hong_Kong
+
+  # ===========================================================================
+  # Legacy: Monolithic agent (kept for backward compat, will be retired)
+  # ===========================================================================
+  agent-legacy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: catalyst-agent-legacy
+    restart: "no"
+    profiles:
+      - legacy
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-25060}
+      DB_NAME: ${DB_NAME:-catalyst_intl}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      MOOMOO_HOST: 127.0.0.1
+      MOOMOO_PORT: ${MOOMOO_DOCKER_PORT:-11111}
+      ENVIRONMENT: ${ENVIRONMENT:-paper}
+      TZ: Asia/Hong_Kong
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  catalyst-network:
+    driver: bridge

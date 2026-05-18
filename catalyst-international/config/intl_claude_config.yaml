@@ -1,0 +1,164 @@
+# ============================================================================
+# Name of Application: Catalyst Trading System
+# Name of file: intl_claude_config.yaml
+# Version: 1.0.0
+# Last Updated: 2026-01-10
+# Purpose: Configuration for intl_claude production trading agent
+# ============================================================================
+#
+# DESCRIPTION:
+# intl_claude is the production trading agent running on HKEX.
+# Uses proven strategies only - validated learnings from dev_claude.
+# Conservative settings to protect real capital.
+#
+# ============================================================================
+
+# Agent Identity
+agent:
+  id: intl_claude
+  name: intl_claude
+  role: production_trader
+  description: "Production HKEX trading agent - proven strategies only"
+
+# Market Configuration
+market:
+  exchange: HKEX
+  timezone: Asia/Hong_Kong
+  currency: HKD
+  
+  sessions:
+    morning:
+      open: "09:30"
+      close: "12:00"
+    lunch_break:
+      start: "12:00"
+      end: "13:00"
+    afternoon:
+      open: "13:00"
+      close: "16:00"
+  
+  default_lot_size: 100
+
+# Broker Configuration
+broker:
+  provider: moomoo
+  account_type: paper  # Change to 'real' when ready
+  
+  gateway:
+    host: "127.0.0.1"
+    port: 11111
+  
+  paper_account_index: 1  # Primary paper account
+
+# Trading Parameters - CONSERVATIVE
+trading:
+  mode: production
+  autonomy: proven_only  # Only use validated strategies
+  
+  # Position limits (more conservative than dev_claude)
+  max_positions: 15
+  max_position_value_hkd: 10000
+  min_position_value_hkd: 2000
+  
+  # Risk limits (tighter than dev_claude)
+  daily_loss_limit_hkd: 16000
+  position_stop_loss_pct: 0.03
+  trailing_stop_pct: 0.03
+  
+  # Order settings
+  default_order_type: limit
+  price_offset_pct: 0.001
+
+# Signal Thresholds - PRODUCTION VALUES
+signals:
+  # P&L thresholds
+  stop_loss_strong: -0.03
+  stop_loss_moderate: -0.02
+  take_profit_strong: 0.08
+  take_profit_moderate: 0.05
+  trailing_stop_pct: 0.03
+  
+  # RSI thresholds
+  rsi_overbought_strong: 85
+  rsi_overbought_moderate: 75
+  rsi_healthy_low: 40
+  rsi_healthy_high: 65
+  rsi_oversold: 30
+  
+  # Volume thresholds
+  volume_dying_strong: 0.25
+  volume_dying_moderate: 0.40
+  volume_healthy: 0.80
+  volume_strong: 1.20
+
+# AI Configuration
+ai:
+  model_entry: claude-sonnet-4-20250514
+  model_monitor: claude-3-haiku-20240307
+  model_analysis: claude-sonnet-4-20250514
+  
+  daily_budget_usd: 5.00
+  max_haiku_calls_per_position: 10
+  
+  thinking:
+    entry: medium
+    exit: light
+    analysis: medium  # Less deep than dev_claude
+
+# Monitoring Configuration
+monitoring:
+  check_interval_seconds: 300
+  max_checks_per_position: 1000
+  run_startup_monitor: true
+  health_check_interval_seconds: 600
+
+# Database Configuration
+database:
+  trading_db: catalyst_intl
+  trading_url_env: DATABASE_URL
+
+# Cron Schedule (UTC)
+schedule:
+  startup: "0 1 * * 1-5"
+  
+  trade_cycles:
+    - "30 1 * * 1-5"
+    - "0 2 * * 1-5"
+    - "0 3 * * 1-5"
+  
+  lunch_close: "0 4 * * 1-5"
+  
+  afternoon_cycles:
+    - "0 5 * * 1-5"
+    - "0 6 * * 1-5"
+    - "0 7 * * 1-5"
+  
+  eod_close: "0 8 * * 1-5"
+  
+  heartbeat: "0 9,12,15,18,21 * * 1-5"
+
+# Logging - Less verbose than dev_claude
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  files:
+    main: logs/intl_claude.log
+    trades: logs/trades.log
+
+  rotation:
+    when: midnight
+    backup_count: 30
+
+# Feature Flags
+features:
+  position_monitoring: true
+  pattern_detection: true
+  news_filtering: true
+  database_logging: true
+
+  # No experimental features in production
+  experimental:
+    extended_hours_analysis: false
+    cross_market_correlation: false
+    sentiment_analysis: false
