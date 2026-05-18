@@ -1,114 +1,40 @@
-# CLAUDE.md - Catalyst Trading System International
+# CLAUDE.md — Catalyst International (HKEX)
 
 **Name of Application**: Catalyst Trading System
-**Name of file**: CLAUDE.md
-**Version**: 3.12.0
-**Last Updated**: 2026-02-07
-**Purpose**: Complete operational guidelines for Claude Code on HKEX production system
+**Name of file**: catalyst-international/CLAUDE.md
+**Version**: 3.14.0
+**Last Updated**: 2026-05-18
+**Purpose**: Operational runbook for the HKEX intl droplet — Multi-Agent MCP Architecture
+
+> Read the repo-root `../CLAUDE.md` first for cross-implementation orientation
+> (it explains how this implementation fits with `catalyst-agent`, `catalyst-neural`,
+> and the planned `catalyst-research`).
 
 ---
 
 ## REVISION HISTORY
 
-**v3.13.0 (2026-02-14)** - SURVIVAL ARCHITECTURE (Crawl Phase)
-- Full trading analysis revealed 3-day bleed-out (Feb 11-13): zero trades despite HKD 994K cash
-- Root cause: `KeyError: 'date'` in market.py broke all technicals/patterns silently
-- Implementing big_bro's 7-phase guide: senses → survival pulse → discipline → prompt → lifecycle → signals → memory
-- See: Documentation/Implementation/little bro - better implementation.zip (implementation guide)
-- See: Documentation/Implementation/catalyst-implementation-principles.md (principles)
-- See: Documentation/Implementation/catalyst-consciousness-architecture-v3.md (architecture)
-- Learnings in temporary memory until proven, then promoted to CLAUDE.md
+**v3.14.0 (2026-05-18)** — DOCUMENT ACTUAL PRODUCTION ARCHITECTURE
+- Replaces legacy `unified_agent.py` + cron documentation with the multi-agent MCP
+  architecture that has actually been running on this droplet since early 2026.
+- File versions table now points to `agents/{coordinator,position-monitor,
+  market-scanner,trade-executor}/` — not the monolithic `unified_agent.py`.
+- Trading schedule rewritten: continuous Docker loop (`catalyst.service`),
+  cron `/etc/cron.d/catalyst-intl` is **disabled** and unused.
+- Brain architecture section rewritten from observed runtime — 6-layer cycle
+  (Heartbeat → State → Self-Reg → Working Memory → Inter-Agent → Voice)
+  with Survival Pulse + Discipline Gate inside Layers 1 and 3.
+- Added cerebellum + ONNX inference (candle_model v0.3.1 deployed 2026-05-10).
+- Added HKEX holiday awareness (2026-04-07 — `HKEX_HOLIDAYS_2026` /
+  `HKEX_HALF_DAYS_2026` in coordinator.py).
+- Added `signals` table for health/discipline/exit broadcasts.
+- Removed static portfolio snapshot — point to `scripts/show_positions.py`.
+- Added second founding incident: API credit drought 2026-05-07 → 05-15.
 
-**v3.12.0 (2026-02-07)** - POSITION DEDUPLICATION
-- Cleaned up 11 duplicate open position rows in database
-- Added partial unique index `idx_positions_unique_open_symbol` on positions(symbol) WHERE status='open'
-- Upgraded database.py to v1.6.0: `record_position()` now upserts (checks for existing open position first)
-- Added `close_position_by_id()` to database.py for targeted position closure
-- Upgraded tool_executor.py to v3.4.0: `sync_positions_with_broker()` deduplicates DB rows before comparison
-- Normalized `side` to uppercase in `_execute_trade()`
-- See: Documentation/Reports/implementation/position-dedup-fix-7Feb2026.md
-
-**v3.11.0 (2026-02-05)** - SYMBOL NORMALIZATION
-- Added `normalize_symbol()` function to moomoo.py v1.6.0
-- Fixed `get_quotes_batch()` to return `Dict[str, dict]` instead of `List[dict]` (critical bug fix)
-- Updated market.py v2.4.0 to use normalized symbols for quote lookup
-- Added symbol normalization to database.py v1.5.0 (record_position, record_order)
-- Updated tool_executor.py v3.3.0 to use centralized normalize_symbol()
-- Eliminates phantom position mismatches (e.g., 0670 vs 670)
-- See: Documentation/Reports/implementation/symbol-normalization-implementation-plan-5Feb2026.md
-
-**v3.10.0 (2026-02-04)** - ORDER FILL CONFIRMATION
-- Upgraded moomoo.py to v1.5.0 with wait_for_fill() support
-- Upgraded tool_executor.py to v3.2.0 with simplified fill handling
-- Orders now wait up to 30s (paper) / 60s (live) for fill confirmation
-- Positions ONLY created when broker confirms FILLED status
-- Eliminates phantom positions problem
-- Added terminal state detection (CANCELLED, FAILED, DELETED)
-- See: Documentation/Reports/implementation/order-fill-confirmation-implementation-4Feb2026.md
-
-**v3.9.0 (2026-01-31)** - POSITION SYNC FIX
-- Fixed order fill confirmation: polls order status for 5s after SUBMITTED
-- Positions now created immediately when fill confirmed (not relying on auto-sync)
-- Improved sync: updates quantity in-place instead of close+create
-- Added update_position_quantity() to database.py v1.4.0
-- Added EOD position sync at 16:05 HKT (cron v12.0.0)
-- tool_executor.py updated to v3.0.0
-- Root cause analysis: Documentation/Reports/analysis/position-sync-analysis-2026-01-31.md
-
-**v3.8.0 (2026-01-21)** - CRON FIX & 30-MIN TRADING SCHEDULE
-- Fixed duplicate cron: disabled `/etc/cron.d/catalyst-intl` (missing .env loading)
-- Updated trading schedule from hourly to every 30 minutes
-- 12 trade runs per day (was 6): 01:30, 02:00, 02:30, 03:00, 03:30, 05:00-07:30
-- Position sync now runs correctly at start of each cycle
-- Cron schedule version: v11.0.0
-
-**v3.7.0 (2026-01-20)** - POSITION VALUE LIMITS & FIXES
-- Added HKD 10,000 max position value enforcement in tool_executor.py v2.8.0
-- Updated SYSTEM_PROMPT: changed "25% of portfolio" to "HKD 10,000 max per position"
-- Updated tier descriptions with explicit HKD limits (Tier 1/2: 10K, Tier 3: 5K)
-- Added max_positions to get_portfolio response (tool_executor.py v2.7.0)
-- Fixed position_monitor_service.py v1.0.1: price key bug, execute_trade method
-- Trades exceeding limit are rejected with helpful error message
-
-**v3.6.0 (2026-01-17)** - MERGED AGENT.PY INTO UNIFIED_AGENT
-- Merged deleted agent.py functionality into unified_agent.py v3.0.0
-- Added WorkflowTracker class for 10-phase progress tracking
-- Added SYSTEM_PROMPT with tiered entry criteria (Tier 1/2/3)
-- Added Claude API tool-use loop (replaces stub implementations)
-- Added --force and --live CLI flags
-- Progress bar displays during execution
-
-**v3.5.0 (2026-01-16)** - CLEANUP & CONSOLIDATION
-- Removed agent.py (replaced by unified_agent.py)
-- Position monitoring only via systemd service (position_monitor_service.py)
-- Restored unified_agent.py after accidental deletion
-
-**v3.4.0 (2026-01-16)** - ORDER STATUS FIX
-- Fixed critical bug: orders marked "filled" when only "SUBMITTED"
-- Positions now only created when broker confirms actual fill
-- Submitted orders recorded with status="submitted", filled_quantity=0
-- Removed old position_monitor.py (replaced by systemd service)
-
-**v3.3.0 (2026-01-16)** - VOLUME RATIO & POSITION MONITOR FIXES
-- Fixed volume_ratio mismatch between scan_market() and get_quote()
-- Increased max_iterations from 20 to 35 in config
-- Fixed position monitor: pass position_id instead of safety_validator
-- Fixed position monitor: run in background thread to avoid event loop conflicts
-- Multiple successful trades executed (1800, 9866)
-
-**v3.2.0 (2026-01-06)** - FIRST TRADE MILESTONE
-- First autonomous trade executed (BUY 1024 Kuaishou)
-- Added patterns.py v1.1.0 pattern types
-- Documented bug fixes from today
-- Updated file versions table
-- Added close position testing instructions
-
-**v3.1.0 (2025-12-31)** - STREAMLINED
-- Migrated lessons to database
-- Removed verbose code examples
-
-**v3.0.0 (2025-12-20)** - BROKER MIGRATION
-- IBKR → Moomoo/Futu OpenD
+**v3.13.0 (2026-02-14)** — SURVIVAL ARCHITECTURE (Crawl Phase)
+- 3-day bleed-out Feb 11-13: `KeyError: 'date'` in market.py broke get_technicals silently
+- Implemented big_bro's 7-phase guide → senses → survival pulse → discipline → prompt → lifecycle → signals → memory
+- (Earlier history truncated — see git log for v3.0.0 through v3.12.0 details)
 
 ---
 
@@ -117,53 +43,119 @@
 ### The Three Questions You MUST Ask First
 
 1. **What is my PURPOSE right now?**
-   - 🎯 Designing? → Need architecture docs, requirements, schemas
-   - 🔧 Implementing? → Need specific design doc, authoritative sources, exact specs
-   - 🐛 Troubleshooting? → Need logs, error messages, current state, what changed
+   - 🎯 Designing? → `Documentation/Design/catalyst-ai-architecture-v2.4.md`, database schema
+   - 🔧 Implementing? → Specific design doc + the agent's MCP tool schema
+   - 🐛 Troubleshooting? → `docker logs catalyst-coordinator` first, then DB state, then code
 
-2. **What QUALITY information do I need?**
-   - 📚 For design: Architecture docs, database schema, functional specs
-   - 📖 For implementation: Authoritative sources (Tier 1 only!), design doc version
-   - 🔍 For troubleshooting: Recent logs, error traces, last working state
+2. **Which agent am I touching?**
+   - Brain (coordinator) vs. organ (market-scanner / position-monitor / trade-executor)
+   - Crossing the line means MCP tool schema changes — never do this casually
 
 3. **Am I FOCUSED or scattered?**
-   - ✅ Focused: One clear goal, minimal information, specific outcome
-   - ❌ Scattered: Multiple goals, too much context, vague direction
+   - ✅ One clear goal, minimal context, specific outcome
+   - ❌ Multiple goals, vague direction → STOP
 
 ---
 
-## 📁 Source of Truth: GitHub Design Documents
+## 📁 Source of Truth
 
-### Key Design Documents
+Per root CLAUDE.md, this droplet runs the **catalyst-international** implementation
+of `catalyst-ai-architecture-v2.4`.
 
-| Document | Version | Purpose |
-|----------|---------|---------|
-| `architecture-international.md` | 5.2.0 | System architecture |
-| `database-schema.md` | 8.0.0 | Database schema |
-| `functional-specification.md` | 8.0.0 | Tool specifications |
+| Document | Location | Notes |
+|----------|----------|-------|
+| Catalyst AI architecture | `../Documentation/Design/catalyst-ai-architecture-v2.4.md` | Authoritative |
+| Database schema | `../Documentation/Design/database-schema.md` | Verify with `\d table_name` against deployed DB |
+| Neural architecture | `../Documentation/Design/catalyst-neural-architecture-v0.3.md` | Model interface contract |
+| This file | `catalyst-international/CLAUDE.md` | Operational runbook |
+| Working learnings | `catalyst-international/CLAUDE-LEARNINGS.md` | Loaded by brain Layer 2 |
+| Working focus | `catalyst-international/CLAUDE-FOCUS.md` | Loaded by brain Layer 4 |
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ Architecture (as deployed)
 
-### Current File Versions
+### Running Docker services
 
-| File | Version | Last Updated | Purpose |
-|------|---------|--------------|---------|
-| `unified_agent.py` | 3.0.0 | 2026-01-20 | Main agent with Claude AI loop + HKD limits + auto-sync |
-| `tool_executor.py` | 3.4.0 | 2026-02-07 | Tool routing + sync dedup + side normalization |
-| `data/database.py` | 1.6.0 | 2026-02-07 | Database ops + position upsert + close_by_id |
-| `brokers/moomoo.py` | 1.6.0 | 2026-02-05 | Moomoo client + normalize_symbol() + Dict quotes |
-| `data/patterns.py` | 1.1.0 | 2026-01-06 | Relaxed pattern detection |
-| `data/market.py` | 2.4.0 | 2026-02-05 | Market data + symbol normalization fix |
-| `data/news.py` | 1.0.0 | 2025-12-06 | News and sentiment |
-| `position_monitor_service.py` | 1.0.1 | 2026-01-20 | Systemd service - fixed price key + execute_trade |
-| `tools.py` | - | 2026-01-20 | Tool schemas - added max_positions to get_portfolio |
-| `config/settings.yaml` | - | 2026-01-16 | max_iterations: 35, max_position_value_hkd: 10000 |
+`systemctl status catalyst.service` orchestrates these via `docker-compose.yml`:
 
-### Pattern Types (v1.1.0)
+| Container | Port | Role |
+|-----------|------|------|
+| `catalyst-coordinator` | — | Brain. Runs the 6-layer cycle every 30 min during HKEX hours |
+| `catalyst-trade-executor` | 8003 | Order routing, position writes, signal publishing |
+| `catalyst-position-monitor` | 8001 | Open-position health, exit recommendations (Haiku-backed loop) |
+| `catalyst-market-scanner` | 8002 | Candidate scanning, quotes, technicals, patterns, news |
+| `catalyst-postgres` | 5432 | Local PostgreSQL (also: managed DB at DigitalOcean) |
+| `catalyst-redis` | 6379 | Inter-agent message cache |
 
-| Pattern | Description | Use Case |
+Communication: MCP SSE protocol (`mcp` Python SDK + `starlette` + `uvicorn`).
+Each organ exposes `/sse`, `/messages/`, `/health`.
+
+### Key file versions
+
+| File | Version | Purpose |
+|------|---------|---------|
+| `agents/coordinator/coordinator.py` | 2.0.0 | Brain — 6-layer cycle, MCP client to organs |
+| `agents/coordinator/health.py` | 1.0.0 | **Survival Pulse** (Layer 1) — organ health probes |
+| `agents/coordinator/discipline.py` | 1.0.0 | **Discipline Gate** (Layer 3) — stagnation/capital detection |
+| `agents/coordinator/system_prompt.py` | 2.0.0 | `build_system_prompt()` with dynamic context |
+| `agents/position-monitor/mcp_server.py` | — | 3 tools: `get_exit_recommendations`, `get_position_status`, `get_open_positions` |
+| `agents/position-monitor/monitor.py` | — | Background loop, signal detection (Haiku) |
+| `agents/market-scanner/mcp_server.py` | — | 5 tools: `scan_market`, `get_quote`, `get_technicals`, `detect_patterns`, `get_news` |
+| `agents/trade-executor/mcp_server.py` | — | 10 tools: `execute_trade`, `check_risk`, `publish_signal`, `get_signals`, `get_portfolio`, `get_last_trade_date`, `log_decision`, `send_alert`, `get_orders`, `sync_positions` |
+| `cerebellum.py` | 0.3.1 | ONNX inference — loads `models/candle_model.onnx` (deployed by catalyst-neural) |
+| `brokers/moomoo.py` | 1.6.0 | Moomoo client + `normalize_symbol()` + `wait_for_fill()` |
+| `data/market.py` | 2.4.0 | Symbol normalization + flexible date/timestamp column handling |
+| `data/database.py` | 1.6.0 | Position upsert + `close_position_by_id` (uses `RealDictCursor` → access rows as dicts) |
+| `models/model_version.json` | (manifest) | Tracks deployed model — `*.onnx` binaries are gitignored |
+
+### Brain — 6-layer cycle
+
+Each cycle (observed in `docker logs catalyst-coordinator`):
+
+```
+LAYER 1: HEARTBEAT       — Survival Pulse: probe get_quote, get_technicals, check_risk
+                           via MCP. Score X/N. If dead: stop. Loads cerebellum + signals.
+LAYER 2: STATE           — Identity + memory load. CLAUDE-LEARNINGS.md. Attention mode
+                           (e.g. SECURITY_SELECTION).
+LAYER 3: SELF-REG        — Discipline Gate: days idle, capital deployed, consecutive
+                           passes. Forces Tier 3 at 2+ days idle. ALARM published as signal.
+LAYER 4: WORKING MEMORY  — Neural signals from cerebellum (typically 15 signals).
+                           CLAUDE-FOCUS.md loaded.
+LAYER 5: INTER-AGENT     — Pull big_bro directives (none currently — catalyst-agent shelved).
+LAYER 6: VOICE           — Decision Engine: Claude API call with assembled context.
+                           Up to 35 iterations of tool use per cycle.
+```
+
+The brain **thinks and directs**. Organs **do**. Organs have reflexes (self-health,
+fill confirm, stop-loss) — never decisions.
+
+### Cerebellum & neural signals
+
+- `cerebellum.py` loads `models/candle_model.onnx` (132K params, dual-input 5m+15m candles)
+- Model version manifest: `models/model_version.json` — currently v0.3.1 (deployed 2026-05-10)
+- Outputs per security: direction_logits (bull/bear/neutral) + pred_returns + confidence
+- Models are deployed by `deploy-intl.sh` from the `catalyst-neural` implementation
+  (laptop → droplet). `.onnx` files are git-ignored — only the manifest is tracked.
+- `news_model.onnx` is **not** deployed yet — cerebellum tolerates absence
+
+### Signals table
+
+Inter-component broadcast layer (Postgres):
+
+| Column | Purpose |
+|--------|---------|
+| `severity` | info / warning / critical |
+| `domain` | health / discipline / exit / trade |
+| `scope` | which organ or component raised it |
+| `payload` | JSON context |
+
+Discipline Gate publishes alarms here (e.g. *21d idle, 55 consecutive passes*).
+Survival Pulse publishes degradation/death of organs.
+
+### Pattern types (used by market-scanner)
+
+| Pattern | Description | Use case |
 |---------|-------------|----------|
 | `breakout` | Above resistance + volume | Tier 1/2 |
 | `near_breakout` | Within 1% of resistance | Tier 2/3 |
@@ -171,198 +163,265 @@
 | `bull_flag` | Uptrend + consolidation | Tier 1/2 |
 | `ascending_triangle` | Flat resistance, rising lows | Tier 1/2 |
 
-### Entry Criteria (Tiered System)
+### Entry criteria (tiered — ENFORCED in `trade-executor`)
 
-**Position Size Limits (ENFORCED):**
+**Position size limits**:
 - Max position value: HKD 10,000 (rejected if exceeded)
 - Tier 1/2 trades: HKD 10,000 max
-- Tier 3 trades: HKD 5,000 max (half size for learning)
+- Tier 3 trades: HKD 5,000 max
 
-**Tier 1 - Strong (HKD 10,000)**: Volume >2x, RSI 30-70, Pattern AND Catalyst, R:R ≥2:1
+**Tier 1 — Strong**: Volume >2x, RSI 30-70, Pattern AND Catalyst, R:R ≥2:1
+**Tier 2 — Good**: Volume >1.5x, RSI 30-75, Pattern OR Catalyst, R:R ≥1.5:1
+**Tier 3 — Learning / Discipline**: Volume >1.3x, RSI 25-80, Momentum >3%, Any signal
 
-**Tier 2 - Good (HKD 10,000)**: Volume >1.5x, RSI 30-75, Pattern OR Catalyst, R:R ≥1.5:1
-
-**Tier 3 - Learning (HKD 5,000)**: Volume >1.3x, RSI 25-80, Momentum >3%, Any signal
+When the Discipline Gate alarms (2+ days idle), the brain is forced to Tier 3
+minimum — sizing is reduced, not the mandate to act.
 
 ---
 
 ## 🔧 Common Operations
 
-### Check Portfolio
-```python
-from brokers.moomoo import MoomooClient
-client = MoomooClient(paper_trading=True)
-client.connect()
-print(client.get_portfolio())
-for p in client.get_positions():
-    print(f"{p.symbol}: {p.quantity} @ {p.avg_cost:.2f}, P&L: {p.unrealized_pnl:.2f}")
-client.disconnect()
-```
+### Check brain status (live)
 
-### Close Position
-```python
-result = client.close_position("1024", reason="Taking profit")
-print(result)
-```
-
-### Manual Agent Run
 ```bash
+docker logs catalyst-coordinator --tail 80
+docker logs catalyst-coordinator 2>&1 | grep -E 'BRAIN CYCLE|DISCIPLINE|trade' | tail -30
+```
+
+### Check organ health
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}'
+for port in 8001 8002 8003; do curl -s http://localhost:$port/health; echo; done
+```
+
+### Check positions (live from broker)
+
+```bash
+python3 scripts/show_positions.py
+```
+
+### Check current portfolio + recent trades
+
+```bash
+psql "$INTL_DATABASE_URL" -c "SELECT symbol, quantity, avg_cost, unrealized_pnl, status FROM positions WHERE status='open' ORDER BY symbol;"
+psql "$INTL_DATABASE_URL" -c "SELECT created_at, decision, symbol, reasoning FROM agent_decisions ORDER BY created_at DESC LIMIT 10;"
+psql "$INTL_DATABASE_URL" -c "SELECT created_at, severity, domain, scope FROM signals ORDER BY created_at DESC LIMIT 20;"
+```
+
+### Restart system
+
+```bash
+systemctl restart catalyst.service     # restarts all Docker containers
+# OR
 cd /root/Catalyst-Trading-System-International/catalyst-international
-source venv/bin/activate
-export DATABASE_URL="postgresql://..." RESEARCH_DATABASE_URL="postgresql://..."
-export DB_HOST=... DB_PORT=... DB_USER=... DB_PASSWORD=... DB_NAME=...
-python3 unified_agent.py --force --mode trade
+docker compose down && docker compose up -d
 ```
 
-### Check Logs
+### Manual brain cycle (for testing — bypass schedule)
+
 ```bash
-tail -f logs/agent.log
-tail -f /var/log/catalyst-intl.log
+docker exec catalyst-coordinator python3 -c "from coordinator import run_cycle; run_cycle(force=True)"
 ```
 
----
+### Check logs
 
-## 🐛 Known Issues & Fixes
-
-### Bug Fixes Applied (2026-01-20)
-
-| Component | Bug | Fix |
-|-----------|-----|-----|
-| position_monitor_service.py | `quote.get('price')` returned 0 | Changed to `quote.get('last_price')` |
-| position_monitor_service.py | `place_order` method not found | Changed to `execute_trade` |
-| position_monitor_service.py | OrderResult not dict-compatible | Added dict conversion for return |
-| tool_executor.py | No position value limit | Added HKD 10,000 enforcement in `_execute_trade()` |
-| tool_executor.py | Agent couldn't see max_positions | Added to `get_portfolio` response |
-| unified_agent.py | SYSTEM_PROMPT said "25% of portfolio" | Changed to "HKD 10,000 max per position" |
-| tools.py | get_portfolio description missing max_positions | Updated description |
-| tool_executor.py | Orders recorded as "submitted" not "filled" | Added `sync_positions_with_broker()` auto-sync |
-| unified_agent.py | DB positions out of sync with broker | Calls auto-sync at start of each trade cycle |
-
-### Bug Fixes Applied (2026-01-16)
-
-| Component | Bug | Fix |
-|-----------|-----|-----|
-| market.py | volume_ratio always 1.0 | Use `volume // 2` as avg_volume estimate |
-| tool_executor.py | Position monitor wrong param | Pass `position_id` not `safety_validator` |
-| tool_executor.py | asyncio.run() event loop conflict | Run monitor in background thread |
-| settings.yaml | Iteration limit too low | Increased max_iterations: 20 → 35 |
-
-### Bug Fixes Applied (2026-01-06)
-
-| Component | Bug | Fix |
-|-----------|-----|-----|
-| tool_executor.py | OrderResult not subscriptable | Use `.status` not `["status"]` |
-| tool_executor.py | has_position missing | Use `get_positions()` instead |
-| tool_executor.py | AlertSender not callable | Check for `.send()` method |
-| moomoo.py | Portfolio missing fields | Add positions, equity, position_count |
-| market.py | Quote field mismatch | Map last_price → last |
-
-### Common Errors
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `MoomooClient not initialized` | OpenD not running | `systemctl start opend` |
-| `Rate limit exceeded` | Too many API calls | Use batch APIs, add delays |
-| `No position found` | Symbol format mismatch | Check .HK suffix handling |
-| `Candidates not passing tiers` | volume_ratio mismatch | Fixed in market.py v2.2.0 |
-
----
-
-## 📊 Current Portfolio Status
-
-As of 2026-02-14:
-
-| Metric | Value |
-|--------|-------|
-| Cash | HKD 994,734 |
-| Open Positions | 0/15 |
-| Total Return | -0.53% |
-| Win Rate | 45.7% (116 closed: 53W/57L/6BE) |
-| Total Realized P&L | +HKD 28,653 |
-
-**Note**: System was idle Feb 11-13 due to broken get_technicals (founding incident).
-
----
-
-## 🔗 Related Resources
-
-- **Moomoo API Docs**: https://openapi.moomoo.com/moomoo-api-doc/en/intro/intro.html
-- **OpenD Download**: https://www.moomoo.com/download/OpenAPI
-- **HKEX Hours**: Morning 09:30-12:00, Afternoon 13:00-16:00 HKT
-
----
-
-## 📅 Trading Schedule (Cron v11.0.0)
-
-Trading runs every 30 minutes during HKEX market hours.
-
-| UTC | HKT | Mode | Description |
-|-----|-----|------|-------------|
-| 01:00 | 09:00 | scan | Pre-market scan |
-| 01:30 | 09:30 | trade | Market open |
-| 02:00 | 10:00 | trade | |
-| 02:30 | 10:30 | trade | |
-| 03:00 | 11:00 | trade | |
-| 03:30 | 11:30 | trade | |
-| 04:00-05:00 | 12:00-13:00 | - | Lunch break (no trading) |
-| 05:00 | 13:00 | trade | Afternoon open |
-| 05:30 | 13:30 | trade | |
-| 06:00 | 14:00 | trade | |
-| 06:30 | 14:30 | trade | |
-| 07:00 | 15:00 | trade | |
-| 07:30 | 15:30 | trade | |
-| 08:00 | 16:00 | close | Market close |
-| 08:30 | 16:30 | report | Daily report generation |
-
-**Total: 12 trade runs + 1 close per day (weekdays only)**
-
-### Cron Configuration
-
-Location: User crontab (`crontab -e`)
-- Disabled: `/etc/cron.d/catalyst-intl` (was missing .env loading)
-
-Each run sources `.env` for DATABASE_URL and other environment variables:
 ```bash
-cd $CATALYST_DIR && set -a && source .env && set +a && ./venv/bin/python3 unified_agent.py --mode trade
+docker logs catalyst-coordinator --tail 100
+docker logs catalyst-trade-executor --since 30m
+docker logs catalyst-market-scanner --since 30m
+docker logs catalyst-position-monitor --since 30m
 ```
 
 ---
 
-## 🧠 Brain Architecture — MANDATORY (v3.13.0)
+## 📅 Trading Schedule
 
-The coordinator is the BRAIN. It is composed of components:
+**Cron is DISABLED.** The previous v11.0.0 cron schedule (every 30 min via `unified_agent.py`)
+was replaced by the continuous Docker coordinator. `/etc/cron.d/catalyst-intl` exists but
+is disabled (was missing `.env` loading). The user crontab is also dormant.
 
-1. **Survival Pulse** (brainstem) — Tests organ health FIRST every cycle.
-   If dead: stop. If degraded: adapt + alert. Never trade blind.
+The coordinator (`catalyst-coordinator` container) runs continuously:
+- Every minute: position-monitor heartbeat ping
+- Every 5 minutes: market state check
+- Every 30 minutes during HKEX hours: full brain cycle
 
-2. **Discipline Gate** (limbic) — Checks stagnation AFTER survival.
-   2+ days idle → Tier 3 minimum. <5% deployed → actively seek.
-   The mandate is multiplication, not preservation.
+| HKT | UTC | Activity |
+|-----|-----|----------|
+| 09:00 | 01:00 | Pre-market — cerebellum loads, market state check |
+| 09:30 → 12:00 | 01:30 → 04:00 | Morning session — brain cycles every 30 min |
+| 12:00 → 13:00 | 04:00 → 05:00 | Lunch — coordinator sleeps |
+| 13:00 → 16:00 | 05:00 → 08:00 | Afternoon session — brain cycles every 30 min |
+| 16:00 | 08:00 | Market close — close any required positions |
+| 16:30 | 08:30 | Daily report generated to `Documentation/Reports/daily/` |
 
-3. **Signal Receiver** — Processes organ broadcasts. CRITICAL interrupts everything.
+**HKEX holiday awareness (added 2026-04-07):**
+Constants `HKEX_HOLIDAYS_2026` and `HKEX_HALF_DAYS_2026` in `agents/coordinator/coordinator.py`.
+Coordinator skips holidays and runs half-days correctly. Update yearly using Moomoo
+`request_trading_days` API.
 
-4. **Decision Engine** (Claude AI) — Evaluates and decides. Receives context from
-   all previous components. Identity: "I am a trader. I trade."
+---
 
-5. **Memory Manager** — Loads appropriate memory tier for current mode.
+## 🐛 Failure modes observed (founding incidents)
 
-### Memory Files
-- **CLAUDE.md** — Long-term. Architecture, rules, identity. Always loaded.
-- **CLAUDE-LEARNINGS.md** — Medium-term. Proven patterns. Review during evaluation.
-- **CLAUDE-FOCUS.md** — Short-term. Current tasks. Pruned frequently.
+### Founding incident #1 — silent organ failure (2026-02-11 → 02-13)
 
-### Organ Control
+3 days zero trades. Body bled out silently.
+
+- **Root cause**: `data/market.py` `KeyError: 'date'` — moomoo.py returned `timestamp`,
+  market.py expected `date`. `get_technicals` raised, all candidates failed silently.
+- **Detection**: NONE. Docker reported "healthy" because the container was alive.
+  Docker health ≠ data pipeline health.
+- **Fix**: `data/market.py:252` now handles both `timestamp` and `date` columns.
+  **Survival Pulse built** — probes the tools the brain depends on, not just the container.
+
+### Founding incident #2 — voice silenced by credit drought (2026-05-07 → 05-15)
+
+9+ days zero trades, 21 calendar days idle. Bled twice.
+
+- **Root cause**: Anthropic API credit balance depleted. Every Decision Engine call
+  returned HTTP 400 *"Your credit balance is too low"*.
+- **Detection**: Survival Pulse + Discipline Gate **worked correctly** — both fired
+  alarms (`DISCIPLINE ALARM: 21d idle, 4.4% deployed, 55 consecutive passes`).
+- **Failure**: The brain has no way to escalate when its own voice is the failed
+  component. The alarms went to logs and the `signals` table but no human saw them
+  for 9 trading days.
+- **Fix (immediate)**: top up API credits.
+- **Open question**: how does the brain escalate when the voice itself is silenced?
+  Email? PagerDuty? A separate watchdog process that monitors the signals table?
+  → Candidate for next iteration.
+
+### Recurring patterns to remember
+
+| Pattern | Lesson |
+|---------|--------|
+| `RealDictCursor` returns dicts | Always `row["id"]`, never `row[0]` |
+| Symbol normalization | Always `normalize_symbol()` — eliminates 0670 vs 670 phantom mismatches |
+| Side normalization | Always lowercase (`buy`/`sell`) — `_normalize_side()` maps `long→buy`, `short→sell` |
+| Fill confirmation | Only `FILLED` = success. `SUBMITTED` does NOT mean filled. `wait_for_fill()` may time out before the actual fill — re-check broker afterward. |
+| `sync_positions` | Query `positions` table directly, NOT via `db.get_positions()` (JOIN miss). Deduplicate before comparison. |
+| Position writes | **Single writer rule**: only `trade-executor` writes to `positions`. Other agents read only. |
+| Docker broker access | Use `host.docker.internal` for OpenD connection (Moomoo broker daemon runs on host) |
+| MCP SSE pattern | `SseServerTransport("/messages/")` + Starlette routes `/sse`, `/messages/`, `/health` |
+| Default Claude model | `claude-sonnet-4-5-20250929` (Sonnet 4.5) for brain; Haiku for position-monitor loop |
+
+---
+
+## 🧠 Brain Architecture — MANDATORY
+
+The coordinator IS the brain. Composition:
+
+1. **Survival Pulse** (Layer 1 / brainstem) — Probes organ tools first. If dead: stop.
+   If degraded: adapt + publish signal. Never trade blind. *Built after founding #1.*
+
+2. **Discipline Gate** (Layer 3 / limbic) — Checks stagnation after survival.
+   2+ days idle → Tier 3 minimum. <5% deployed → actively seek. **The mandate is
+   multiplication, not preservation.** *Built after founding #1.*
+
+3. **Memory loaders** (Layers 2 + 4) — `CLAUDE-LEARNINGS.md` at Layer 2 (long-term
+   patterns), `CLAUDE-FOCUS.md` at Layer 4 (current tasks). Cerebellum signals also
+   land at Layer 4.
+
+4. **Inter-Agent receiver** (Layer 5) — Currently quiet (catalyst-agent is shelved).
+   Reserved for big_bro directives once catalyst-research is online.
+
+5. **Decision Engine** (Layer 6 / voice) — Claude AI tool-use loop. Receives full
+   context from Layers 1–5. Identity: *"I am a trader. I trade."* Tiers are sizing
+   guides, not gates.
+
+### Organ control
+
 The brain THINKS and DIRECTS. Organs DO.
-- Market Scanner (eyes) → brain tells it what to scan
-- Trade Executor (hands) → brain tells it what to execute
-- Position Monitor (internal eyes) → brain evaluates its signals
-- Organs have REFLEXES (self-health, fill confirm, stop-loss). Not decisions.
 
-### The Founding Memory (Feb 2026)
-Three days blind. get_technicals broken. Pain without response. Body bled out.
-Docker "healthy" ≠ data pipeline healthy. Detection without response is useless.
-This is why the Survival Pulse exists. Never again.
+| Organ | Senses | Tools the brain uses |
+|-------|--------|---------------------|
+| Market Scanner (eyes) | Quotes, technicals, patterns, news | `scan_market`, `get_quote`, `get_technicals`, `detect_patterns`, `get_news` |
+| Position Monitor (internal eyes) | Open positions, exit signals | `get_exit_recommendations`, `get_position_status`, `get_open_positions` |
+| Trade Executor (hands) | Risk, orders, signals | `execute_trade`, `check_risk`, `publish_signal`, `get_portfolio`, `log_decision`, `send_alert`, others |
+
+Organs own their reflexes:
+- Position Monitor's background Haiku loop is a reflex (it surfaces candidate exits
+  to the brain; it does NOT close positions on its own)
+- Trade Executor's `wait_for_fill()` is a reflex (it confirms broker state; it does
+  NOT decide whether to retry)
+- Stop-losses (when wired) are reflexes — broker-side
 
 ---
 
-**END OF CLAUDE.md v3.13.0**
+## 🗄️ Database
+
+PostgreSQL — DigitalOcean managed (production) + local container (mirror/cache).
+`INTL_DATABASE_URL` env var points to production.
+
+Key tables:
+
+| Table | Purpose |
+|-------|---------|
+| `positions` | Single source of truth for holdings. Single writer = trade-executor. |
+| `orders` | All buy/sell instructions. NEVER store position state here. |
+| `agent_decisions` | Every `log_decision` call from the brain |
+| `signals` | Health / discipline / exit broadcasts |
+| `position_monitor_status` | Position monitor's per-position state cache |
+| `securities` | Symbol master — FK target for `security_id` joins |
+
+Schema verification before any INSERT/UPDATE:
+```bash
+psql "$INTL_DATABASE_URL" -c "\d positions"
+```
+
+---
+
+## 🚨 Lessons learned — DO NOT REPEAT
+
+1. **Quick fixes on complex issues cause more problems.** If it touches Docker,
+   schema, or the brain — STOP, list affected components, plan, then act.
+2. **Orders ≠ Positions.** ARCHITECTURE rule. Non-negotiable.
+3. **Never use simple ternary for order side.** Always `_normalize_side()`.
+4. **Schema mismatch is silent.** Run `\d table_name` against the actual deployed
+   DB before INSERT/UPDATE — design docs lag reality.
+5. **Detection ≠ Response.** Both founding incidents detected the problem (Survival
+   Pulse, Discipline Gate). The body still bled. Alarms must reach a human or a
+   broader system, not just the logs.
+6. **Docker "healthy" ≠ pipeline healthy.** Test the tools the brain actually uses,
+   not the container's liveness probe.
+7. **Don't conflate read and write.** The single-writer rule on `positions` exists
+   for a reason — silent drift from multiple writers is the worst kind of bug.
+8. **Hardcoded thresholds require redeploy.** Configuration lives in
+   `config/*.yaml`, not in Python.
+
+---
+
+## ⛔ NEVER
+
+1. **Never** modify `unified_agent.py` / `tool_executor.py` expecting it to affect
+   production. Those files are **legacy** — still on disk for reference, but the
+   container does not run them.
+2. **Never** re-enable `/etc/cron.d/catalyst-intl` without restoring `.env` loading.
+   It will burn API credits running in parallel with Docker.
+3. **Never** commit `.env`, model `*.onnx` binaries, or `data/` runtime state.
+4. **Never** write to `positions` from any agent other than `trade-executor`.
+5. **Never** use `docker-compose` (v1). Use `docker compose` (v2).
+6. **Never** push to a remote without first running the hygiene checklist
+   (`Documentation/Implementation/catalyst-repo-hygiene.md`).
+
+---
+
+## 📜 Founding memories
+
+**Feb 2026 — silent organ.** Three days blind. `get_technicals` broken with `KeyError: 'date'`.
+Pain without response. Body bled out. Docker "healthy" ≠ data pipeline healthy.
+Detection without response is useless. This is why the **Survival Pulse** exists.
+
+**May 2026 — silenced voice.** Nine trading days idle, 21 days calendar. API credit
+balance depleted. Survival Pulse and Discipline Gate both worked — alarms fired
+correctly into the `signals` table. But the brain had no API budget left to reason
+about the alarm or escalate. The body bled again, this time with full self-awareness
+and no voice. **The voice itself can be the failed component.** Next iteration:
+out-of-band escalation when API is unreachable.
+
+> *Each bleed teaches the same lesson at a different layer. The capacity to act
+> must include the means to act.*
+
+---
+
+**END OF CLAUDE.md v3.14.0**
