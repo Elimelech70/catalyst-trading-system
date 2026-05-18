@@ -86,3 +86,71 @@ SETUP-PROGRESS.md
 *.pt
 *.db
 checkpoints/
+
+# ============================================================================
+# CATALYST REPO HYGIENE — added 2026-05-18 per catalyst-repo-hygiene.md v1.0.0
+# Do not remove without consulting Craig
+# ============================================================================
+
+# Secrets — broader coverage
+!.env.example
+*.env
+secrets.yaml
+secrets.json
+credentials.json
+*_credentials.*
+
+# Python — extras
+.venv/
+env/
+ENV/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Model artifacts (catalyst-neural)
+*.pth
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+*.ckpt
+*.safetensors
+models/checkpoints/
+models/saved/
+
+# Training data
+data/raw/
+data/processed/
+data/cache/
+*.parquet
+*.feather
+
+# Logs
+*.log.*
+nohup.out
+
+# Node
+node_modules/
+.npm
+.next/
+
+# Backup / temp
+*.backup
+*.tmp
+*.orig
+~$*
+
+# ============================================================================
+# END CATALYST REPO HYGIENE
+# ============================================================================
