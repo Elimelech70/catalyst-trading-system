@@ -2,7 +2,11 @@
 
 **Name of Application:** Catalyst Trading System
 **Name of file:** catalyst-research-architecture-v1.md
+<<<<<<< HEAD
 **Version:** 1.3.0
+=======
+**Version:** 1.2.0
+>>>>>>> 260c9a651b7a80966ad36c08bb8fb16680b2ee98
 **Created:** 2026-04-25
 **Last Updated:** 2026-05-18
 **Updated by:** Craig + Claude (collaborative design)
@@ -16,7 +20,10 @@
 | 1.0.0 | 2026-04-25 | Craig + Claude | Initial design. Pivot from agent-based trading system to research-first architecture. |
 | 1.1.0 | 2026-04-26 | Craig + Claude | Added automation principle and analytical archetypes (Section 3.5). Collection and analysis become automated; Craig reviews conclusions and disagreements rather than performing analysis manually. Four archetypes (Historian, Strategist, Macro Theorist, Skeptic) interpret data through distinct lenses, peer-review each other, and propose model-training experiments. Updated review cadences (Section 10) to reflect automation. |
 | 1.2.0 | 2026-05-18 | Craig + Claude | Schema home moved from `catalyst_intl` to the dedicated `catalyst_research` database (reversing the v1.1 decision to consolidate into intl). Sections 6 and 9 updated to match. |
+<<<<<<< HEAD
 | 1.3.0 | 2026-05-18 | Craig + Claude | Schema home moved back to `catalyst_intl`, this time as the deliberate long-term choice rather than a default. Driven by the recognition that research and intl trading describe the same real-world securities, prices, and news events — a shared `securities` registry, shared price bars, and shared news feed eliminate sync drift and cross-DB query friction. Safety properties previously achieved by DB separation are now provided by PostgreSQL role-based access control (Section 6.1). Sections 6 and 9 updated to match. The `catalyst_research` cluster database is freed for archive or drop. |
+=======
+>>>>>>> 260c9a651b7a80966ad36c08bb8fb16680b2ee98
 
 ---
 
@@ -36,7 +43,11 @@ The mission "enable the poor through accessible algorithmic trading" remains the
 
 The schema is sketched here at the level of tables and key columns. Full DDL with constraints, indexes, and foreign keys is the work of a companion implementation file written when the v1 build begins.
 
+<<<<<<< HEAD
 ### 6.1 Database Home and Access Control
+=======
+The database is PostgreSQL: the existing `catalyst_research` cluster database, which was originally provisioned for this purpose and is currently holding only legacy consciousness-era tables. Those legacy tables are dropped before the new schema is applied. Sharing a database with `catalyst-international` was considered (and was the v1.1 plan) but rejected — research and trading have different access patterns, different access controls, and different operational risks; keeping them in separate databases on the same cluster is cleaner. The `catalyst_dev` US trading DB remains deprecated and may be archived or dropped after the migration completes.
+>>>>>>> 260c9a651b7a80966ad36c08bb8fb16680b2ee98
 
 The schema lives in the **`catalyst_intl` PostgreSQL database**, alongside the existing intl trading tables. This is the v1.3.0 decision, and it reverses the v1.2.0 split.
 
@@ -107,9 +118,15 @@ This is sunk cost. It served its purpose by clarifying what does not work. Keepi
 
 ### What Is Repurposed
 
+<<<<<<< HEAD
 - The Moomoo client and OpenD integration — directly reusable for HKEX market data ingestion in Layer 2 and Layer 3. The same connection that places intl trading orders pulls quotes and historical bars for research. Because research and intl now share the database, the Moomoo ingestion writes once and serves both readers.
 - The `catalyst_intl` PostgreSQL database — extended with research tables (`cr_*`) and shared dimensional tables (`countries`, `sectors`, `themes`, `commodities`). Intl trading tables remain untouched in shape; only `securities` and `exchanges` gain additional optional columns.
 - The existing `securities` and `exchanges` tables — extended with theme tags, country exposure metadata, and country FK.
+=======
+- The Moomoo client and OpenD integration — directly reusable for HKEX market data ingestion in Layer 2 and Layer 3, even though we are not trading. The same connection that places orders can pull quotes and historical bars.
+- The `catalyst_research` PostgreSQL database — the database itself stays, dedicated to this system. Its legacy consciousness-era tables are dropped; the new schema replaces them. The intl trading database (`catalyst_intl`) is untouched by the research build.
+- The existing `securities` table — extended with theme tags and country exposure metadata.
+>>>>>>> 260c9a651b7a80966ad36c08bb8fb16680b2ee98
 - The lot-sizing, symbol-normalization, and OpenD-reconnect logic — reusable utilities, kept.
 - The document control discipline (version headers, dated revisions, revision history tables) — applied to all new documentation.
 - The `catalyst-trading-system` GitHub repo — repurposed as the home of the new architecture. The `catalyst-agent/` droplet-only directory and its v8 brain code are archived rather than tracked.
@@ -134,7 +151,11 @@ The sequence matters. Each step is reversible until the next begins; nothing is 
 
 **Step 2.** Snapshot `catalyst_intl`. This is insurance against the Phase 1 DDL migration that extends the trading database with research tables. Also snapshot `catalyst_research` before dropping its legacy tables (cheap, prudent, single command).
 
+<<<<<<< HEAD
 **Step 3.** In `catalyst_intl`, create the four PostgreSQL roles (`catalyst_research_admin`, `catalyst_research_ingestion`, `catalyst_research_archetype`, and confirm the existing `catalyst_trading_writer` role exists or create it). Apply the Phase 1 DDL migration as `catalyst_research_admin`: extend `securities` and `exchanges`, add the shared dimensional tables, add all `cr_*` research tables. Grant the appropriate per-role privileges.
+=======
+**Step 3.** Drop the legacy consciousness-era tables from `catalyst_research`. Build the new schema in `catalyst_research`. The new tables share no names with the legacy ones, so this is a clean replacement rather than a coexistence migration.
+>>>>>>> 260c9a651b7a80966ad36c08bb8fb16680b2ee98
 
 **Step 4.** Build and test ingestion jobs against the new schema, country by country, layer by layer. Australia first (Craig's home, easy data), then US (deepest data, validates the schema's handling of dense series), then China (validates handling of mixed-quality data), then Hong Kong. All ingestion jobs connect as `catalyst_research_ingestion`.
 
