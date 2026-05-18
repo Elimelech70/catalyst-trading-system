@@ -75,6 +75,10 @@ credentials/
 backups/
 *.bak
 venv/
+.git.old-backup-*/
+
+# Local-only droplet state
+SETUP-PROGRESS.md
 
 # Neural models and checkpoints
 *.onnx
