@@ -1,0 +1,50 @@
+# =============================================================================
+# Name of Application : Catalyst Trading System
+# Name of file        : catalyst-research/crontab.txt
+# Version             : 0.1.0
+# Last Updated        : 2026-05-18
+# Purpose             : Reference cron for catalyst-research. Install to
+#                       /etc/cron.d/catalyst-research on the intl droplet
+#                       AFTER Phase 0/1/2 exit criteria pass.
+#
+# Installation        : sudo cp crontab.txt /etc/cron.d/catalyst-research
+#                       sudo chown root:root /etc/cron.d/catalyst-research
+#                       sudo chmod 0644      /etc/cron.d/catalyst-research
+#                       sudo systemctl restart cron
+#
+# All times UTC. Conservative offsets between jobs to avoid burst load on
+# free APIs. The intl droplet's existing intl-trading cron continues
+# untouched in /etc/cron.d/catalyst-intl (or wherever intl installs it);
+# this file is installed alongside, not merged.
+# =============================================================================
+
+PATH=/usr/local/bin:/usr/bin:/bin
+SHELL=/bin/bash
+MAILTO=""
+
+# Layer 2 daily (post-close in respective markets)
+30 22 * * 1-5  root  cd /root/catalyst-research && python -m ingestion.ingest_market_prices_daily       >> logs/cron.log 2>&1
+45 22 * * 1-5  root  cd /root/catalyst-research && python -m ingestion.ingest_commodity_prices_daily    >> logs/cron.log 2>&1
+30 8  * * 1-5  root  cd /root/catalyst-research && python -m ingestion.ingest_security_prices_daily     >> logs/cron.log 2>&1
+
+# Layer 3 news (every 15 min during HKEX trading hours, UTC 01:00-09:00 = HKT 09:00-17:00)
+*/15 1-9 * * 1-5  root  cd /root/catalyst-research && python -m ingestion.ingest_hkex_disclosure_feed   >> logs/cron.log 2>&1
+
+# Layer 1 quarterly (staggered across the first week of each quarter)
+0 6 1 1,4,7,10 *  root  cd /root/catalyst-research && python -m ingestion.ingest_country_indicators_imf       >> logs/cron.log 2>&1
+0 7 1 1,4,7,10 *  root  cd /root/catalyst-research && python -m ingestion.ingest_country_indicators_worldbank >> logs/cron.log 2>&1
+0 8 2 1,4,7,10 *  root  cd /root/catalyst-research && python -m ingestion.ingest_country_indicators_national  >> logs/cron.log 2>&1
+
+# Layer 4 monthly / annual
+0 8 5 * *      root  cd /root/catalyst-research && python -m ingestion.ingest_un_comtrade               >> logs/cron.log 2>&1
+0 8 1 6 *      root  cd /root/catalyst-research && python -m ingestion.ingest_un_voting_alignment       >> logs/cron.log 2>&1
+
+# Layer 5 quarterly / monthly
+0 9 5 1,4,7,10 *  root  cd /root/catalyst-research && python -m ingestion.ingest_imf_cofer              >> logs/cron.log 2>&1
+0 9 7 * *      root  cd /root/catalyst-research && python -m ingestion.ingest_hkex_listing_stats        >> logs/cron.log 2>&1
+
+# Archetypes
+0 2 * * 6      root  cd /root/catalyst-research && python -m archetypes.run --scope=weekly --phase=analysis    >> logs/archetypes.log 2>&1
+0 6 * * 6      root  cd /root/catalyst-research && python -m archetypes.run --scope=weekly --phase=peer_review >> logs/archetypes.log 2>&1
+0 2 1 * *      root  cd /root/catalyst-research && python -m archetypes.run --scope=monthly                    >> logs/archetypes.log 2>&1
+0 2 5 1,4,7,10 *  root  cd /root/catalyst-research && python -m archetypes.run --scope=quarterly --archetype=macro_theorist >> logs/archetypes.log 2>&1
