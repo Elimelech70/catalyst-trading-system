@@ -1,11 +1,11 @@
 # Catalyst Research — v1 Implementation Guide
 
 **Name of Application:** Catalyst Trading System
-**Name of file:** catalyst-research-v1-implementation.md
+**Name of file:** catalyst-research-implementation-v1.3.md
 **Version:** 1.3.0
 **Created:** 2026-05-18
 **Updated by:** Craig + Claude
-**Companion to:** `Documentation/Design/catalyst-research-architecture-v1.md` (v1.3.0, 2026-05-18)
+**Companion to:** `Documentation/Design/catalyst-research-architecture-v1.3.md` (v1.3.0, 2026-05-18)
 **Purpose:** Buildable specification for v1 of the catalyst-research system. Translates the architecture document into concrete artefacts: full DDL, ingestion job specs, archetype orchestration design, folder layout, and cron schedule. This is the document the v1 build executes against.
 
 ---
