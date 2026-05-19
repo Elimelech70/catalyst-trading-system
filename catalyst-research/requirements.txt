@@ -1,0 +1,52 @@
+# =============================================================================
+# Name of Application: Catalyst Trading System
+# Name of file: catalyst-research/requirements.txt
+# Version: 0.1.0
+# Last Updated: 2026-05-18
+# Purpose: Python dependencies for catalyst-research ingestion and archetype
+#          orchestration. Trading dependencies are intentionally absent —
+#          this subsystem does not place orders.
+# =============================================================================
+
+# Database — sync psycopg2 for ingestion adapters; async asyncpg for archetype DB reads
+psycopg2-binary>=2.9.9
+asyncpg>=0.29.0
+
+# Configuration
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# HTTP & web
+requests>=2.31.0
+httpx>=0.25.0
+
+# Data
+pandas>=2.1.0
+numpy>=1.26.0
+
+# Public-market sources (Layer 2)
+yfinance>=0.2.40
+
+# HTML/PDF parsing (Layer 3 HKEX feed, Layer 5 HKEX listing stats)
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+pypdf>=4.0.0
+
+# Moomoo OpenD client (Layer 3 disclosure + Layer 2/3 security prices)
+# Reused from intl; pinned to the version intl uses to avoid drift.
+moomoo-api>=9.2.5008
+
+# Logging
+structlog>=23.2.0
+
+# Date/time
+python-dateutil>=2.8.2
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# NOTE: anthropic SDK is intentionally NOT listed here. Archetypes invoke the
+# `claude` CLI directly (headless Claude Code), not the SDK. The CLI is
+# installed at the system level on the intl droplet.
