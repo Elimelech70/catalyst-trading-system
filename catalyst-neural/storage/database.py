@@ -31,17 +31,22 @@ def init_db():
 
     # ── Security Registry ──
     # What we're watching. Populated from droplet scanners.
+    # v0.4: sector / market_cap_tier / market_cap_usd populated by security_classifier.py
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS securities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT NOT NULL,
             market TEXT NOT NULL,          -- 'US' or 'HKEX'
             name TEXT,
-            sector TEXT,
+            sector TEXT,                   -- one of 11 GICS-aligned IDs (v0.4)
             added_at TEXT NOT NULL,
             removed_at TEXT,              -- NULL = still active
             source TEXT,                  -- which scanner picked it
             reason TEXT,                  -- why it was picked (raw, from scanner)
+            market_cap_tier TEXT,          -- MICRO|SMALL|MID|LARGE|MEGA (v0.4)
+            market_cap_usd REAL,           -- snapshot, refreshed weekly (v0.4)
+            volatility_regime TEXT,        -- low|medium|high|extreme (v0.5+, nullable)
+            context_updated_at TEXT,       -- when sector/cap_tier last refreshed
             UNIQUE(symbol, market, added_at)
         )
     """)
@@ -101,6 +106,7 @@ def init_db():
     # ── News Events ──
     # Headlines with source provenance. No sentiment scoring.
     # The network learns what matters from outcomes, not our labels.
+    # v0.4: 15-category taxonomy via news_classifier_regex.py (and LLM in Phase 1.5)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS news (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,6 +120,12 @@ def init_db():
             symbols TEXT,                  -- comma-separated related symbols
             markets TEXT,                  -- comma-separated related markets
             content_snippet TEXT,          -- first 500 chars if available
+            news_category_primary TEXT,    -- 1 of 15 taxonomy IDs or 'other' (v0.4)
+            news_category_secondary TEXT,  -- nullable, supports multi-label
+            news_category_tertiary TEXT,   -- nullable, supports multi-label
+            category_confidence REAL,      -- 0.0-1.0 from classifier
+            classified_by TEXT,            -- 'regex_v1' | 'llm_v1' | 'manual'
+            classified_at TEXT,            -- ISO timestamp of last classification
             UNIQUE(headline, source, published_at)
         )
     """)
@@ -172,6 +184,32 @@ def init_db():
         )
     """)
 
+    # ── Context Regime Summary (v0.4) ──
+    # Analytics table — populated offline by context_regime.py.
+    # NOT used during training. Lets us inspect which (news × sector × cap) cells
+    # have distinguishable return distributions before committing to v0.4 training.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS context_regime_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            news_category TEXT NOT NULL,
+            sector TEXT NOT NULL,
+            cap_tier TEXT NOT NULL,
+            market TEXT NOT NULL,
+            sample_count INTEGER,
+            mean_return_5m REAL,
+            std_return_5m REAL,
+            mean_return_15m REAL,
+            std_return_15m REAL,
+            mean_return_1h REAL,
+            std_return_1h REAL,
+            direction_bullish_pct REAL,
+            direction_bearish_pct REAL,
+            direction_neutral_pct REAL,
+            last_computed TEXT,
+            UNIQUE(news_category, sector, cap_tier, market)
+        )
+    """)
+
     # ── Indexes for query performance ──
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_candles_lookup ON candles(symbol, market, timeframe, timestamp)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_candles_time ON candles(timestamp)")
@@ -180,6 +218,12 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_symbols ON news(symbols)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_forward_lookup ON forward_returns(symbol, market, timestamp, timeframe)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_securities_active ON securities(market, removed_at)")
+    # v0.4 indexes
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_category_primary ON news(news_category_primary)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_category_published ON news(news_category_primary, published_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_securities_sector ON securities(sector)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_securities_cap_tier ON securities(market_cap_tier)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_lookup ON context_regime_summary(news_category, sector, cap_tier, market)")
 
     conn.commit()
     conn.close()
