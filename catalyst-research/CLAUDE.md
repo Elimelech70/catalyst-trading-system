@@ -28,7 +28,7 @@ A research instrument, not a trading system. Collects layered observations (coun
 - **Architecture:** `../Documentation/Design/catalyst-research-architecture-v1.3.md`
 - **Implementation spec:** `../Documentation/Implementation/catalyst-research-implementation-v1.3.md`
 - **Database:** `catalyst_intl` (shared with catalyst-international; RBAC isolation via four roles)
-- **Droplet:** intl droplet (co-located with Moomoo OpenD and existing intl trading cron)
+- **Droplet:** us droplet 
 
 ## Build phases
 
@@ -38,7 +38,7 @@ Per the implementation spec:
 - **Phase 1 — Schema.** `sql/001_initial_schema.sql` applied to `catalyst_intl` as `catalyst_research_admin`. Then `sql/002_seed_v1.sql` for the four countries, four commodities, five themes, three learning plans.
 - **Phase 2 — Ingestion.** Eleven Python jobs in `ingestion/`, country-by-country (AU → US → CN → HK).
 - **Phase 3 — Archetypes.** Headless `claude` CLI invocations from `archetypes/run.py`. Smoke-test the CLI flag set first.
-- **Phase 4 — Operations.** Cron installed on intl droplet; inspection scripts in `scripts/`; cleanup of legacy DBs.
+- **Phase 4 — Operations.** Cron installed on us droplet; inspection scripts in `scripts/`; cleanup of legacy DBs.
 
 ## The three commitments
 
