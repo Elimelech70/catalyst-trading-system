@@ -1,0 +1,477 @@
+# =============================================================================
+# CATALYST NEURAL — NEWS TAXONOMY (15 categories)
+# =============================================================================
+# Name of Application: Catalyst Trading System
+# Name of file: news_taxonomy.yaml
+# Version: 0.1.0
+# Last Updated: 2026-05-23
+# Purpose: Keyword sets for the 15-category news classifier (v0.4).
+#          Used by storage/news_classifier_regex.py.
+#
+# Reference: Documentation/Design/catalyst-context-conditioned-architecture-v0.1.md
+#            Section 3 (News taxonomy).
+#
+# Drawn in part from catalyst-international/config/news_context.yaml.
+# REVISION HISTORY:
+# v0.1.0 (2026-05-23) - Initial 15-category set, Boudoukh-aligned.
+# =============================================================================
+
+version: "0.1.0"
+
+# How matching works:
+#   priority: 1 = most specific (wins on tie), 5 = most generic (catch-all)
+#   match_keywords: substring match against lowercased headline. A match counts 1.
+#   boost_keywords: if present, multiply confidence by 1.5x for this category.
+# Output: top 3 categories above confidence_threshold, ranked by score.
+
+confidence_threshold: 0.30   # below this, leave as 'other' / NULL
+# Score formula: (match_count + 0.5 * boost_count) / 3, capped at 1.0.
+# So 1 unique match keyword = 0.33, 2 = 0.67, 3+ = 1.0.
+# A boost-keyword hit adds 0.17 on top of its own match. Threshold 0.30 means
+# at least one strong match keyword OR one match + one boost is required.
+
+# =============================================================================
+# FAMILY A — Corporate fundamentals
+# =============================================================================
+categories:
+  earnings:
+    id: "01"
+    family: "A_corporate_fundamentals"
+    priority: 2
+    match_keywords:
+      - earnings
+      - reports
+      - quarterly
+      - results
+      - beats
+      - beat
+      - misses
+      - missed
+      - guidance
+      - eps
+      - revenue
+      - profit
+      - net income
+      - operating income
+      - margin
+      - top line
+      - bottom line
+      - q1
+      - q2
+      - q3
+      - q4
+    boost_keywords:
+      - earnings call
+      - earnings beat
+      - earnings miss
+      - profit warning
+      - guidance cut
+      - guidance raised
+
+  corporate_action:
+    id: "02"
+    family: "A_corporate_fundamentals"
+    priority: 1
+    match_keywords:
+      - acquires
+      - acquired
+      - acquiring
+      - acquisition
+      - merger
+      - merging
+      - buyback
+      - buy-back
+      - repurchase
+      - spinoff
+      - spin-off
+      - demerger
+      - ipo
+      - listing
+      - debut
+      - takeover
+      - bid
+      - tender offer
+      - deal
+      - combination
+    boost_keywords:
+      - all-cash deal
+      - cash and stock
+      - completes acquisition
+      - announces merger
+
+  executive:
+    id: "03"
+    family: "A_corporate_fundamentals"
+    priority: 1
+    match_keywords:
+      - ceo
+      - cfo
+      - coo
+      - cto
+      - chairman
+      - president
+      - founder
+      - resign
+      - resigns
+      - resignation
+      - appointed
+      - appoints
+      - departure
+      - steps down
+      - succession
+      - replaces
+      - fired
+      - removed
+    boost_keywords:
+      - new ceo
+      - ceo resigns
+      - ceo fired
+      - leadership change
+      - executive change
+
+  capital:
+    id: "04"
+    family: "A_corporate_fundamentals"
+    priority: 2
+    match_keywords:
+      - dividend
+      - distribution
+      - debt
+      - bond
+      - offering
+      - placement
+      - rights issue
+      - convertible
+      - refinance
+      - refinances
+      - capital raise
+      - raises
+      - secondary
+      - share buyback
+      - share sale
+      - equity raise
+    boost_keywords:
+      - dividend increase
+      - dividend cut
+      - dividend suspended
+      - convertible notes
+      - special dividend
+
+# =============================================================================
+# FAMILY B — Regulatory and legal
+# =============================================================================
+  regulatory_approval:
+    id: "05"
+    family: "B_regulatory_legal"
+    priority: 1
+    match_keywords:
+      - fda
+      - approval
+      - approves
+      - approved
+      - clearance
+      - cleared
+      - granted
+      - ruling
+      - settlement
+      - phase 3
+      - phase iii
+      - phase 2
+      - phase ii
+      - clinical trial
+      - patent granted
+      - license granted
+      - authorization
+      - emergency use
+    boost_keywords:
+      - fda approval
+      - fda approves
+      - fda rejects
+      - emergency use authorization
+      - breakthrough designation
+
+  regulatory_action:
+    id: "06"
+    family: "B_regulatory_legal"
+    priority: 1
+    match_keywords:
+      - sec
+      - investigation
+      - probe
+      - lawsuit
+      - sued
+      - sues
+      - fined
+      - fine
+      - penalty
+      - charged
+      - indicted
+      - subpoena
+      - antitrust
+      - fraud
+      - violations
+    boost_keywords:
+      - sec investigation
+      - class action
+      - antitrust lawsuit
+      - federal probe
+      - department of justice
+
+  bankruptcy:
+    id: "07"
+    family: "B_regulatory_legal"
+    priority: 1
+    match_keywords:
+      - bankruptcy
+      - default
+      - defaults
+      - defaulted
+      - chapter 11
+      - chapter 7
+      - restructuring
+      - restructured
+      - insolvency
+      - insolvent
+      - liquidation
+      - winding up
+      - administration
+    boost_keywords:
+      - files for bankruptcy
+      - chapter 11 filing
+      - debt default
+      - missed payment
+
+# =============================================================================
+# FAMILY C — Operations and business
+# =============================================================================
+  product:
+    id: "08"
+    family: "C_operations_business"
+    priority: 3
+    match_keywords:
+      - launches
+      - launch
+      - launched
+      - releases
+      - release
+      - released
+      - recall
+      - recalled
+      - partnership
+      - partnering
+      - deal
+      - contract
+      - order
+      - orders
+      - signs
+      - unveils
+      - introduces
+    boost_keywords:
+      - product launch
+      - product recall
+      - strategic partnership
+      - exclusive deal
+      - major contract
+
+  operational:
+    id: "09"
+    family: "C_operations_business"
+    priority: 3
+    match_keywords:
+      - production
+      - factory
+      - plant
+      - strike
+      - labor
+      - layoff
+      - layoffs
+      - layoffs announced
+      - jobs cut
+      - hiring
+      - workforce
+      - supply
+      - supply chain
+      - shortage
+      - bottleneck
+      - shipment
+    boost_keywords:
+      - mass layoffs
+      - supply shortage
+      - production halt
+      - factory closure
+      - strike action
+
+# =============================================================================
+# FAMILY D — Market and analyst
+# =============================================================================
+  analyst:
+    id: "10"
+    family: "D_market_analyst"
+    priority: 2
+    match_keywords:
+      - upgrade
+      - upgraded
+      - upgrades
+      - downgrade
+      - downgraded
+      - downgrades
+      - initiates
+      - initiated coverage
+      - price target
+      - target raised
+      - target cut
+      - overweight
+      - underweight
+      - outperform
+      - underperform
+      - buy rating
+      - sell rating
+      - neutral
+    boost_keywords:
+      - analyst upgrade
+      - analyst downgrade
+      - new price target
+      - initiates coverage
+
+  credit_rating:
+    id: "11"
+    family: "D_market_analyst"
+    priority: 1
+    match_keywords:
+      - moody's
+      - moodys
+      - s&p
+      - standard & poor's
+      - fitch
+      - rating
+      - downgrade rating
+      - upgrade rating
+      - junk
+      - investment grade
+      - watchlist
+      - outlook
+    boost_keywords:
+      - credit rating
+      - moody's downgrades
+      - moody's upgrades
+      - fitch downgrades
+      - junk status
+
+# =============================================================================
+# FAMILY E — Macro and sector
+# =============================================================================
+  monetary_policy:
+    id: "12"
+    family: "E_macro_sector"
+    priority: 1
+    match_keywords:
+      - fed
+      - federal reserve
+      - fomc
+      - rate
+      - rates
+      - hike
+      - cut
+      - basis points
+      - bps
+      - powell
+      - pboc
+      - ecb
+      - boe
+      - boj
+      - hawkish
+      - dovish
+      - rate decision
+      - central bank
+    boost_keywords:
+      - fed rate hike
+      - fed rate cut
+      - fomc meeting
+      - fomc minutes
+      - powell testimony
+      - rate decision
+
+  macro_economic:
+    id: "13"
+    family: "E_macro_sector"
+    priority: 2
+    match_keywords:
+      - cpi
+      - gdp
+      - payrolls
+      - nonfarm
+      - unemployment
+      - jobless claims
+      - inflation
+      - deflation
+      - trade deficit
+      - trade surplus
+      - retail sales
+      - ppi
+      - pce
+      - consumer confidence
+      - ism
+      - pmi
+    boost_keywords:
+      - cpi data
+      - gdp report
+      - jobs report
+      - inflation data
+      - retail sales report
+
+  policy_regulation:
+    id: "14"
+    family: "E_macro_sector"
+    priority: 2
+    match_keywords:
+      - tariff
+      - tariffs
+      - sanction
+      - sanctions
+      - subsidy
+      - subsidies
+      - stimulus
+      - trade war
+      - export ban
+      - import ban
+      - executive order
+      - new law
+      - legislation
+      - regulation
+      - deregulation
+    boost_keywords:
+      - new tariffs
+      - tariff hike
+      - sanctions imposed
+      - stimulus package
+      - executive order signed
+
+  sector_wide:
+    id: "15"
+    family: "E_macro_sector"
+    priority: 4
+    match_keywords:
+      - sector
+      - industry
+      - peers
+      - peer group
+      - across the board
+      - industry-wide
+      - sector-wide
+      - sweep
+      - broad sell-off
+      - broad rally
+    boost_keywords:
+      - sector rotation
+      - sector-wide selloff
+      - industry-wide
+
+# =============================================================================
+# CATCH-ALL
+# =============================================================================
+  other:
+    id: "99"
+    family: "Z_catchall"
+    priority: 5
+    match_keywords: []
+    boost_keywords: []

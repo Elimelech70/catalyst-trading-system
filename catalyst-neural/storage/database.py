@@ -303,17 +303,46 @@ def store_candles(candles_list):
 
 
 def store_news(headline, source, source_tier, published_at, symbols=None,
-               markets=None, author=None, url=None, content_snippet=None):
-    """Store a news event."""
+               markets=None, author=None, url=None, content_snippet=None,
+               classify=True):
+    """
+    Store a news event. v0.4: tags the 15-category taxonomy at collection time
+    when classify=True (default). Pass classify=False to skip tagging (e.g.,
+    when bulk-importing and tagging in a separate pass).
+    """
     conn = get_connection()
     now = datetime.utcnow().isoformat()
+
+    # Pre-compute classification fields so we INSERT with them populated.
+    cat_primary = cat_secondary = cat_tertiary = None
+    confidence = None
+    classified_by = classified_at = None
+    if classify:
+        try:
+            # Local import to avoid circular dep (classifier imports get_connection)
+            from storage.news_classifier_regex import (
+                classify_headline, CLASSIFIER_VERSION,
+            )
+            cats, confidence = classify_headline(headline, content_snippet)
+            cat_primary, cat_secondary, cat_tertiary = cats
+            classified_by = CLASSIFIER_VERSION
+            classified_at = now
+        except Exception as e:
+            # Don't let classifier failures block ingestion.
+            print(f"Warning: news classifier failed on '{headline[:60]}': {e}")
+
     try:
         conn.execute("""
             INSERT OR IGNORE INTO news
-            (headline, source, source_tier, author, url, published_at, collected_at, symbols, markets, content_snippet)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (headline, source, source_tier, author, url, published_at, collected_at,
+             symbols, markets, content_snippet,
+             news_category_primary, news_category_secondary, news_category_tertiary,
+             category_confidence, classified_by, classified_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (headline, source, source_tier, author, url, published_at, now,
-              symbols, markets, content_snippet))
+              symbols, markets, content_snippet,
+              cat_primary, cat_secondary, cat_tertiary,
+              confidence, classified_by, classified_at))
         conn.commit()
     except Exception as e:
         print(f"Error storing news: {e}")
