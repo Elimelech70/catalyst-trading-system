@@ -35,6 +35,8 @@ All authoritative documents live under `Documentation/` and follow this rule:
 | Catalyst research implementation | `Documentation/Implementation/` | `catalyst-research-implementation-vX.X.md` | **v1.3** |
 | Catalyst-trading-system MCP architecture | `Documentation/Design/` | `catalyst-mcp-architecture.md` | **v1.0** |
 | Catalyst-trading-system MCP implementation (postgres) | `Documentation/Implementation/` | `catalyst-postgres-mcp-implementation.md` | **v1.0** |
+| Context-conditioned candle architecture (v0.4 plan) | `Documentation/Design/` | `catalyst-context-conditioned-architecture-vX.X.md` | **v0.1 (DRAFT)** |
+| Context-conditioned candle implementation | `Documentation/Implementation/` | `catalyst-context-conditioned-implementation-vX.X.md` | **v0.1 (DRAFT)** |
 | Repo hygiene | `Documentation/Implementation/` | `catalyst-repo-hygiene.md` | current |
 | Database schema | `Documentation/Design/` | `database-schema.md` | current |
 | Strategy roadmap | `Documentation/Design/` | `catalyst-strategy-roadmap.md` | current |
