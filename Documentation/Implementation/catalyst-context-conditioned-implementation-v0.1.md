@@ -16,6 +16,7 @@
 | Version | Date | Author | Change |
 |---|---|---|---|
 | 0.1 | 2026-05-23 | Craig + Claude | Initial implementation guide — 11 phases, pre-flight/verify/rollback per step |
+| 0.1a | 2026-05-23 | Craig + Claude | Phase 9 amended — HKEX `cerebellum.py` v1.2.0 scaffold already landed. Step 9.2 narrows from "refactor `CandleModel` to accept 4 inputs" to "fill the existing `_predict_v04` stub". |
 
 ---
 
@@ -1281,35 +1282,53 @@ docker compose -f /root/catalyst-agent/docker-compose.yml restart neural
 
 **Owner:** `little_bro_intl`
 
+> 📌 **Scaffold already landed (2026-05-23).** HKEX `cerebellum.py` v1.2.0 ships with version-aware dispatch:
+> - `Cerebellum.__init__` parses `model_version.json` and passes `(major, minor)` into `CandleModel`.
+> - `CandleModel.predict()` routes to `_predict_v03()` (current path, unchanged) when `minor < 4` and to `_predict_v04()` when `minor >= 4`.
+> - `_predict_v04()` is a logged stub returning `{"available": False, "reason": "v0.4 inference path not implemented (stub)"}` — the coordinator falls back to no-signal cleanly.
+> - `CandleModel._load()` warns if the manifest version disagrees with the actual ONNX input count.
+>
+> Phase 9 therefore narrows to: (a) drop the v0.4 ONNX + updated manifest in `models/`, (b) replace the `_predict_v04` body, (c) restart. No structural refactor needed.
+
 ### Pre-flight
 
 ```bash
 ssh catalyst-intl-droplet
 ls -lh /root/catalyst-international/models/
 ps aux | grep cerebellum
+# Confirm scaffold is present:
+grep -n "_predict_v04" /root/Catalyst-Trading-System-International/catalyst-international/cerebellum.py
+# Expect lines for the def, the docstring, and the stub return.
 ```
 
 ### Steps
 
-**9.1** Craig SCPs the model:
+**9.1** Craig SCPs the model **and an updated manifest**:
 
 ```bash
 scp models/candle_model_v04.onnx \
-    catalyst-intl-droplet:/root/catalyst-international/models/
+    catalyst-intl-droplet:/root/Catalyst-Trading-System-International/catalyst-international/models/candle_model.onnx
+scp models/model_version_v04.json \
+    catalyst-intl-droplet:/root/Catalyst-Trading-System-International/catalyst-international/models/model_version.json
 ```
 
-**9.2** `little_bro_intl` updates `cerebellum.py`:
+The manifest must report `"version": "0.4.x"` so the scaffold routes to `_predict_v04` on restart.
 
-- The existing `CandleModel` class (in HKEX `cerebellum.py`) needs to accept 4 inputs
-- Build runtime news context using `catalyst_intl` PostgreSQL news rows
-- Build security context from the securities table or YAML config
-- Maintain compatibility shim so the 5-tier HKEX catalyst types map into the 15-category scheme during the transition (see compatibility table in design doc section 3.3)
+**9.2** `little_bro_intl` fills the `_predict_v04` stub in `cerebellum.py`. The signature, dispatch, and not-loaded handling are already in place. The body needs:
+
+- `_build_news_context(symbol, now)` — query `catalyst_intl.news` for headlines in `[now - 4h, now]` for `symbol` (or market-wide if symbol-specific is empty); read `news_category_primary` / `news_category_secondary` / `category_confidence`; produce a 16-dim weighted vector, recency-decayed and L1-normalized (mirror logic in `catalyst-neural/training/context_features.py::build_news_context`).
+- `_build_security_context(symbol)` — look up sector + market_cap_tier + market from `catalyst_intl.securities`; one-hot encode market (2) + sector (11) + cap_tier (5) = 18-dim. Cache per symbol (TTL ≥ 1 day; these change weekly at most).
+- 4-input `session.run` using ONNX input names `candles_5m`, `candles_15m`, `news_context`, `security_context`.
+- Compatibility shim: rows with the old HKEX 5-tier `news.catalyst_type` but no `news_category_primary` must be mapped via §3.3 of the design doc (`config/news_context.yaml` carries the table).
+- Outputs identical to `_predict_v03` (direction / confidence / probabilities / predicted returns) — keep the result dict shape stable so the coordinator's Layer 4 doesn't need to change.
 
 **9.3** Restart the HKEX coordinator with the new cerebellum:
 
 ```bash
-sudo systemctl restart catalyst-international
-# or whatever the process control is
+sudo systemctl restart catalyst.service
+# Confirm the routing log line appears:
+docker logs catalyst-coordinator 2>&1 | grep "model_version.json reports" | tail -1
+# Expect: "... reports 0.4.x -> using v0.4 inference path"
 ```
 
 ### Verify

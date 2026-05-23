@@ -7,7 +7,7 @@
 | Created | 2026-05-23 |
 | Last updated | 2026-05-23 |
 | Updated by | Craig + Claude |
-| Status | Design review — not yet implemented |
+| Status | Design review — Phase 1 (schema) + HKEX inference scaffold landed; v0.4 ONNX not yet trained |
 | Supersedes | Sections of `catalyst-neural-architecture-v0.3.md` related to inputs/training |
 | Related | `catalyst-ai-architecture-v2.4.md`, `catalyst-us-configuration-v1.0.md` |
 
@@ -16,6 +16,7 @@
 | Version | Date | Author | Change |
 |---|---|---|---|
 | 0.1 | 2026-05-23 | Craig + Claude | Initial draft — news/security taxonomy, two-dimensional context conditioning of the candle model |
+| 0.1a | 2026-05-23 | Craig + Claude | §11.3 + §15.3 amended — HKEX `cerebellum.py` v1.2.0 ships the version-branching scaffold ahead of v0.4 ONNX. v0.3 inference unchanged; v0.4 path is a logged stub returning `available=False` so Phase 9 only needs to fill the body. |
 
 ---
 
@@ -469,6 +470,15 @@ Both the US droplet's `neural` container and the HKEX `cerebellum.py` need updat
 
 The v0.3 ONNX model (2-input signature) should remain runnable during the transition. The coordinator reads `model_version.json` to determine which inference path to use. After v0.4 deployment and a validation period, v0.3 can be retired.
 
+**Status (2026-05-23):** The HKEX `cerebellum.py` (v1.2.0) ships the version-branching scaffold ahead of the v0.4 ONNX. Concretely:
+
+- `Cerebellum.__init__` reads `model_version.json` *before* constructing `CandleModel` and passes a parsed `(major, minor)` tuple in.
+- `CandleModel.predict()` routes to `_predict_v03()` (existing path, unchanged) when `minor < 4` and to `_predict_v04()` when `minor >= 4`.
+- `_predict_v04()` is a logged stub that returns `{"available": False, "reason": "v0.4 inference path not implemented (stub)"}`. This means a misdeployed v0.4 manifest fails closed (coordinator falls back to no-signal / Attention State Machine Mode 1) rather than corrupting outputs.
+- `CandleModel._load()` emits a warning if the manifest version disagrees with the actual ONNX input count (e.g. manifest says `0.4` but the loaded ONNX exposes only 2 inputs).
+
+Phase 9 of the implementation guide therefore narrows to: fill `_predict_v04()` with the news/security context builders and the 4-input `session.run` call. No structural refactor of `cerebellum.py` is required at deploy time.
+
 ---
 
 ## 12. Testing methodology
@@ -596,10 +606,11 @@ catalyst-agent is **shelved as of 2026-05-18** (root `CLAUDE.md` v3.0.0). The fi
 
 ### 15.3 catalyst-international (HKEX droplet)
 
-| File | Change |
-|---|---|
-| `cerebellum.py` | Update `CandleModel` class to accept 4 inputs |
-| `config/news_context.yaml` | Map existing 5-tier scheme to 15-category taxonomy (compatibility shim) |
+| File | Change | Status |
+|---|---|---|
+| `cerebellum.py` | Version-aware dispatch scaffolding (`_predict_v03` / `_predict_v04`); manifest-driven branching; ONNX input-count sanity check | **Landed 2026-05-23 (v1.2.0)** — v0.3 path unchanged, v0.4 path is a stub |
+| `cerebellum.py::_predict_v04` | Fill stub with news_context (16-dim) + security_context (18-dim) builders and 4-input `session.run` | Pending — Phase 9 |
+| `config/news_context.yaml` | Map existing 5-tier scheme to 15-category taxonomy (compatibility shim) | Pending — Phase 9 |
 
 ### 15.4 Documentation
 

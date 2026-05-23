@@ -2,8 +2,8 @@
 
 **Name of Application**: Catalyst Trading System
 **Name of file**: catalyst-international/CLAUDE.md
-**Version**: 3.14.0
-**Last Updated**: 2026-05-18
+**Version**: 3.15.0
+**Last Updated**: 2026-05-23
 **Purpose**: Operational runbook for the HKEX intl droplet — Multi-Agent MCP Architecture
 
 > Read the repo-root `../CLAUDE.md` first for cross-implementation orientation
@@ -13,6 +13,19 @@
 ---
 
 ## REVISION HISTORY
+
+**v3.15.0 (2026-05-23)** — CEREBELLUM VERSION-BRANCHING SCAFFOLD
+- `cerebellum.py` upgraded to v1.2.0 — `model_version.json` now drives a runtime
+  routing decision in `CandleModel.predict()` (`_predict_v03` vs `_predict_v04`).
+- v0.3 inference path is **byte-for-byte unchanged** — `candle_model.onnx` v0.3.1
+  continues to serve. No behaviour change in production today.
+- v0.4 path is a logged stub returning `available=False` so a future v0.4 ONNX
+  drop fails cleanly to no-signal (Mode 1) rather than corrupting outputs.
+- Added input-count sanity check at load time: warns if `model_version.json` and
+  the ONNX disagree on input arity (catches misdeployed manifests).
+- Companion doc updates: `Documentation/Design/catalyst-context-conditioned-architecture-v0.1.md`
+  §11.3 + §15.3 and `Documentation/Implementation/catalyst-context-conditioned-implementation-v0.1.md`
+  Phase 9 — Phase 9 work now narrows to filling the stub body.
 
 **v3.14.0 (2026-05-18)** — DOCUMENT ACTUAL PRODUCTION ARCHITECTURE
 - Replaces legacy `unified_agent.py` + cron documentation with the multi-agent MCP
@@ -103,7 +116,7 @@ Each organ exposes `/sse`, `/messages/`, `/health`.
 | `agents/position-monitor/monitor.py` | — | Background loop, signal detection (Haiku) |
 | `agents/market-scanner/mcp_server.py` | — | 5 tools: `scan_market`, `get_quote`, `get_technicals`, `detect_patterns`, `get_news` |
 | `agents/trade-executor/mcp_server.py` | — | 10 tools: `execute_trade`, `check_risk`, `publish_signal`, `get_signals`, `get_portfolio`, `get_last_trade_date`, `log_decision`, `send_alert`, `get_orders`, `sync_positions` |
-| `cerebellum.py` | 0.3.1 | ONNX inference — loads `models/candle_model.onnx` (deployed by catalyst-neural) |
+| `cerebellum.py` | 1.2.0 | Version-aware ONNX inference — reads `models/model_version.json`, routes to `_predict_v03` (current, serving) or `_predict_v04` (stub, awaits Phase 9). Currently serving `candle_model.onnx` v0.3.1. |
 | `brokers/moomoo.py` | 1.6.0 | Moomoo client + `normalize_symbol()` + `wait_for_fill()` |
 | `data/market.py` | 2.4.0 | Symbol normalization + flexible date/timestamp column handling |
 | `data/database.py` | 1.6.0 | Position upsert + `close_position_by_id` (uses `RealDictCursor` → access rows as dicts) |
@@ -138,6 +151,27 @@ fill confirm, stop-loss) — never decisions.
 - Models are deployed by `deploy-intl.sh` from the `catalyst-neural` implementation
   (laptop → droplet). `.onnx` files are git-ignored — only the manifest is tracked.
 - `news_model.onnx` is **not** deployed yet — cerebellum tolerates absence
+
+**Version routing (v1.2.0, added 2026-05-23):**
+`Cerebellum.__init__` parses `model_version.json` once and passes a `(major, minor)`
+tuple into `CandleModel`. `CandleModel.predict()` then dispatches:
+
+- `minor < 4` → `_predict_v03()` — current path, 2-input ONNX (`candles_5m`, `candles_15m`).
+  This is the serving path today.
+- `minor >= 4` → `_predict_v04()` — **stub**. Returns `{"available": False, "reason":
+  "v0.4 inference path not implemented (stub)"}` and logs an error. The coordinator
+  treats this exactly like a missing model: Layer 4 records "no neural signal" and
+  the Decision Engine proceeds in LLM-only mode (Attention State Machine Mode 1).
+- `_load()` warns if the manifest version and the ONNX input count disagree
+  (e.g. manifest says `0.4` but ONNX exposes only 2 inputs — caught at load, not
+  at inference).
+
+Implementing the v0.4 body is Phase 9 of `catalyst-context-conditioned-implementation-v0.1.md`.
+catalyst-neural is currently at Phase 1 (schema migration only) — no v0.4 ONNX exists yet.
+
+**Operational implication:** if you SCP a v0.4 manifest without filling the stub,
+the brain falls back cleanly to no-signal — it does not produce wrong signals.
+This is intentional fail-closed behaviour.
 
 ### Signals table
 

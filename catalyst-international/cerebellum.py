@@ -11,13 +11,13 @@ Two models:
 Models are ONNX files deployed from the laptop (neural_claude) via SCP.
 If models are not present, the coordinator falls back to LLM-only mode.
 
-Version: 1.1.0 — v0.3 CandleModel dual-input support
+Version: 1.2.0 — version-aware inference (v0.3 dual-input; v0.4 stub)
 """
 
 import json
 import logging
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -26,6 +26,16 @@ logger = logging.getLogger("cerebellum")
 # Must match training config
 LOOKBACK = 60
 DIRECTION_NAMES = ["bullish", "bearish", "neutral"]
+DEFAULT_VERSION_TUPLE: Tuple[int, int] = (0, 3)
+
+
+def _parse_version(version_str: str) -> Tuple[int, int]:
+    """Parse '0.3.1' or '0.4' -> (major, minor). Returns (0, 3) on failure."""
+    try:
+        parts = version_str.split(".")
+        return (int(parts[0]), int(parts[1]))
+    except (AttributeError, ValueError, IndexError):
+        return DEFAULT_VERSION_TUPLE
 
 
 def _normalize_candle_window(candles_arr: np.ndarray) -> np.ndarray:
@@ -63,14 +73,20 @@ def _normalize_candle_window(candles_arr: np.ndarray) -> np.ndarray:
 
 class CandleModel:
     """
-    CandleModel v0.3 — Multi-timeframe direction classifier.
+    CandleModel — Multi-timeframe direction classifier.
 
-    Input:  Two OHLCV sequences (5m and 15m candles, each 60 bars x 5 features)
-    Output: direction (bullish/bearish/neutral), confidence (0-1), predicted returns (5m, 15m, 1h)
+    Version-aware inference:
+      - v0.3.x: 2 inputs (candles_5m, candles_15m) -> direction, returns, confidence
+      - v0.4.x: 4 inputs (+ news_context, security_context). NOT YET IMPLEMENTED —
+        see Documentation/Implementation/catalyst-context-conditioned-implementation-v0.1.md
+        Phase 9. The v0.4 ONNX has not shipped from catalyst-neural yet (Phase 1
+        schema migration only as of 2026-05-23); this stub fails loudly to make the
+        transition explicit when it does land.
     """
 
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, version: Tuple[int, int] = DEFAULT_VERSION_TUPLE):
         self.model_path = model_path
+        self.version = version
         self.loaded = False
         self.session = None
         self._load()
@@ -87,19 +103,35 @@ class CandleModel:
             )
             inputs = {i.name: i.shape for i in self.session.get_inputs()}
             self.loaded = True
-            logger.info(f"CandleModel: Loaded from {self.model_path} — inputs: {inputs}")
+            logger.info(
+                f"CandleModel: Loaded from {self.model_path} "
+                f"— version={self.version[0]}.{self.version[1]} — inputs: {inputs}"
+            )
+            # Sanity check: input count should match declared version
+            input_count = len(self.session.get_inputs())
+            if self.version[1] >= 4 and input_count < 4:
+                logger.warning(
+                    f"CandleModel: manifest says v0.{self.version[1]} but ONNX has "
+                    f"{input_count} inputs (expected 4). Inference will likely fail."
+                )
+            elif self.version[1] < 4 and input_count >= 4:
+                logger.warning(
+                    f"CandleModel: manifest says v0.{self.version[1]} but ONNX has "
+                    f"{input_count} inputs. Manifest may be stale."
+                )
         except ImportError:
             logger.warning("CandleModel: onnxruntime not installed")
         except Exception as e:
             logger.error(f"CandleModel: Failed to load: {e}")
 
-    def predict(self, candles_5m, candles_15m=None) -> dict:
+    def predict(self, candles_5m, candles_15m=None, **kwargs) -> dict:
         """
-        Run inference on candle sequences.
+        Run inference on candle sequences. Branches on model version.
 
         Args:
             candles_5m: List of dicts with OHLCV keys, or numpy array (N, 5)
             candles_15m: Same format for 15m timeframe. If None, uses candles_5m for both.
+            **kwargs: v0.4 will accept symbol=, news_window=, etc. Ignored for v0.3.
 
         Returns:
             dict with: direction, confidence, probabilities, predicted returns
@@ -107,6 +139,12 @@ class CandleModel:
         if not self.loaded or not self.session:
             return {"available": False, "reason": "model not loaded"}
 
+        if self.version[1] >= 4:
+            return self._predict_v04(candles_5m, candles_15m, **kwargs)
+        return self._predict_v03(candles_5m, candles_15m)
+
+    def _predict_v03(self, candles_5m, candles_15m) -> dict:
+        """v0.3 inference path: 2 inputs (5m + 15m candles)."""
         try:
             # Convert to numpy arrays
             arr_5m = self._to_array(candles_5m)
@@ -156,8 +194,30 @@ class CandleModel:
             return result
 
         except Exception as e:
-            logger.error(f"CandleModel inference error: {e}")
+            logger.error(f"CandleModel v0.3 inference error: {e}")
             return {"available": False, "reason": str(e)}
+
+    def _predict_v04(self, candles_5m, candles_15m, **kwargs) -> dict:
+        """
+        v0.4 context-conditioned inference path. Adds news_context (16-dim) and
+        security_context (18-dim) to the ONNX call.
+
+        STUB — not yet implemented. The v0.4 ONNX has not shipped from catalyst-neural;
+        catalyst-neural is at Phase 1 (schema migration) as of 2026-05-23. Implement
+        this when v0.4 model lands. See:
+          - Documentation/Design/catalyst-context-conditioned-architecture-v0.1.md §11
+          - Documentation/Implementation/catalyst-context-conditioned-implementation-v0.1.md Phase 9
+        """
+        logger.error(
+            "CandleModel v0.4 inference invoked but path is not implemented. "
+            "Falling back to no-signal. Implement _predict_v04 (news_context + "
+            "security_context builders + 4-input session.run) per design doc §11."
+        )
+        return {
+            "available": False,
+            "reason": "v0.4 inference path not implemented (stub)",
+            "model_version": f"{self.version[0]}.{self.version[1]}",
+        }
 
     @staticmethod
     def _to_array(candles) -> np.ndarray:
@@ -263,13 +323,20 @@ class Cerebellum:
         self.models_path = models_path or os.getenv(
             "CEREBELLUM_MODELS_PATH", self.DEFAULT_MODELS_PATH
         )
+        # Load manifest first so CandleModel knows which inference path to use.
+        self._version = self._load_version()
+        candle_version = _parse_version(self._version.get("version", ""))
+        logger.info(
+            f"Cerebellum: model_version.json reports {self._version.get('version', 'unknown')} "
+            f"-> using v0.{candle_version[1]} inference path"
+        )
         self.candle_model = CandleModel(
-            os.path.join(self.models_path, "candle_model.onnx")
+            os.path.join(self.models_path, "candle_model.onnx"),
+            version=candle_version,
         )
         self.news_model = NewsToSecurityModel(
             os.path.join(self.models_path, "news_model.onnx")
         )
-        self._version = self._load_version()
 
     def _load_version(self) -> dict:
         version_path = os.path.join(self.models_path, "model_version.json")
