@@ -33,6 +33,8 @@ All authoritative documents live under `Documentation/` and follow this rule:
 | Catalyst neural architecture | `Documentation/Design/` | `catalyst-neural-architecture-vX.X.md` | **v0.3** |
 | Catalyst research architecture | `Documentation/Design/` | `catalyst-research-architecture-vX.X.md` | **v1.3** |
 | Catalyst research implementation | `Documentation/Implementation/` | `catalyst-research-implementation-vX.X.md` | **v1.3** |
+| Catalyst-trading-system MCP architecture | `Documentation/Design/` | `catalyst-mcp-architecture.md` | **v1.0** |
+| Catalyst-trading-system MCP implementation (postgres) | `Documentation/Implementation/` | `catalyst-postgres-mcp-implementation.md` | **v1.0** |
 | Repo hygiene | `Documentation/Implementation/` | `catalyst-repo-hygiene.md` | current |
 | Database schema | `Documentation/Design/` | `database-schema.md` | current |
 | Strategy roadmap | `Documentation/Design/` | `catalyst-strategy-roadmap.md` | current |
