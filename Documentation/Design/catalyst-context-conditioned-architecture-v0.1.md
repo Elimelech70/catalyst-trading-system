@@ -21,7 +21,7 @@
 
 ## 1. Executive summary
 
-The current v0.3 candle model achieves 39.3% direction accuracy on validation — barely above the 33.3% random baseline. The hypothesis explored in this document is that this underperformance is not a data-volume problem but a **regime-mixing** problem: the same OHLCV pattern means structurally different things depending on what news context surrounds it and what kind of security it is happening to. A 1% upward 5-minute move in a small-cap biotech under FDA-pending news is a completely different signal from a 1% upward 5-minute move in a mega-cap bank under FOMC release. The current model averages these together and produces mush.
+The current v0.3 candle model achieves ~40.65% direction accuracy on validation (latest run 2026-05-18) — only ~6 percentage points above the 34.8% majority-class baseline, and the return-magnitude head is worse than naive (R² near zero, MAE worse than baseline on every horizon). The hypothesis explored in this document is that this underperformance is not a data-volume problem but a **regime-mixing** problem: the same OHLCV pattern means structurally different things depending on what news context surrounds it and what kind of security it is happening to. A 1% upward 5-minute move in a small-cap biotech under FDA-pending news is a completely different signal from a 1% upward 5-minute move in a mega-cap bank under FOMC release. The current model averages these together and produces mush.
 
 This document specifies the v0.4 architecture: a two-dimensional context model (news type × security type) that conditions the candle model so it can learn regime-specific behaviour without us hand-coding any rules. The change resolves three of the inter-document inconsistencies identified in the April 2026 gap analysis, in addition to the accuracy problem.
 
@@ -582,7 +582,7 @@ Total active engineering: ~6 days; calendar time including production measuremen
 | `training/models.py` | Add `ContextEncoder`; modify `CandleModel.forward` |
 | `training/trainer.py` | Update batch handling for new inputs |
 | `training/report.py` | Add per-category, per-sector, per-tier diagnostics |
-| `export/onnx_export.py` | Update export signature |
+| `training/export_onnx.py` | Update export signature |
 | `run.py` | New commands: `python run.py tag-news`, `python run.py tag-securities`, `python run.py distributions` |
 
 ### 15.2 catalyst-agent (US droplet) — **DEFERRED**
