@@ -2,7 +2,7 @@
 
 **Repo:** catalyst-trading-system
 **Lives at:** repo root
-**Last updated:** 2026-05-18
+**Last updated:** 2026-05-23
 **Maintainer:** Craig + Claude
 **Mission:** *Enable the poor through accessible algorithmic trading.*
 
@@ -31,6 +31,9 @@ All authoritative documents live under `Documentation/` and follow this rule:
 | General AI agent architecture | `Documentation/Design/` | `ai-agent-architecture-vX.md` | **v8** |
 | Catalyst AI architecture (application) | `Documentation/Design/` | `catalyst-ai-architecture-vX.X.md` | **v2.4** |
 | Catalyst neural architecture | `Documentation/Design/` | `catalyst-neural-architecture-vX.X.md` | **v0.3** |
+| Catalyst research architecture | `Documentation/Design/` | `catalyst-research-architecture-vX.X.md` | **v1.3** |
+| Catalyst research implementation | `Documentation/Implementation/` | `catalyst-research-implementation-vX.X.md` | **v1.3** |
+| Repo hygiene | `Documentation/Implementation/` | `catalyst-repo-hygiene.md` | current |
 | Database schema | `Documentation/Design/` | `database-schema.md` | current |
 | Strategy roadmap | `Documentation/Design/` | `catalyst-strategy-roadmap.md` | current |
 | Configuration | `Documentation/Configuration/` | `catalyst-<system>-configuration-vX.X.md` | per-system |
@@ -51,7 +54,7 @@ The architecture is applied in four distinct code implementations. Each has its 
 | 1 | **catalyst-agent** | `catalyst-agent/` | US application of `catalyst-ai-architecture-v2.4` | US droplet | **Shelved** (stopped 2026-05-18, kept as `.old-20260518`) |
 | 2 | **catalyst-international** | `catalyst-international/` | International application of `catalyst-ai-architecture-v2.4` | Intl droplet | **Running** |
 | 3 | **catalyst-neural** | `catalyst-neural/` | `catalyst-neural-architecture-v0.3` | Laptop (RTX 4050) | **Running** (trains → exports ONNX → deploys to droplets) |
-| 4 | **catalyst-research** | (to be created) | (to be defined) | US droplet | **Planned** |
+| 4 | **catalyst-research** | `catalyst-research/` | `catalyst-research-architecture-v1.3` | Intl droplet | **Scaffolded** (Phase 1–4 built 2026-05-18: schema + ingestion + archetypes + ops cron) |
 
 Each implementation has its own `CLAUDE.md`, `CLAUDE-LEARNINGS.md`, and `CLAUDE-FOCUS.md` inside its folder. Those are the working documents for that implementation. This root file does not duplicate them.
 
@@ -70,8 +73,8 @@ Each implementation has its own `CLAUDE.md`, `CLAUDE-LEARNINGS.md`, and `CLAUDE-
 
 | Database | Size | Used by | Env var |
 |---|---|---|---|
-| `catalyst_intl` | 16 MB | catalyst-international (HKEX trading) | `INTL_DATABASE_URL` |
-| `catalyst_research` | 16 MB | consciousness data (legacy use); future home of catalyst-research | `RESEARCH_DATABASE_URL` |
+| `catalyst_intl` | 16 MB | catalyst-international (HKEX trading) **and** catalyst-research (RBAC-isolated via four roles, per architecture v1.3) | `INTL_DATABASE_URL` |
+| `catalyst_research` | 16 MB | Orphaned. Previously held consciousness data (no longer running). Architecture v1.3 moved catalyst-research into `catalyst_intl` — this DB is freed for archive or drop. | `RESEARCH_DATABASE_URL` |
 | `catalyst_dev` | 9.5 MB | Legacy US sandbox data — agent is shelved | `DATABASE_URL`, `DEV_DATABASE_URL` |
 | `defaultdb` | 9.6 MB | DO default — unused | — |
 | `_dodb` | 7.8 MB | DO internal metrics — managed by DO | — |
@@ -84,15 +87,15 @@ Each implementation has its own `CLAUDE.md`, `CLAUDE-LEARNINGS.md`, and `CLAUDE-
 
 | Host | What's running | What's stopped / shelved |
 |---|---|---|
-| **US droplet** | (nothing on application code) | catalyst-agent (today), services/consciousness, services/dev_claude (removed) |
-| **Intl droplet** | catalyst-international (brain + organs, MCP, Docker) | — |
+| **US droplet** | (nothing on application code) | catalyst-agent (shelved 2026-05-18), services/consciousness, services/dev_claude (removed) |
+| **Intl droplet** | catalyst-international (brain + organs, MCP, Docker); catalyst-research (Phase 1–4 scaffold, cron installed 2026-05-18) | — |
 | **Laptop** | catalyst-neural (collection + weekly pipeline) | — |
 
 ### Why the US droplet is dormant
 
-catalyst-agent was stopped on 2026-05-18 due to operational issues that risked wasted API spend. The next workload on the US droplet will be **catalyst-research**.
+catalyst-agent was stopped on 2026-05-18 due to operational issues that risked wasted API spend. catalyst-research now lives on the **intl droplet** (co-located with Moomoo OpenD and existing intl cron) per architecture v1.3 — not the US droplet as originally planned.
 
-The `services/consciousness/` layer (heartbeats, task executor, web dashboard) was previously running on US Docker. It is not being continued — focus is shifting to catalyst-research.
+The `services/consciousness/` layer (heartbeats, task executor, web dashboard) was previously running on US Docker. It is not being continued — focus has shifted to catalyst-research on intl.
 
 ---
 
@@ -130,6 +133,17 @@ catalyst-trading-system/
 │   ├── run.py
 │   ├── collectors/  storage/  training/  config/
 │   └── deploy/                ← deploys ONNX to both droplets
+│
+├── catalyst-research/         ← Implementation 4: research instrument (SCAFFOLDED on intl droplet)
+│   ├── CLAUDE.md              ← working doc for this implementation
+│   ├── CLAUDE-LEARNINGS.md
+│   ├── CLAUDE-FOCUS.md
+│   ├── sql/                   ← Phase 1 schema + seed
+│   ├── ingestion/             ← Phase 2 country-by-country ingestion jobs
+│   ├── archetypes/            ← Phase 3 headless claude CLI analyst invocations
+│   ├── scripts/               ← Phase 4 inspection / ops
+│   ├── tests/
+│   └── crontab.txt            ← cron entries installed on intl droplet
 │
 ├── Documentation/             ← AUTHORITATIVE for designs, configs, implementation guides, reports
 │   ├── Analysis/
@@ -176,4 +190,4 @@ Trading funds the mission. Trading is not the identity. Every commit, every arch
 ---
 
 *Craig + Claude — The Catalyst Family*
-*2026-05-18*
+*2026-05-23*
