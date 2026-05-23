@@ -235,8 +235,10 @@ CREATE INDEX idx_news_category_published ON news(news_category_primary, publishe
 
 ### 6.2 Securities table additions
 
+`securities.sector` **already exists** in `storage/database.py` (NULL on all 1,532 rows at the time of writing). The migration adds only the cap-tier columns; Phase 3 of the implementation guide populates both the existing `sector` column and the new ones.
+
 ```sql
-ALTER TABLE securities ADD COLUMN sector TEXT;                -- one of 11 sector IDs
+-- NOTE: securities.sector already exists — do NOT re-ALTER it
 ALTER TABLE securities ADD COLUMN market_cap_tier TEXT;       -- MICRO|SMALL|MID|LARGE|MEGA
 ALTER TABLE securities ADD COLUMN market_cap_usd REAL;        -- snapshot, refreshed weekly
 ALTER TABLE securities ADD COLUMN context_updated_at TEXT;

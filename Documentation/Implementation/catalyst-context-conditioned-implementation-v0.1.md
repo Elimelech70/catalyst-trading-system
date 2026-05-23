@@ -34,6 +34,11 @@ This guide is sequenced. Each phase has a clear **owner**, **pre-flight checks**
 
 > ⚠️ **catalyst-agent status (2026-05-18):** catalyst-agent on the US droplet is **shelved** as of 2026-05-18 (see root `CLAUDE.md` v3.0.0). Phase 8 (Deploy to US droplet) is therefore **deferred** until catalyst-agent is un-shelved or its inference target is moved to another US-droplet host. The Phase 8 steps remain documented for that future restart; do not execute them now. v0.4 production deployment runs through Phase 9 (HKEX) only.
 
+> ⚠️ **Deployed-schema reality (2026-05-23):** Audit of the laptop DB before Phase 1 found three deviations from earlier drafts of this doc. The doc has been corrected; future readers should rely on the corrected text below.
+> - The candles schema is a **single `candles` table** with a `timeframe` column (values `'1m'`, `'5m'`, `'15m'`). There are not separate `candles_5m` / `candles_15m` tables. The dataset code in `training/dataset.py` already filters by timeframe — Phase 4 preserves this.
+> - `securities.sector` **already exists** in `storage/database.py` (currently `NULL` on all 1,532 rows). Phase 1 does not re-add it; Phase 3 populates it.
+> - The `news` table is empty (0 rows) at Phase 1 start. The regex tagger in Phase 2 still ships, but its initial backfill is a no-op; tagging is meaningful once `news_collector.py` starts producing rows.
+
 ---
 
 ## Overall pre-flight
@@ -94,8 +99,9 @@ CREATE INDEX IF NOT EXISTS idx_news_category_primary
 CREATE INDEX IF NOT EXISTS idx_news_category_published
     ON news(news_category_primary, published_at);
 
--- Securities table: sector and cap-tier classification
-ALTER TABLE securities ADD COLUMN sector TEXT;
+-- Securities table: cap-tier classification
+-- NOTE: securities.sector already exists in storage/database.py and on the deployed DB
+-- (currently NULL on all 1,532 rows). Phase 3 populates it. Do NOT re-add it here.
 ALTER TABLE securities ADD COLUMN market_cap_tier TEXT;
 ALTER TABLE securities ADD COLUMN market_cap_usd REAL;
 ALTER TABLE securities ADD COLUMN volatility_regime TEXT;     -- Phase 2 use, nullable
@@ -143,7 +149,7 @@ sqlite3 data/catalyst_neural.db < storage/migrations/001_context_conditioning.sq
 
 ```bash
 sqlite3 data/catalyst_neural.db ".schema news"        # confirm 6 new columns
-sqlite3 data/catalyst_neural.db ".schema securities"  # confirm 5 new columns
+sqlite3 data/catalyst_neural.db ".schema securities"  # confirm 4 new columns (sector pre-existed)
 sqlite3 data/catalyst_neural.db ".schema context_regime_summary"   # confirm table exists
 sqlite3 data/catalyst_neural.db "SELECT COUNT(*) FROM news;"  # row count unchanged
 sqlite3 data/catalyst_neural.db "SELECT COUNT(*) FROM securities;"  # row count unchanged
