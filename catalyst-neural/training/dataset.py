@@ -417,12 +417,20 @@ class CandleDataset(Dataset):
     """
 
     def __init__(self, lookback=None, split="train", validation_split=None,
-                 include_context=True):
+                 include_context=True, symbol_filter=None):
         """
         include_context: v0.4 default True — populate news_context and
         security_context fields. Set False to mimic v0.3 (zero-vectors returned
         so the same dataset object can feed either a v0.3 or v0.4 model
         without breaking the keys).
+
+        symbol_filter: optional list of (symbol, market) tuples. If given, only
+        samples whose key matches are retained. Used by the cohort experiment
+        (training/cpcv_trainer.py) to train on a specific 150-symbol slice.
+
+        split: "train" / "val" / "all". "all" returns the full sample list
+        without a train/val cut — required for external cross-validation
+        (CPCV) which makes its own splits.
         """
         if lookback is None:
             lookback = TRAINING["lookback_candles"]
@@ -432,12 +440,18 @@ class CandleDataset(Dataset):
         self.lookback = lookback
         self.split = split
         self.include_context = include_context
+        # Normalize symbol_filter to a set of (symbol_str, market_str) for fast lookup
+        if symbol_filter is not None:
+            self.symbol_filter = {(str(s), str(m)) for (s, m) in symbol_filter}
+        else:
+            self.symbol_filter = None
 
         conn = get_connection()
 
-        # Load both timeframes
-        self.candles_5m = self._load_candles(conn, "5m")
-        self.candles_15m = self._load_candles(conn, "15m")
+        # Load both timeframes — filtered at SQL time when symbol_filter is set
+        # so we don't load the whole 30M-row candles table into RAM.
+        self.candles_5m = self._load_candles_filtered(conn, "5m")
+        self.candles_15m = self._load_candles_filtered(conn, "15m")
         self.label_data = self._load_labels(conn)
 
         # v0.4: load classified news and security context.
@@ -655,6 +669,43 @@ class CandleDataset(Dataset):
         pos = bisect_right(ts_list, timestamp) - 1
         return pos
 
+    def _load_candles_filtered(self, conn, timeframe):
+        """Same as _load_candles but applies symbol_filter at SQL time.
+        Necessary for the Polygon-scale universe (300 symbols × 5y = ~30M rows
+        otherwise load the whole table into memory). When symbol_filter is None
+        falls back to the original behaviour."""
+        if self.symbol_filter is None:
+            return self._load_candles(conn, timeframe)
+        if not self.symbol_filter:
+            return {}
+        # SQLite-safe parameterised IN clause
+        placeholders = ",".join("?" for _ in self.symbol_filter)
+        # Symbol filter is a set of (symbol, market) tuples; we need to
+        # filter on both — build a compound WHERE.
+        syms = [s for s, m in self.symbol_filter]
+        rows = conn.execute(
+            f"SELECT symbol, market, timestamp, open, high, low, close, volume "
+            f"FROM candles WHERE timeframe = ? AND symbol IN ({placeholders}) "
+            f"ORDER BY symbol, market, timestamp ASC",
+            [timeframe] + syms
+        ).fetchall()
+        data = {}
+        for r in rows:
+            key = (r["symbol"], r["market"])
+            # Final filter — ensure (symbol, market) matches; needed when a
+            # symbol exists in both US and HKEX (rare but possible)
+            if key not in self.symbol_filter:
+                continue
+            if key not in data:
+                data[key] = []
+            data[key].append({
+                "timestamp": r["timestamp"],
+                "open": r["open"], "high": r["high"],
+                "low": r["low"], "close": r["close"],
+                "volume": r["volume"],
+            })
+        return data
+
     def _build_sample_index(self, validation_split):
         """Build aligned samples where both 5m and 15m have enough lookback."""
         all_samples = []
@@ -662,6 +713,9 @@ class CandleDataset(Dataset):
         for (sym, mkt), candles_5m in self.candles_5m.items():
             key = (sym, mkt)
             if key not in self.candles_15m:
+                continue
+            # v0.4.1 cohort experiment: filter to the cohort's symbol list
+            if self.symbol_filter is not None and key not in self.symbol_filter:
                 continue
 
             for i in range(self.lookback, len(candles_5m)):
@@ -682,6 +736,10 @@ class CandleDataset(Dataset):
                 all_samples.append((sym, mkt, i, idx_15m, ts))
 
         all_samples.sort(key=lambda x: x[4])
+
+        # split="all" → return the whole list (used by external CPCV splitter)
+        if self.split == "all":
+            return all_samples
 
         split_idx = int(len(all_samples) * (1.0 - validation_split))
         if self.split == "train":

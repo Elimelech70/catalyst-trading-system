@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import TRAINING, MODELS_DIR
 from training.dataset import get_dataloaders, get_candle_dataloaders
-from training.models import CatalystNet, CandleModel
+from training.models import CatalystNet, CandleModel, CandleModelV04
 from training.report import generate_report, generate_candle_report
 
 
@@ -394,6 +394,19 @@ class CandleTrainer:
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         self.run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
+        # v0.4 dispatch — model carries VERSION = "0.4" when context-conditioned.
+        self.is_v04 = getattr(model, "VERSION", None) == "0.4"
+
+    def _forward(self, batch):
+        """Run model forward with v0.3 or v0.4 inputs as appropriate."""
+        c5m = batch["candles_5m"].to(self.device)
+        c15m = batch["candles_15m"].to(self.device)
+        if self.is_v04:
+            news_ctx = batch["news_context"].to(self.device)
+            sec_ctx = batch["security_context"].to(self.device)
+            return self.model(c5m, c15m, news_ctx, sec_ctx)
+        return self.model(c5m, c15m)
+
     def train_epoch(self):
         self.model.train()
         total_loss = 0
@@ -404,13 +417,11 @@ class CandleTrainer:
         total = 0
 
         for batch in self.train_loader:
-            c5m = batch["candles_5m"].to(self.device)
-            c15m = batch["candles_15m"].to(self.device)
             direction = batch["direction"].to(self.device)
             returns = batch["returns"].to(self.device)
             mask = batch["return_mask"].to(self.device)
 
-            dir_logits, pred_returns, confidence = self.model(c5m, c15m)
+            dir_logits, pred_returns, confidence = self._forward(batch)
 
             loss_dir = self.direction_loss_fn(dir_logits, direction)
             loss_ret = self.return_loss_fn(pred_returns, returns, mask)
@@ -451,13 +462,11 @@ class CandleTrainer:
         n_batches = 0
 
         for batch in self.val_loader:
-            c5m = batch["candles_5m"].to(self.device)
-            c15m = batch["candles_15m"].to(self.device)
             direction = batch["direction"].to(self.device)
             returns = batch["returns"].to(self.device)
             mask = batch["return_mask"].to(self.device)
 
-            dir_logits, pred_returns, confidence = self.model(c5m, c15m)
+            dir_logits, pred_returns, confidence = self._forward(batch)
 
             loss_dir = self.direction_loss_fn(dir_logits, direction)
             loss_ret = self.return_loss_fn(pred_returns, returns, mask)
@@ -629,6 +638,62 @@ def train_candle_model(config_overrides=None):
     model = CandleModel()
 
     print(f"\nModel: CandleModel v0.3")
+    print(f"  Total parameters: {model.count_parameters():,}")
+    for name, count in model.encoder_parameter_counts().items():
+        print(f"  {name}: {count:,}")
+
+    trainer = CandleTrainer(model, train_loader, val_loader, config=cfg)
+    trained_model = trainer.train(epochs=cfg["epochs"])
+
+    generate_candle_report(
+        model=trained_model,
+        val_loader=val_loader,
+        history=trainer.history,
+        run_id=trainer.run_id,
+        config=cfg,
+        dataset_info=info,
+        device=str(trainer.device),
+    )
+
+    return trained_model
+
+
+def train_candle_model_v04(config_overrides=None):
+    """
+    v0.4 entry point — context-conditioned CandleModel.
+
+    Same dataset, same training loop, same dataloaders as v0.3 — the dataset
+    already yields news_context (16,) + security_context (18,) for every
+    sample. CandleTrainer auto-detects the v0.4 model via VERSION attribute
+    and passes the extra inputs.
+    """
+    cfg = {**TRAINING}
+    if config_overrides:
+        cfg.update(config_overrides)
+
+    print("Loading multi-timeframe candle dataset (v0.4 context-conditioned)...")
+    train_loader, val_loader, info = get_candle_dataloaders(
+        batch_size=cfg["batch_size"],
+        lookback=cfg["lookback_candles"],
+        validation_split=cfg["validation_split"],
+    )
+
+    print(f"\nDataset:")
+    print(f"  Training samples:   {info['train_samples']:,}")
+    print(f"  Validation samples: {info['val_samples']:,}")
+    print(f"  Securities (5m):    {info['securities_5m']}")
+    print(f"  Securities (15m):   {info['securities_15m']}")
+    print(f"  Direction threshold: {info['direction_threshold']}")
+    for cls, count in info["direction_balance"].items():
+        print(f"    {cls}: {count}")
+
+    if info["train_samples"] == 0:
+        print("\nERROR: No training samples. Run 'python run.py labels' first.")
+        return None
+
+    model = CandleModelV04()
+
+    print(f"\nModel: CandleModel v0.4 (context-conditioned)")
     print(f"  Total parameters: {model.count_parameters():,}")
     for name, count in model.encoder_parameter_counts().items():
         print(f"  {name}: {count:,}")

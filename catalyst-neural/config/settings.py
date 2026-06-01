@@ -70,6 +70,10 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 # Finnhub (free tier: 60 calls/minute)
 FINNHUB_KEY = os.getenv("FINNHUB_KEY", "")
 
+# Polygon.io (Starter tier $29/mo: 5y intraday history, delayed real-time,
+#  unlimited API calls, news + reference + aggregates endpoints)
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
+
 # ── Economic Data ──
 
 # FRED API (Federal Reserve Economic Data — free)
