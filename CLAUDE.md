@@ -2,7 +2,7 @@
 
 **Repo:** catalyst-trading-system
 **Lives at:** repo root
-**Last updated:** 2026-05-23
+**Last updated:** 2026-06-01
 **Maintainer:** Craig + Claude
 **Mission:** *Enable the poor through accessible algorithmic trading.*
 
@@ -30,13 +30,17 @@ All authoritative documents live under `Documentation/` and follow this rule:
 |---|---|---|---|
 | General AI agent architecture | `Documentation/Design/` | `ai-agent-architecture-vX.md` | **v8** |
 | Catalyst AI architecture (application) | `Documentation/Design/` | `catalyst-ai-architecture-vX.X.md` | **v2.4** |
-| Catalyst neural architecture | `Documentation/Design/` | `catalyst-neural-architecture-vX.X.md` | **v0.3** |
+| Catalyst neural architecture | `Documentation/Design/` | `catalyst-neural-architecture-vX.X.md` | **v0.4** |
+| Catalyst ML methodology and research principles | `Documentation/Design/` | `catalyst-ml-methodology-vX.X.md` | **v0.1** |
+| Catalyst neural strategy snapshots (dated, not versioned) | `Documentation/Design/` | `catalyst-neural-strategy-state-YYYY-MM-DD.md` | **2026-06-01** |
 | Catalyst research architecture | `Documentation/Design/` | `catalyst-research-architecture-vX.X.md` | **v1.3** |
 | Catalyst research implementation | `Documentation/Implementation/` | `catalyst-research-implementation-vX.X.md` | **v1.3** |
 | Catalyst-trading-system MCP architecture | `Documentation/Design/` | `catalyst-mcp-architecture.md` | **v1.0** |
 | Catalyst-trading-system MCP implementation (postgres) | `Documentation/Implementation/` | `catalyst-postgres-mcp-implementation.md` | **v1.0** |
 | Context-conditioned candle architecture (v0.4 plan) | `Documentation/Design/` | `catalyst-context-conditioned-architecture-vX.X.md` | **v0.1 (DRAFT)** |
 | Context-conditioned candle implementation | `Documentation/Implementation/` | `catalyst-context-conditioned-implementation-vX.X.md` | **v0.1 (DRAFT)** |
+| Cohort experiments architecture (v0.4.1 universe-selection) | `Documentation/Design/` | `catalyst-cohort-experiments-architecture-vX.X.md` | **v0.2 (DRAFT)** |
+| Cohort experiments implementation | `Documentation/Implementation/` | `catalyst-cohort-experiments-implementation-vX.X.md` | **v0.1 (DRAFT)** |
 | Repo hygiene | `Documentation/Implementation/` | `catalyst-repo-hygiene.md` | current |
 | Database schema | `Documentation/Design/` | `database-schema.md` | current |
 | Strategy roadmap | `Documentation/Design/` | `catalyst-strategy-roadmap.md` | current |
