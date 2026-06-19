@@ -92,9 +92,9 @@ def _sweet_spot_scatter(rows, fig):
     ax.set_ylabel("Median dir_acc (%)")
     ax.set_title("Sweet-spot: volatility × directional accuracy")
     ax.grid(True, alpha=0.3)
+    import matplotlib.patches
     handles = [matplotlib.patches.Patch(color=c, label=s)
               for s, c in colors.items()]
-    import matplotlib.patches
     ax.legend(handles=handles, title="Strategy", loc="best")
 
 

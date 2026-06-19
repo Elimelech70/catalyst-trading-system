@@ -145,21 +145,37 @@ def compute_cohort_descriptors(conn, symbol_list, dataset):
 
 # ── Main CPCV runner ─────────────────────────────────────────────────────
 
-def run_cpcv_for_cohort(symbol_list, cohort_id, base_config=None):
+def run_cpcv_for_cohort(symbol_list, cohort_id, base_config=None,
+                        data_window_days=180):
     """Train CandleModelV04 across 5 CPCV folds for one cohort.
 
+    data_window_days: how far back to load candles per symbol. Default 180
+    (last 6 months) — keeps the in-memory candle dict to ~1.5 GB for 150
+    symbols. Previously tried 365 (1 year) and 5y, both OOM-killed the 8 GB
+    laptop.
+
+    The cohort experiment is testing universe-shape effects, not data-window
+    effects; 6 months of intraday data is plenty (Krauss et al. 2017 used
+    240-day rolling windows of DAILY data — we have 78x more bars per day).
+    For production v0.4.1 we'd train on a longer window with a smaller
+    universe or out-of-core data loading.
+
     Returns dict with per-fold metrics + median aggregate + descriptors.
-    Side effect: writes per-fold checkpoint .pt files via CandleTrainer.
     """
+    from datetime import datetime, timedelta
     conn = get_connection()
     print(f"\n>>> Cohort {cohort_id}: {len(symbol_list)} symbols")
     t_cohort = time.time()
+
+    min_date = (datetime.utcnow() - timedelta(days=data_window_days)).strftime("%Y-%m-%d")
+    print(f"    data window: {min_date} → now ({data_window_days} days)")
 
     # Build the dataset filtered to this cohort's symbols
     full_dataset = CandleDataset(
         lookback=60, split="all",
         symbol_filter=symbol_list,
         include_context=True,
+        min_date=min_date,
     )
     n_samples = len(full_dataset)
     print(f"    dataset built: {n_samples:,} samples")
@@ -170,10 +186,12 @@ def run_cpcv_for_cohort(symbol_list, cohort_id, base_config=None):
             "error": f"insufficient samples ({n_samples} < {N_FOLDS*100})",
         }
 
-    # Build sample timestamp series for PurgedKFold
-    # CandleDataset.samples is a list of (symbol, market, timestamp, ...)
-    timestamps = pd.to_datetime([s[2] for s in full_dataset.samples])
-    # CandleDataset isn't guaranteed to emit samples in time order — sort first
+    # Build sample timestamp series for PurgedKFold.
+    # CandleDataset.samples is a list of (symbol, market, idx_5m, idx_15m, ts).
+    # We need s[4] (the timestamp), NOT s[2] (the candle index — using that
+    # gave nonsense Unix-epoch nanosecond "timestamps" which made the fold-5
+    # purge drop ALL training samples. Bug fix 2026-06-09.)
+    timestamps = pd.to_datetime([s[4] for s in full_dataset.samples])
     order = np.argsort(timestamps.values)
     timestamps_sorted = timestamps[order]
 
@@ -188,6 +206,15 @@ def run_cpcv_for_cohort(symbol_list, cohort_id, base_config=None):
     splits = [(order[tr], order[te]) for tr, te in splits_sorted]
     fold_results = []
     for fold_k, (train_idx, test_idx) in enumerate(splits):
+        # Skip degenerate folds (e.g. purge eating all training samples on the
+        # last fold). Record the failure but don't abort the whole cohort.
+        if len(train_idx) < 64 or len(test_idx) < 64:
+            print(f"    fold {fold_k+1}/{N_FOLDS}: SKIPPED (train={len(train_idx)}, test={len(test_idx)}) — too small after purge")
+            fold_results.append({
+                "fold": fold_k, "skipped": True,
+                "train_n": int(len(train_idx)), "val_n": int(len(test_idx)),
+            })
+            continue
         print(f"    fold {fold_k+1}/{N_FOLDS}: train={len(train_idx):,}  test={len(test_idx):,}")
         train_ds = Subset(full_dataset, train_idx.tolist())
         val_ds   = Subset(full_dataset, test_idx.tolist())
@@ -212,11 +239,15 @@ def run_cpcv_for_cohort(symbol_list, cohort_id, base_config=None):
         })
 
     elapsed = time.time() - t_cohort
+    valid_folds = [f for f in fold_results if not f.get("skipped")]
+    if not valid_folds:
+        return {"cohort_id": cohort_id, "error": "no valid folds",
+                "folds": fold_results}
     median = {
-        "median_val_loss":     float(np.median([f["best_val_loss"] for f in fold_results])),
-        "median_dir_acc":      float(np.median([f["final_dir_acc"] for f in fold_results])),
-        "median_val_mae":      float(np.median([f["final_val_mae"] for f in fold_results])),
-        "effective_sample_n":  int(np.median([f["train_n"] for f in fold_results])),
+        "median_val_loss":     float(np.median([f["best_val_loss"] for f in valid_folds])),
+        "median_dir_acc":      float(np.median([f["final_dir_acc"] for f in valid_folds])),
+        "median_val_mae":      float(np.median([f["final_val_mae"] for f in valid_folds])),
+        "effective_sample_n":  int(np.median([f["train_n"] for f in valid_folds])),
         "cohort_wall_time_s":  elapsed,
     }
     print(f"    cohort done in {elapsed/60:.1f} min  "

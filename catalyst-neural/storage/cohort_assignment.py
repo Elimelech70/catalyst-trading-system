@@ -26,7 +26,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 from storage.database import get_connection
 
-COHORT_SIZE = 150
+# Architecture v0.2 §4 specifies 150. We're running at 50 for this initial
+# v0.4.1 experiment because the eligible US universe is only 286 symbols
+# (Polygon Starter coverage). Sector-pure cohorts cannot fill 150 — largest
+# sector (TECH) has 78 eligible. Statistical framework still works with
+# smaller cohorts, just with less per-cohort training data. When the universe
+# expands to S&P 500-scale, restore to 150.
+COHORT_SIZE = 50
 ELIGIBLE_MIN_CANDLES = 1000
 ELIGIBLE_MIN_RETURNS = 500
 # 60-day vol history is the architecture's stability requirement; relaxed to 1
@@ -38,9 +44,14 @@ ELIGIBLE_MIN_VOL_DAYS = 1
 MARKET_DEFAULT = "US"
 
 # Sector instances 1/2/3 — see arch v0.2 §4.2
-SECTOR_INSTANCES = {1: "TECH", 2: "FINANCIAL", 3: "HEALTH"}
-# Decile instances — 9 = top decile (loudest), 0 = bottom (quietest)
-VOL_DECILE_INSTANCES = {1: 9, 2: 4, 3: 0}
+# Names must match what's actually in securities.sector (populated by v0.4
+# Phase 3 yfinance enrichment, simplified GICS taxonomy).
+SECTOR_INSTANCES = {1: "TECH", 2: "FIN", 3: "BIO"}
+# Quartile-based vol bucketing (was decile). With 286 eligible / 10 = 29 per
+# decile, vol-tiered cohorts couldn't fill 50. Quartiles give ~71 per bucket.
+# Instances 1/2/3 → top quartile / 2nd quartile / bottom quartile.
+VOL_QUARTILE_INSTANCES = {1: 3, 2: 1, 3: 0}
+N_VOL_BUCKETS = 4
 # Random seeds for stratified draws (Strategy C) and mover/null (E)
 SEEDS = {1: 42, 2: 43, 3: 44}
 
@@ -82,17 +93,24 @@ def strategy_A(conn, instance_id, market=MARKET_DEFAULT):
 # ── Strategy B: volatility-tiered ────────────────────────────────────────
 
 def strategy_B(conn, instance_id, market=MARKET_DEFAULT):
-    decile_target = VOL_DECILE_INSTANCES[instance_id]
+    """Volatility-tiered: top quartile / 2nd quartile / bottom quartile.
+
+    Rank-based quartiles (each bucket gets exactly N/4 symbols). Switched
+    from deciles because our 286-symbol universe gives only ~29 per decile,
+    not enough for a 50-symbol cohort.
+    """
+    bucket_target = VOL_QUARTILE_INSTANCES[instance_id]
     pool = _eligible_universe(conn, market)
     if not pool:
         return []
     vols = np.array([r["realized_vol_30d"] for r in pool])
-    # 9 decile boundaries -> 10 buckets indexed 0..9
-    deciles = np.searchsorted(np.quantile(vols, np.arange(1, 10) / 10), vols)
-    pool_decile = [pool[i] for i in range(len(pool)) if deciles[i] == decile_target]
+    ranks = np.argsort(np.argsort(vols))
+    buckets = (ranks * N_VOL_BUCKETS) // len(vols)
+    buckets = np.clip(buckets, 0, N_VOL_BUCKETS - 1)
+    pool_bucket = [pool[i] for i in range(len(pool)) if buckets[i] == bucket_target]
     rng = random.Random(SEEDS[instance_id])
-    rng.shuffle(pool_decile)
-    return [(r["symbol"], r["market"]) for r in pool_decile[:COHORT_SIZE]]
+    rng.shuffle(pool_bucket)
+    return [(r["symbol"], r["market"]) for r in pool_bucket[:COHORT_SIZE]]
 
 
 # ── Strategy C: stratified mix ───────────────────────────────────────────
@@ -128,8 +146,15 @@ def strategy_D(conn, instance_id, market=MARKET_DEFAULT,
               return_window=1500):
     """Hierarchical clustering on 5m return correlation, take Nth-largest cluster.
 
-    Architecture v0.2 §5.4: d = √(½(1−ρ)), single-linkage agglomerative.
-    instance_id 1/2/3 → 1st/2nd/3rd-largest cluster by member count.
+    Architecture v0.2 §5.4 specified single-linkage; we found single-linkage
+    on our universe produces one giant cluster + many tiny ones (D2/D3 fail
+    to find a cluster of size 150). Switched to WARD linkage which produces
+    more balanced cluster sizes — the resulting 3 cohorts capture genuinely
+    distinct correlation regimes.
+
+    If the Nth-largest cluster is < COHORT_SIZE, we take what's available
+    and pad with the next-largest cluster's members. Documented as a
+    deviation from the architecture's strict version.
     """
     from scipy.cluster.hierarchy import linkage, fcluster
     from scipy.spatial.distance import squareform
@@ -169,32 +194,65 @@ def strategy_D(conn, instance_id, market=MARKET_DEFAULT,
     R = np.vstack([return_series[k][-min_len:] for k in keys])
 
     corr = np.corrcoef(R)
-    # numerical safety — corr should be in [-1, 1]
     corr = np.clip(corr, -1.0, 1.0)
     d = np.sqrt(0.5 * (1.0 - corr))
     np.fill_diagonal(d, 0.0)
-    Z = linkage(squareform(d, checks=False), method="single")
+    # WARD linkage requires Euclidean distance matrix; our d already is
+    Z = linkage(squareform(d, checks=False), method="ward")
 
-    # Iterate cluster counts; find the smallest n_clusters such that the
-    # instance_id-th largest cluster has ≥ COHORT_SIZE members.
+    # Target the cluster count that gives ≥ 3 clusters of size ≥ 100 each
+    # (relaxed from 150 to accommodate universe topology). If we can't get
+    # 3 clusters that size, fall back to whatever we can.
+    chosen_labels = None
+    chosen_n_clusters = None
     for n_clusters in range(3, min(60, len(keys))):
         labels = fcluster(Z, n_clusters, criterion="maxclust")
-        # Sort cluster labels by descending size; the i-th largest = ranks[i]
-        size_by_label = np.bincount(labels)[1:]  # labels are 1-based
-        ordered_labels = np.argsort(size_by_label)[::-1] + 1  # desc by size
-        if instance_id > len(ordered_labels):
+        size_by_label = np.bincount(labels)[1:]
+        ordered = np.argsort(size_by_label)[::-1]  # desc indices into size_by_label
+        # We need at least `instance_id` clusters; if instance 3, we need ≥3
+        if len(ordered) < instance_id:
             continue
-        target_label = int(ordered_labels[instance_id - 1])
-        target_size = int(size_by_label[target_label - 1])
-        if target_size >= COHORT_SIZE:
-            members = [keys[i] for i in range(len(keys)) if labels[i] == target_label]
-            random.Random(SEEDS[instance_id]).shuffle(members)
-            return members[:COHORT_SIZE]
+        # Inspect the instance_id-th largest cluster's size
+        target_idx = ordered[instance_id - 1]
+        target_size = int(size_by_label[target_idx])
+        # Accept first n_clusters where the Nth-largest cluster ≥ 100
+        if target_size >= 100:
+            chosen_labels = labels
+            chosen_n_clusters = n_clusters
+            target_label = int(target_idx + 1)
+            break
 
-    raise RuntimeError(
-        f"HRP: could not produce instance {instance_id} of size {COHORT_SIZE}. "
-        f"Universe may be too small or too correlated."
-    )
+    if chosen_labels is None:
+        # Fall back: use the largest n_clusters value that has ≥ instance_id clusters
+        labels = fcluster(Z, 6, criterion="maxclust")
+        size_by_label = np.bincount(labels)[1:]
+        ordered = np.argsort(size_by_label)[::-1]
+        if len(ordered) < instance_id:
+            raise RuntimeError(
+                f"HRP: tree does not yield ≥ {instance_id} distinct clusters")
+        target_label = int(ordered[instance_id - 1] + 1)
+        chosen_labels = labels
+
+    members = [keys[i] for i in range(len(keys)) if chosen_labels[i] == target_label]
+    random.Random(SEEDS[instance_id]).shuffle(members)
+
+    # Pad with next-largest cluster's members if under COHORT_SIZE
+    if len(members) < COHORT_SIZE:
+        size_by_label = np.bincount(chosen_labels)[1:]
+        ordered = np.argsort(size_by_label)[::-1]
+        used_label = target_label
+        for next_idx in ordered:
+            next_label = int(next_idx + 1)
+            if next_label == used_label:
+                continue
+            extras = [keys[i] for i in range(len(keys))
+                     if chosen_labels[i] == next_label]
+            random.Random(SEEDS[instance_id] + 100).shuffle(extras)
+            members.extend(extras)
+            if len(members) >= COHORT_SIZE:
+                break
+
+    return members[:COHORT_SIZE]
 
 
 # ── Strategy E: mover / mid-rank / null ──────────────────────────────────

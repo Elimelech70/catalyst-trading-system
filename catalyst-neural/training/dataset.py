@@ -417,7 +417,8 @@ class CandleDataset(Dataset):
     """
 
     def __init__(self, lookback=None, split="train", validation_split=None,
-                 include_context=True, symbol_filter=None):
+                 include_context=True, symbol_filter=None,
+                 min_date=None, max_bars_per_symbol=None):
         """
         include_context: v0.4 default True — populate news_context and
         security_context fields. Set False to mimic v0.3 (zero-vectors returned
@@ -431,6 +432,13 @@ class CandleDataset(Dataset):
         split: "train" / "val" / "all". "all" returns the full sample list
         without a train/val cut — required for external cross-validation
         (CPCV) which makes its own splits.
+
+        min_date: YYYY-MM-DD string. Candles before this date are not loaded.
+        Used by cohort runs to bound the data window — 150 symbols × 5y of
+        intraday bars OOM-kills the laptop. Default None = no limit.
+
+        max_bars_per_symbol: alternative cap — keep only the last N bars per
+        symbol. Computed at the symbol level rather than absolute date.
         """
         if lookback is None:
             lookback = TRAINING["lookback_candles"]
@@ -440,6 +448,8 @@ class CandleDataset(Dataset):
         self.lookback = lookback
         self.split = split
         self.include_context = include_context
+        self.min_date = min_date
+        self.max_bars_per_symbol = max_bars_per_symbol
         # Normalize symbol_filter to a set of (symbol_str, market_str) for fast lookup
         if symbol_filter is not None:
             self.symbol_filter = {(str(s), str(m)) for (s, m) in symbol_filter}
@@ -452,6 +462,13 @@ class CandleDataset(Dataset):
         # so we don't load the whole 30M-row candles table into RAM.
         self.candles_5m = self._load_candles_filtered(conn, "5m")
         self.candles_15m = self._load_candles_filtered(conn, "15m")
+        # The Polygon backfill (2026-06-01) only collected 5m candles. For symbols
+        # missing 15m data, derive it by aggregating 3 consecutive 5m bars.
+        # Same underlying data, just resampled — keeps the dual-resolution
+        # CNN architecture working without a separate Polygon 15m backfill.
+        for key, bars_5m in self.candles_5m.items():
+            if key not in self.candles_15m or len(self.candles_15m[key]) < 100:
+                self.candles_15m[key] = self._aggregate_5m_to_15m(bars_5m)
         self.label_data = self._load_labels(conn)
 
         # v0.4: load classified news and security context.
@@ -493,13 +510,74 @@ class CandleDataset(Dataset):
             })
         return data
 
-    def _load_labels(self, conn):
-        """Load 5m forward returns (anchor timeframe)."""
-        rows = conn.execute(
-            "SELECT symbol, market, timestamp, return_5m, return_15m, return_1h "
-            "FROM forward_returns WHERE timeframe = '5m'"
-        ).fetchall()
+    @staticmethod
+    def _aggregate_5m_to_15m(bars_5m):
+        """Aggregate 5m OHLCV bars to 15m by groups of 3, aligned to 15-min
+        boundaries. Used when 15m data isn't independently collected (e.g.,
+        Polygon backfill, which only fetches 5m)."""
+        from datetime import datetime
+        bars_15m = []
+        i = 0
+        while i < len(bars_5m):
+            # Parse timestamp to determine the 15m bucket boundary
+            ts_str = bars_5m[i]["timestamp"]
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("+00:00", "").replace("Z", ""))
+            except ValueError:
+                i += 1
+                continue
+            # Align to 15-minute boundary (minutes 0/15/30/45)
+            bucket_start_min = (ts.minute // 15) * 15
+            bucket_ts = ts.replace(minute=bucket_start_min, second=0, microsecond=0)
+            # Collect all 5m bars in this 15m bucket
+            group = []
+            while i < len(bars_5m):
+                ts_i_str = bars_5m[i]["timestamp"]
+                try:
+                    ts_i = datetime.fromisoformat(ts_i_str.replace("+00:00", "").replace("Z", ""))
+                except ValueError:
+                    i += 1; continue
+                bucket_min_i = (ts_i.minute // 15) * 15
+                bucket_ts_i = ts_i.replace(minute=bucket_min_i, second=0, microsecond=0)
+                if bucket_ts_i != bucket_ts:
+                    break
+                group.append(bars_5m[i])
+                i += 1
+            if not group:
+                continue
+            bars_15m.append({
+                "timestamp": bucket_ts.isoformat(),
+                "open":      group[0]["open"],
+                "high":      max(g["high"] for g in group),
+                "low":       min(g["low"] for g in group),
+                "close":     group[-1]["close"],
+                "volume":    sum(g["volume"] for g in group),
+            })
+        return bars_15m
 
+    def _load_labels(self, conn):
+        """Load 5m forward returns (anchor timeframe), filtered by symbol_filter
+        and min_date when set. With the Polygon backfill the unfiltered
+        forward_returns table has ~38M rows — fetching them all OOM-kills the
+        laptop. Filter at SQL time."""
+        where_parts = ["timeframe = '5m'"]
+        params = []
+        if self.symbol_filter is not None:
+            if not self.symbol_filter:
+                return {}
+            syms = [s for s, m in self.symbol_filter]
+            placeholders = ",".join("?" for _ in syms)
+            where_parts.append(f"symbol IN ({placeholders})")
+            params.extend(syms)
+        if self.min_date is not None:
+            where_parts.append("timestamp >= ?")
+            params.append(self.min_date)
+        where_sql = " AND ".join(where_parts)
+        rows = conn.execute(
+            f"SELECT symbol, market, timestamp, return_5m, return_15m, return_1h "
+            f"FROM forward_returns WHERE {where_sql}",
+            params
+        ).fetchall()
         data = {}
         for r in rows:
             key = (r["symbol"], r["market"], r["timestamp"])
@@ -670,31 +748,39 @@ class CandleDataset(Dataset):
         return pos
 
     def _load_candles_filtered(self, conn, timeframe):
-        """Same as _load_candles but applies symbol_filter at SQL time.
-        Necessary for the Polygon-scale universe (300 symbols × 5y = ~30M rows
-        otherwise load the whole table into memory). When symbol_filter is None
-        falls back to the original behaviour."""
-        if self.symbol_filter is None:
+        """Same as _load_candles but applies symbol_filter + date-window filters
+        at SQL time. Necessary for the Polygon-scale universe (150 symbols × 5y
+        = ~15M rows per timeframe = ~30M rows total which OOM-kills the laptop).
+        When symbol_filter is None falls back to the original behaviour."""
+        if self.symbol_filter is None and self.min_date is None:
             return self._load_candles(conn, timeframe)
-        if not self.symbol_filter:
+        if self.symbol_filter is not None and not self.symbol_filter:
             return {}
-        # SQLite-safe parameterised IN clause
-        placeholders = ",".join("?" for _ in self.symbol_filter)
-        # Symbol filter is a set of (symbol, market) tuples; we need to
-        # filter on both — build a compound WHERE.
-        syms = [s for s, m in self.symbol_filter]
+
+        # Build the WHERE conditions
+        where_parts = ["timeframe = ?"]
+        params = [timeframe]
+        if self.symbol_filter is not None:
+            placeholders = ",".join("?" for _ in self.symbol_filter)
+            syms = [s for s, m in self.symbol_filter]
+            where_parts.append(f"symbol IN ({placeholders})")
+            params.extend(syms)
+        if self.min_date is not None:
+            where_parts.append("timestamp >= ?")
+            params.append(self.min_date)
+
+        where_sql = " AND ".join(where_parts)
         rows = conn.execute(
             f"SELECT symbol, market, timestamp, open, high, low, close, volume "
-            f"FROM candles WHERE timeframe = ? AND symbol IN ({placeholders}) "
+            f"FROM candles WHERE {where_sql} "
             f"ORDER BY symbol, market, timestamp ASC",
-            [timeframe] + syms
+            params
         ).fetchall()
+
         data = {}
         for r in rows:
             key = (r["symbol"], r["market"])
-            # Final filter — ensure (symbol, market) matches; needed when a
-            # symbol exists in both US and HKEX (rare but possible)
-            if key not in self.symbol_filter:
+            if self.symbol_filter is not None and key not in self.symbol_filter:
                 continue
             if key not in data:
                 data[key] = []
@@ -704,6 +790,12 @@ class CandleDataset(Dataset):
                 "low": r["low"], "close": r["close"],
                 "volume": r["volume"],
             })
+
+        # Apply max_bars_per_symbol cap if set (keeps the last N bars per symbol)
+        if self.max_bars_per_symbol is not None:
+            for k in data:
+                if len(data[k]) > self.max_bars_per_symbol:
+                    data[k] = data[k][-self.max_bars_per_symbol:]
         return data
 
     def _build_sample_index(self, validation_split):
