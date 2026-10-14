@@ -40,7 +40,7 @@ services:
       - ./sql/position_monitor_service_schema.sql:/docker-entrypoint-initdb.d/02-monitor-schema.sql:ro
       - ./sql/002-feedback-loop.sql:/docker-entrypoint-initdb.d/03-feedback-loop.sql:ro
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-catalyst} -d ${DB_NAME:-catalyst_trading}"]
       interval: 10s
