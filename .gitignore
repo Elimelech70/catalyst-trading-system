@@ -54,6 +54,9 @@ desktop.ini
 logs/
 data/
 !services/dev_claude/data/
+!catalyst-international/data/
+catalyst-international/data/*
+!catalyst-international/data/*.py
 trades/
 positions/
 orders/
