@@ -1,0 +1,13 @@
+[Unit]
+Description=Catalyst Neural — Weekly Training Pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/craig/catalyst/catalyst-neural
+ExecStart=/home/craig/catalyst/catalyst-neural/venv/bin/python run.py pipeline
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=catalyst-pipeline

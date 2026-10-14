@@ -49,7 +49,7 @@ from collectors.macro_collector import (
 from collectors.news_collector import collect_all_news
 from collectors.security_picker import update_watch_list, show_movers
 from training.label_generator import compute_all as compute_labels, show_stats
-from training.trainer import train_model, train_candle_model
+from training.trainer import train_model, train_candle_model, train_candle_model_v04
 from config.settings import active_markets, next_market_open, MARKET_HOURS
 
 
@@ -174,17 +174,18 @@ def cmd_movers():
     show_movers()
 
 
-def cmd_train(model_type="candle", timeframe="5m", config_overrides=None, dry_run=False):
+def cmd_train(model_type="candle", timeframe="5m", config_overrides=None, dry_run=False, v04=False):
     """Train a neural network."""
     init_db()
 
     if model_type == "candle":
         if dry_run:
             from training.dataset import CandleDataset, get_candle_dataloaders
-            from training.models import CandleModel
+            from training.models import CandleModel, CandleModelV04
             _, _, info = get_candle_dataloaders()
-            model = CandleModel()
-            print(f"\nDry run — CandleModel v0.3:")
+            model = CandleModelV04() if v04 else CandleModel()
+            version = "v0.4 (context-conditioned)" if v04 else "v0.3"
+            print(f"\nDry run — CandleModel {version}:")
             print(f"  Training samples:   {info['train_samples']:,}")
             print(f"  Validation samples: {info['val_samples']:,}")
             print(f"  Model parameters:   {model.count_parameters():,}")
@@ -193,7 +194,10 @@ def cmd_train(model_type="candle", timeframe="5m", config_overrides=None, dry_ru
             for k, v in info["direction_balance"].items():
                 print(f"    {k}: {v}")
             return
-        train_candle_model(config_overrides)
+        if v04:
+            train_candle_model_v04(config_overrides)
+        else:
+            train_candle_model(config_overrides)
 
     elif model_type in ("fused", "legacy"):
         if dry_run:
@@ -351,9 +355,14 @@ def cmd_watch(interval_minutes=5):
                     )
                     if can.returncode == 0:
                         print("Suspending until next session...")
-                        subprocess.run(["sudo", power_script, "suspend"])
-                        print(f"Resumed — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
-                        continue
+                        rc = subprocess.run(["sudo", "-n", power_script, "suspend"],
+                                            capture_output=True, text=True)
+                        if rc.returncode == 0:
+                            print(f"Resumed — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+                            continue
+                        # Suspend failed (sudo unavailable under systemd-user, etc.) —
+                        # fall through to software sleep so the loop doesn't hot-spin.
+                        print(f"Suspend failed (rc={rc.returncode}) — software sleep instead")
                     else:
                         print("User active — staying awake (software sleep)")
 
@@ -473,6 +482,8 @@ Examples:
     train_parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     train_parser.add_argument("--device", default=None, help="Override device (cuda/cpu)")
     train_parser.add_argument("--dry-run", action="store_true", help="Check data + model, skip training")
+    train_parser.add_argument("--v04", action="store_true",
+                              help="Train context-conditioned v0.4 CandleModel (default: v0.3)")
 
     # export
     export_parser = subparsers.add_parser("export", help="Export model to ONNX")
@@ -526,7 +537,7 @@ Examples:
         if args.device:
             overrides["device"] = args.device
         cmd_train(args.model_type, args.timeframe,
-                  overrides if overrides else None, args.dry_run)
+                  overrides if overrides else None, args.dry_run, args.v04)
     elif args.command == "export":
         cmd_export(args.model_type, args.checkpoint, args.output)
     elif args.command == "pipeline":

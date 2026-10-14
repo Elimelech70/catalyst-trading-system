@@ -726,12 +726,18 @@ def generate_candle_report(model, val_loader, history, run_id, config,
     all_confs = []
     all_symbols = []
 
+    is_v04 = getattr(model, "VERSION", None) == "0.4"
     with torch.no_grad():
         for batch in val_loader:
             c5m = batch["candles_5m"].to(device)
             c15m = batch["candles_15m"].to(device)
 
-            dir_logits, pred_returns, confidence = model(c5m, c15m)
+            if is_v04:
+                news_ctx = batch["news_context"].to(device)
+                sec_ctx = batch["security_context"].to(device)
+                dir_logits, pred_returns, confidence = model(c5m, c15m, news_ctx, sec_ctx)
+            else:
+                dir_logits, pred_returns, confidence = model(c5m, c15m)
 
             all_dir_preds.append(dir_logits.argmax(dim=1).cpu().numpy())
             all_dir_labels.append(batch["direction"].numpy())
